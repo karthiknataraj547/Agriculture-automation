@@ -6,9 +6,6 @@
   --color-obsidian: #0f172a;
   --color-cyber-cyan: #0284c7;
   --color-cyber-emerald: #059669;
-  --neu-bg: #e2e8f0;
-  --neu-shadow-light: #ffffff;
-  --neu-shadow-dark: #cbd5e1;
 }
 
 html, body {
@@ -21,51 +18,54 @@ html, body {
 }
 
 body {
-  background-color: #e2e8f0;
+  background-color: #dbe2ef;
   color: #0f172a;
   font-family: var(--font-inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif);
   background-image: 
-    radial-gradient(circle at 50% 0%, rgba(2, 132, 199, 0.08) 0%, transparent 65%),
-    linear-gradient(rgba(255, 255, 255, 0.5) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.5) 1px, transparent 1px);
+    radial-gradient(circle at 50% 0%, rgba(2, 132, 199, 0.1) 0%, transparent 65%),
+    linear-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.6) 1px, transparent 1px);
   background-size: 100% 100%, 32px 32px, 32px 32px;
   background-attachment: fixed;
 }
 
-/* ─── Pristine Neumorphism & Spatial UI Design System ─── */
+/* ─── Pristine Neumorphic & Spatial UI Hybrid Styling ─── */
 
-/* Soft Tactile Neumorphic Extruded Card / Panel */
+/* Extruded Neumorphic Card / Panel */
 .skeuo-panel, .skeuo-card, .neu-flat, .neu-convex, .glass-panel, .glass-card {
   position: relative;
-  background: linear-gradient(145deg, #ffffff 0%, #f1f5f9 50%, #e2e8f0 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #f1f5f9 60%, #e2e8f0 100%);
   box-shadow: 
     6px 6px 16px #cbd5e1,
     -6px -6px 16px #ffffff,
     inset 1px 1px 0px rgba(255, 255, 255, 0.9);
   border: 1px solid #cbd5e1;
   border-radius: 0.875rem;
+  color: #0f172a;
 }
 
 /* Glowing Convex Neumorphic Active Spatial Panel */
 .skeuo-panel-glow, .neu-convex-glow {
   position: relative;
-  background: linear-gradient(145deg, #e0f2fe 0%, #bae6fd 50%, #7dd3fc 100%);
+  background: linear-gradient(145deg, #e0f2fe 0%, #bae6fd 60%, #7dd3fc 100%);
   box-shadow: 
-    6px 6px 18px rgba(2, 132, 199, 0.22),
+    6px 6px 18px rgba(2, 132, 199, 0.25),
     -6px -6px 18px #ffffff,
     inset 1px 1px 0px rgba(255, 255, 255, 1);
-  border: 1px solid #38bdf8;
+  border: 1px solid #0284c7;
   border-radius: 0.875rem;
+  color: #0f172a;
 }
 
 /* Sunken / Debossed Neumorphic Socket */
 .skeuo-pressed, .neu-pressed {
   background: linear-gradient(145deg, #cbd5e1 0%, #e2e8f0 100%);
   box-shadow: 
-    inset 4px 4px 8px #b0bec5,
-    inset -4px -4px 8px #ffffff;
+    inset 3px 3px 6px #b0bec5,
+    inset -3px -3px 6px #ffffff;
   border: 1px solid #cbd5e1;
   border-radius: 0.625rem;
+  color: #0f172a;
 }
 
 /* Tactile 3D Neumorphic Push Button */
@@ -76,23 +76,23 @@ body {
     4px 4px 10px #cbd5e1,
     -4px -4px 10px #ffffff,
     inset 1px 1px 0px #ffffff;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #94a3b8;
   border-radius: 0.625rem;
-  color: #0f172a;
-  font-weight: 700;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  color: #0f172a !important;
+  font-weight: 800;
+  transition: all 0.15s ease-in-out;
   cursor: pointer;
   user-select: none;
 }
 
 .skeuo-button:hover, .neu-button:hover {
-  background: linear-gradient(145deg, #ffffff 0%, #f8fafc 60%, #f1f5f9 100%);
+  background: linear-gradient(145deg, #ffffff 0%, #f8fafc 60%, #e2e8f0 100%);
   box-shadow: 
     5px 5px 12px #94a3b8,
     -5px -5px 12px #ffffff,
     inset 1px 1px 0px #ffffff;
   border-color: #0284c7;
-  color: #0284c7;
+  color: #0284c7 !important;
   transform: translateY(-1px);
 }
 
@@ -110,8 +110,8 @@ body {
 .skeuo-glass-bezel {
   position: relative;
   overflow: hidden;
-  background: #020617;
-  color: #38bdf8;
+  background: #020617 !important;
+  color: #38bdf8 !important;
   border: 2px solid #334155;
   border-radius: 0.625rem;
   box-shadow: 
@@ -225,9 +225,9 @@ body {
   border-color: #0284c7;
 }
 
-/* ─── Light Mode High Contrast Typography Rules ─── */
+/* ─── Light Mode High Contrast Nuclear Typography ─── */
 body:not(.dark) {
-  color: #0f172a;
+  color: #0f172a !important;
 }
 
 body:not(.dark) h1,
@@ -237,28 +237,44 @@ body:not(.dark) h4,
 body:not(.dark) h5,
 body:not(.dark) h6 {
   color: #0f172a !important;
+  font-weight: 800 !important;
 }
 
-body:not(.dark) .text-slate-800,
-body:not(.dark) .text-slate-700 {
+body:not(.dark) .text-slate-100:not(.skeuo-glass-bezel *),
+body:not(.dark) .text-slate-200:not(.skeuo-glass-bezel *),
+body:not(.dark) .text-slate-300:not(.skeuo-glass-bezel *),
+body:not(.dark) .text-slate-400:not(.skeuo-glass-bezel *),
+body:not(.dark) .text-slate-500:not(.skeuo-glass-bezel *),
+body:not(.dark) .text-slate-600:not(.skeuo-glass-bezel *),
+body:not(.dark) .text-slate-700:not(.skeuo-glass-bezel *) {
   color: #0f172a !important;
 }
 
-body:not(.dark) .text-slate-600,
-body:not(.dark) .text-slate-500 {
-  color: #334155 !important;
+body:not(.dark) .text-cyan-200:not(.skeuo-glass-bezel *),
+body:not(.dark) .text-sky-200:not(.skeuo-glass-bezel *) {
+  color: #0369a1 !important;
 }
 
-body:not(.dark) .text-slate-400:not(.skeuo-glass-bezel *) {
-  color: #475569 !important;
+body:not(.dark) .text-emerald-400:not(.skeuo-glass-bezel *) {
+  color: #15803d !important;
 }
 
-body:not(.dark) .text-slate-300:not(.skeuo-glass-bezel *) {
-  color: #334155 !important;
+body:not(.dark) .text-amber-400:not(.skeuo-glass-bezel *) {
+  color: #b45309 !important;
 }
 
-body:not(.dark) .text-slate-200:not(.skeuo-glass-bezel *) {
-  color: #1e293b !important;
+body:not(.dark) .text-rose-400:not(.skeuo-glass-bezel *) {
+  color: #b91c1c !important;
+}
+
+/* Glass Viewport inner text overrides */
+.skeuo-glass-bezel .text-slate-400,
+.skeuo-glass-bezel .text-slate-500 {
+  color: #94a3b8 !important;
+}
+.skeuo-glass-bezel .text-slate-200,
+.skeuo-glass-bezel .text-slate-300 {
+  color: #cbd5e1 !important;
 }
 
 /* ─── Dark Mode Neumorphic Theme Overrides ─── */
@@ -278,6 +294,7 @@ body:not(.dark) .text-slate-200:not(.skeuo-glass-bezel *) {
     -6px -6px 18px #141c2e,
     inset 1px 1px 0px rgba(255, 255, 255, 0.1);
   border: 1px solid #334155;
+  color: #f8fafc;
 }
 
 .dark .skeuo-panel-glow, .dark .neu-convex-glow {
@@ -287,6 +304,7 @@ body:not(.dark) .text-slate-200:not(.skeuo-glass-bezel *) {
     -6px -6px 20px #10192a,
     inset 1px 1px 0px rgba(0, 243, 255, 0.4);
   border: 1px solid #00f3ff;
+  color: #f8fafc;
 }
 
 .dark .skeuo-pressed, .dark .neu-pressed {
@@ -295,6 +313,7 @@ body:not(.dark) .text-slate-200:not(.skeuo-glass-bezel *) {
     inset 4px 4px 8px #04060a,
     inset -4px -4px 8px #141c2e;
   border: 1px solid #1e293b;
+  color: #f8fafc;
 }
 
 .dark .skeuo-button, .dark .neu-button {
@@ -304,16 +323,16 @@ body:not(.dark) .text-slate-200:not(.skeuo-glass-bezel *) {
     -4px -4px 12px #141c2e,
     inset 1px 1px 0px rgba(255, 255, 255, 0.15);
   border: 1px solid #475569;
-  color: #f8fafc;
+  color: #f8fafc !important;
 }
 
 .dark .skeuo-button:hover, .dark .neu-button:hover {
   background: linear-gradient(145deg, #334155 0%, #1e293b 100%);
   box-shadow: 
     5px 5px 14px rgba(0, 243, 255, 0.25),
-    -5px -5px 14px #10192a;
+    -5px -5px 14px #10102a;
   border-color: #00f3ff;
-  color: #00f3ff;
+  color: #00f3ff !important;
 }
 
 .dark .skeuo-button:active, .dark .skeuo-button-active, .dark .neu-button:active, .dark .neu-button-active {
@@ -330,12 +349,10 @@ body:not(.dark) .text-slate-200:not(.skeuo-glass-bezel *) {
   border-color: #334155 !important;
 }
 
-.dark .text-slate-800, .dark .text-slate-700 {
+.dark .text-slate-800, .dark .text-slate-700,
+.dark .text-slate-600, .dark .text-slate-500,
+.dark .text-slate-400, .dark .text-slate-300 {
   color: #f8fafc !important;
-}
-
-.dark .text-slate-600, .dark .text-slate-500 {
-  color: #94a3b8 !important;
 }
 
 .dark .skeuo-rivet {

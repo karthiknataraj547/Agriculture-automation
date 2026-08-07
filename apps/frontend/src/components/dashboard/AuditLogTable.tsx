@@ -120,22 +120,22 @@ export function AuditLogTable() {
                     {sortAsc ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                   </div>
                 </th>
-                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-600">
+                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-900 dark:text-slate-100 font-extrabold">
                   User
                 </th>
-                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-600">
+                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-900 dark:text-slate-100 font-extrabold">
                   Role
                 </th>
-                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-600">
+                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-900 dark:text-slate-100 font-extrabold">
                   Action
                 </th>
-                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-600">
+                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-900 dark:text-slate-100 font-extrabold">
                   Resource
                 </th>
-                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-600">
+                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-900 dark:text-slate-100 font-extrabold">
                   IP
                 </th>
-                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-600">
+                <th className="px-4 py-3 text-[9px] font-mono uppercase tracking-wider text-slate-900 dark:text-slate-100 font-extrabold">
                   Status
                 </th>
               </tr>
@@ -144,12 +144,12 @@ export function AuditLogTable() {
               {logs.map((log) => (
                 <tr
                   key={log.id}
-                  className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors"
+                  className="border-b border-slate-300 dark:border-slate-800 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors"
                 >
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      <Clock size={9} className="text-slate-500" />
-                      <span suppressHydrationWarning className="text-[10px] font-mono text-slate-600 tabular-nums font-medium">
+                      <Clock size={10} className="text-slate-700 dark:text-slate-400" />
+                      <span suppressHydrationWarning className="text-[10px] font-mono text-slate-900 dark:text-slate-100 tabular-nums font-extrabold">
                         {new Date(log.timestamp).toLocaleString('en-US', {
                           month: 'short',
                           day: '2-digit',
@@ -163,30 +163,30 @@ export function AuditLogTable() {
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-1.5">
-                      <User size={9} className="text-slate-500" />
-                      <span className="text-[10px] text-slate-800 font-medium">{log.userName}</span>
+                      <User size={10} className="text-slate-700 dark:text-slate-400" />
+                      <span className="text-[10px] text-slate-900 dark:text-slate-100 font-extrabold">{log.userName}</span>
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
                     <span
                       className={clsx(
-                        'text-[9px] font-mono font-bold',
-                        roleColors[log.userRole] || 'text-slate-500'
+                        'text-[9px] font-mono font-extrabold',
+                        roleColors[log.userRole] || 'text-slate-700'
                       )}
                     >
                       {log.userRole}
                     </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="text-[10px] font-mono text-cyber-cyan">{log.action}</span>
+                    <span className="text-[10px] font-mono text-sky-700 dark:text-cyan-400 font-extrabold">{log.action}</span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="text-[10px] text-slate-500 max-w-[200px] truncate block">
+                    <span className="text-[10px] text-slate-900 dark:text-slate-100 font-extrabold max-w-[200px] truncate block">
                       {log.resource}
                     </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="text-[10px] font-mono text-slate-600 tabular-nums">
+                    <span className="text-[10px] font-mono text-slate-900 dark:text-slate-100 font-extrabold tabular-nums">
                       {log.ipAddress}
                     </span>
                   </td>

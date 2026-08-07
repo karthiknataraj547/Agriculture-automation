@@ -435,7 +435,7 @@ function RealisticZoneParcel({
       </Float>
 
       {/* Floating Placard */}
-      <Text position={[0, 2.1, 0]} fontSize={0.32} color="#f8fafc" anchorX="center" anchorY="middle">
+      <Text position={[0, 2.1, 0]} fontSize={0.32} color="#0f172a" anchorX="center" anchorY="middle">
         {`${name}\n(${crop}) — ${moisture}%\n[PUMP: ${isPumpRunning ? 'ACTIVE 💧' : 'OFF'}]`}
       </Text>
     </group>
@@ -547,6 +547,7 @@ export function FarmSpatialCanvas() {
 
       {/* Three.js 3D Canvas */}
       <Canvas camera={{ position: [0, 10, 14], fov: 45 }} shadows>
+        <color attach="background" args={[nightMode ? '#090d16' : '#bae6fd']} />
         {/* Dynamic Day / Night Lighting */}
         <ambientLight intensity={nightMode ? 0.25 : 0.85} />
         <directionalLight

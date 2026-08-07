@@ -28,12 +28,12 @@ export function SystemHealthPanel() {
     <GlassCard variant="default" padding="md" className="h-full">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Server size={14} className="text-cyber-emerald" />
-          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-slate-500 font-medium">
+          <Server size={14} className="text-emerald-600 dark:text-emerald-400" />
+          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-slate-900 dark:text-slate-100 font-extrabold">
             System Health
           </span>
         </div>
-        <span className="text-[10px] font-mono text-cyber-emerald">
+        <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-extrabold">
           {onlineCount}/{SERVICES.length} ACTIVE
         </span>
       </div>
@@ -45,12 +45,12 @@ export function SystemHealthPanel() {
             className="flex items-center justify-between py-2 px-3 rounded-xl neu-pressed transition-all duration-200"
           >
             <div className="flex items-center gap-2">
-              <span className="text-cyber-cyan">{svc.icon}</span>
-              <span className="text-[11px] text-slate-300 font-medium">{svc.name}</span>
+              <span className="text-sky-600 dark:text-cyan-400">{svc.icon}</span>
+              <span className="text-[11px] text-slate-900 dark:text-slate-100 font-extrabold">{svc.name}</span>
             </div>
             <div className="flex items-center gap-2">
               {svc.latency && (
-                <span className="text-[9px] font-mono text-slate-500 tabular-nums">
+                <span className="text-[9px] font-mono text-slate-900 dark:text-slate-200 font-extrabold tabular-nums">
                   {svc.latency}
                 </span>
               )}
