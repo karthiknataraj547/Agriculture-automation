@@ -1,0 +1,644 @@
+'use client';
+
+import React, { useState } from 'react';
+import { clsx } from 'clsx';
+import {
+  Cpu,
+  Wifi,
+  BatteryMedium,
+  MapPin,
+  Clock,
+  ChevronRight,
+  Signal,
+  Plus,
+  BookOpen,
+  X,
+  Check,
+  Copy,
+  Terminal,
+  Key,
+  ShieldCheck,
+  Radio,
+} from 'lucide-react';
+import { GlassCard } from '../ui/GlassCard';
+import { StatusIndicator } from '../ui/StatusIndicator';
+import { useSpatialStore } from '../../store/useSpatialStore';
+import { DeviceStatus, IoTDevice } from '@aether/shared';
+
+function deviceStatusToUi(status: DeviceStatus): 'online' | 'offline' | 'warning' | 'critical' | 'maintenance' {
+  switch (status) {
+    case DeviceStatus.ONLINE:
+      return 'online';
+    case DeviceStatus.OFFLINE:
+      return 'offline';
+    case DeviceStatus.WARNING:
+      return 'warning';
+    case DeviceStatus.CRITICAL:
+      return 'critical';
+    case DeviceStatus.MAINTENANCE:
+    case DeviceStatus.PROVISIONING:
+      return 'maintenance';
+    default:
+      return 'offline';
+  }
+}
+
+function rssiToQuality(rssi: number): { label: string; color: string; bars: number } {
+  if (rssi > -50) return { label: 'Excellent', color: 'text-cyber-emerald', bars: 4 };
+  if (rssi > -65) return { label: 'Good', color: 'text-cyber-cyan', bars: 3 };
+  if (rssi > -75) return { label: 'Fair', color: 'text-amber-600', bars: 2 };
+  return { label: 'Weak', color: 'text-red-600', bars: 1 };
+}
+
+function timeAgo(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+const SAMPLE_ESP32_CODE = `// ESP32 Farm Smart Node Firmware (Soil Sensor + DHT Temp/Humidity + Pump Relay)
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+
+// ─── Pin Configuration ───
+#define SOIL_PIN    34  // Capacitive Soil Moisture Sensor (Analog A0)
+#define DHT_PIN      4  // DHT11 or DHT22 Temp & Humidity Sensor
+#define RELAY_PIN   26  // Relay Module Signal Pin for Water Pump
+#define DHT_TYPE DHT11  // Change to DHT22 if using DHT22
+
+// ─── Network & Authentication ───
+const char* ssid = "YOUR_FARM_WIFI";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* mqtt_server = "192.168.1.100"; // Server IP
+const int   mqtt_port = 1883;
+
+const char* deviceSerialNumber = "ESP32-FARM-NODE-01";
+const char* deviceAuthCode     = "ATH-8F92-4C10-99E4"; // From Web Dashboard
+const char* telemetryTopic     = "aether/farm-01/zone-1/telemetry";
+const char* pumpCmdTopic       = "aether/farm-01/zone-1/pump/command";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+DHT dht(DHT_PIN, DHT_TYPE);
+
+// Callback when web dashboard sends Pump ON/OFF command
+void callback(char* topic, byte* payload, unsigned int length) {
+  StaticJsonDocument<256> doc;
+  deserializeJson(doc, payload, length);
+  const char* status = doc["status"]; // "RUNNING" or "STOPPED"
+  if (strcmp(status, "RUNNING") == 0) {
+    digitalWrite(RELAY_PIN, HIGH); // Turn ON Water Pump
+    Serial.println("-> PUMP ACTIVATED VIA WEB TOOL [RELAY HIGH]");
+  } else {
+    digitalWrite(RELAY_PIN, LOW);  // Turn OFF Water Pump
+    Serial.println("-> PUMP DEACTIVATED VIA WEB TOOL [RELAY LOW]");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); // Default OFF
+  dht.begin();
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    while (!client.connected()) {
+      if (client.connect(deviceSerialNumber)) {
+        client.subscribe(pumpCmdTopic);
+      } else { delay(2000); }
+    }
+  }
+  client.loop();
+
+  // 1. Read Sensors
+  int rawSoil = analogRead(SOIL_PIN);
+  float soilMoisture = map(rawSoil, 4095, 1500, 0, 100); // Convert to %
+  float temp = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  // 2. Build JSON Telemetry Payload with Auth Code
+  StaticJsonDocument<384> doc;
+  doc["deviceId"] = deviceSerialNumber;
+  doc["authCode"] = deviceAuthCode;
+  doc["soilMoisture"] = soilMoisture;
+  doc["soilTemperature"] = isnan(temp) ? 25.0 : temp;
+  doc["humidity"] = isnan(humidity) ? 60.0 : humidity;
+  doc["relayStatus"] = digitalRead(RELAY_PIN) == HIGH ? "RUNNING" : "STOPPED";
+
+  char buffer[384];
+  serializeJson(doc, buffer);
+  client.publish(telemetryTopic, buffer);
+
+  delay(2000); // Stream telemetry every 2 seconds
+}`;
+
+export function DeviceGrid() {
+  const { devices, setDevices, selectedDeviceId, setSelectedDeviceId } = useSpatialStore();
+  const [modalMode, setModalMode] = useState<'NONE' | 'ADD_DEVICE' | 'HARDWARE_GUIDE' | 'SHOW_AUTH_KEY'>('NONE');
+  const [newDeviceAuth, setNewDeviceAuth] = useState<{ serial: string; authCode: string; name: string } | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedAuthKey, setCopiedAuthKey] = useState(false);
+
+  // Form State
+  const [deviceName, setDeviceName] = useState('');
+  const [serialNumber, setSerialNumber] = useState('');
+  const [zoneId, setZoneId] = useState('zone-1');
+  const [attachedSensors, setAttachedSensors] = useState<string[]>([
+    'SOIL_MOISTURE',
+    'WATER_FLOW',
+    'PIR_MOTION',
+  ]);
+
+  const AVAILABLE_SENSORS = [
+    { id: 'SOIL_MOISTURE', label: 'Soil Moisture Probe' },
+    { id: 'TEMPERATURE', label: 'Air & Soil Temp' },
+    { id: 'WATER_FLOW', label: 'Flow Rate Sensor' },
+    { id: 'PIR_MOTION', label: 'PIR Wildlife Motion' },
+    { id: 'NPK_FERTILITY', label: 'NPK Soil Sensor' },
+    { id: 'WEATHER_STATION', label: 'Wind & Rain Gauge' },
+  ];
+
+  const handleToggleSensor = (sensorId: string) => {
+    if (attachedSensors.includes(sensorId)) {
+      setAttachedSensors(attachedSensors.filter((s) => s !== sensorId));
+    } else {
+      setAttachedSensors([...attachedSensors, sensorId]);
+    }
+  };
+
+  const handleProvisionDevice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deviceName.trim() || !serialNumber.trim()) return;
+
+    // Generate unique 16-char Hardware Auth Code
+    const generatedAuthCode = `ATH-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+    const newDevice: IoTDevice = {
+      uuid: `dev-${Date.now()}`,
+      serialNumber: serialNumber.trim(),
+      name: deviceName.trim(),
+      macAddress: `A4:CF:12:${Math.floor(Math.random() * 89 + 10)}:${Math.floor(
+        Math.random() * 89 + 10
+      )}:${Math.floor(Math.random() * 89 + 10)}`,
+      firmwareVersion: 'v2.4.1-pro',
+      status: DeviceStatus.ONLINE,
+      farmId: 'farm-01',
+      zoneId,
+      ownerId: 'usr-admin-01',
+      mqttTopic: `aether/farm-01/${zoneId}/telemetry`,
+      authCode: generatedAuthCode,
+      lastSeen: new Date().toISOString(),
+      batteryLevel: 98,
+      signalRssi: -54,
+      otaStatus: 'IDLE',
+      location: { lat: 37.7749, lng: -122.4194, elevation: 120 },
+      sensorsAttached: attachedSensors,
+    };
+
+    try {
+      // Register with backend gateway
+      await fetch('http://localhost:4000/api/v1/devices/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newDevice),
+      });
+    } catch (err) {
+      console.log('Registered locally');
+    }
+
+    setDevices([newDevice, ...devices]);
+    setNewDeviceAuth({
+      serial: serialNumber.trim(),
+      authCode: generatedAuthCode,
+      name: deviceName.trim(),
+    });
+    setDeviceName('');
+    setSerialNumber('');
+    setModalMode('SHOW_AUTH_KEY');
+  };
+
+  const handleCopyCode = () => {
+    navigator.clipboard.writeText(SAMPLE_ESP32_CODE);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleCopyAuthKey = (authKey: string) => {
+    navigator.clipboard.writeText(authKey);
+    setCopiedAuthKey(true);
+    setTimeout(() => setCopiedAuthKey(false), 2000);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Top Action Bar */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Cpu size={16} className="text-cyber-cyan flex-shrink-0" />
+          <span className="text-xs font-mono uppercase tracking-[0.15em] text-slate-800 font-bold truncate">
+            IoT Node Manager
+          </span>
+          <span className="text-xs font-mono text-cyber-emerald font-semibold ml-2">
+            {devices.filter((d) => d.status === DeviceStatus.ONLINE).length}/{devices.length} ONLINE
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setModalMode('HARDWARE_GUIDE')}
+            className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-slate-700 hover:text-cyber-cyan"
+            aria-label="Open hardware setup guide"
+          >
+            <BookOpen size={14} />
+            <span className="hidden sm:inline">HARDWARE SETUP GUIDE</span>
+            <span className="sm:hidden">GUIDE</span>
+          </button>
+          <button
+            onClick={() => setModalMode('ADD_DEVICE')}
+            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-cyber-cyan hover:text-sky-700"
+            aria-label="Provision a new IoT device"
+          >
+            <Plus size={14} />
+            <span className="hidden sm:inline">PROVISION NEW DEVICE</span>
+            <span className="sm:hidden">NEW DEVICE</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Auth Code Generated Modal (Post Provisioning) */}
+      {modalMode === 'SHOW_AUTH_KEY' && newDeviceAuth && (
+        <GlassCard variant="glow" padding="lg" className="border-emerald-500/50 bg-emerald-50/20">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-300/40 mb-4">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={18} className="text-cyber-emerald" />
+              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800">
+                🔑 HARDWARE AUTHENTICATION KEY GENERATED
+              </h3>
+            </div>
+            <button
+              onClick={() => setModalMode('NONE')}
+              className="p-1 rounded-lg neu-button text-slate-500 hover:text-red-600"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <p className="text-xs text-slate-700 font-medium">
+              Device <strong className="text-slate-900">{newDeviceAuth.name}</strong> ({newDeviceAuth.serial}) has been provisioned! Copy the unique authentication code below and enter it in your ESP32/Arduino code so your hardware can pair and connect securely.
+            </p>
+
+            <div className="p-4 rounded-xl neu-pressed flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div>
+                <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">HARDWARE AUTH CODE</span>
+                <p className="text-lg font-mono font-bold text-cyber-cyan tracking-wider">{newDeviceAuth.authCode}</p>
+              </div>
+
+              <button
+                onClick={() => handleCopyAuthKey(newDeviceAuth.authCode)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl neu-button text-xs font-mono font-bold text-cyber-cyan"
+              >
+                {copiedAuthKey ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                {copiedAuthKey ? 'COPIED!' : 'COPY AUTH CODE'}
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setModalMode('HARDWARE_GUIDE')}
+                className="px-4 py-2 text-xs font-mono font-bold rounded-xl neu-button text-cyber-cyan"
+              >
+                VIEW ESP32 CODE TEMPLATE
+              </button>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Provision Device Modal */}
+      {modalMode === 'ADD_DEVICE' && (
+        <GlassCard variant="glow" padding="lg" className="border-cyber-cyan/40">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-300/40 mb-4">
+            <div className="flex items-center gap-2">
+              <Plus size={16} className="text-cyber-cyan" />
+              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800">
+                PROVISION NEW IOT SENSOR NODE
+              </h3>
+            </div>
+            <button
+              onClick={() => setModalMode('NONE')}
+              className="p-1 rounded-lg neu-button text-slate-500 hover:text-red-600"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <form onSubmit={handleProvisionDevice} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-mono uppercase text-slate-500 mb-1">
+                  Device Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={deviceName}
+                  onChange={(e) => setDeviceName(e.target.value)}
+                  placeholder="e.g. Zone 1 Master Field Node"
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 neu-pressed rounded-xl focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase text-slate-500 mb-1">
+                  Hardware Serial Number / Chip ID
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={serialNumber}
+                  onChange={(e) => setSerialNumber(e.target.value)}
+                  placeholder="e.g. ESP32-AGRI-04A92B"
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 neu-pressed rounded-xl focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase text-slate-500 mb-1">
+                  Assigned Crop Zone
+                </label>
+                <select
+                  value={zoneId}
+                  onChange={(e) => setZoneId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 neu-pressed rounded-xl focus:outline-none"
+                >
+                  <option value="zone-1">Zone 1: Corn Field</option>
+                  <option value="zone-2">Zone 2: Soybean Sector</option>
+                  <option value="zone-3">Zone 3: Vineyard East</option>
+                  <option value="zone-4">Zone 4: Orchard North</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase text-slate-500 mb-1">
+                  Auto MQTT Connection Topic
+                </label>
+                <input
+                  type="text"
+                  disabled
+                  value={`aether/farm-01/${zoneId}/telemetry`}
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-500 neu-pressed rounded-xl opacity-75"
+                />
+              </div>
+            </div>
+
+            {/* Attached Sensors Checkboxes */}
+            <div>
+              <label className="block text-[10px] font-mono uppercase text-slate-500 mb-1.5">
+                Attached Hardware Sensors
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {AVAILABLE_SENSORS.map((s) => {
+                  const selected = attachedSensors.includes(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => handleToggleSensor(s.id)}
+                      className={`flex items-center gap-2 p-2 rounded-xl text-xs font-mono text-left transition-all ${
+                        selected
+                          ? 'neu-button-active text-cyber-cyan font-semibold'
+                          : 'neu-button text-slate-600'
+                      }`}
+                    >
+                      <div
+                        className={`w-4 h-4 rounded flex items-center justify-center ${
+                          selected ? 'bg-cyber-cyan text-white' : 'border border-slate-400'
+                        }`}
+                      >
+                        {selected && <Check size={10} />}
+                      </div>
+                      <span>{s.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Submit */}
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setModalMode('NONE')}
+                className="px-4 py-2 text-xs font-mono rounded-xl neu-button text-slate-500"
+              >
+                CANCEL
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 text-xs font-mono font-bold rounded-xl neu-button text-cyber-cyan"
+              >
+                GENERATE AUTH CODE & PROVISION
+              </button>
+            </div>
+          </form>
+        </GlassCard>
+      )}
+
+      {/* Hardware Connection Guide Modal */}
+      {modalMode === 'HARDWARE_GUIDE' && (
+        <GlassCard variant="glow" padding="lg" className="border-cyber-cyan/40">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-300/40 mb-4">
+            <div className="flex items-center gap-2">
+              <BookOpen size={16} className="text-cyber-cyan" />
+              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800">
+                HOW TO CONNECT YOUR HARDWARE USING AUTH CODE (ESP32 / ARDUINO)
+              </h3>
+            </div>
+            <button
+              onClick={() => setModalMode('NONE')}
+              className="p-1 rounded-lg neu-button text-slate-500 hover:text-red-600"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="p-3 rounded-xl neu-pressed">
+                <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">1. PROVISION & GET AUTH CODE</span>
+                <p className="text-xs font-mono font-bold text-slate-800 mt-1">Click '+ PROVISION DEVICE'</p>
+                <p className="text-[10px] text-slate-500">System generates 16-char Auth Key</p>
+              </div>
+
+              <div className="p-3 rounded-xl neu-pressed">
+                <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">2. ENTER IN DEVICE FIRMWARE</span>
+                <p className="text-xs font-mono font-bold text-cyber-cyan mt-1">const char* deviceAuthCode = ...</p>
+                <p className="text-[10px] text-slate-500">Paste key into Arduino code below</p>
+              </div>
+
+              <div className="p-3 rounded-xl neu-pressed">
+                <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">3. SECURE PAIRING</span>
+                <p className="text-xs font-mono font-bold text-emerald-700 mt-1">Authenticates on Connect</p>
+                <p className="text-[10px] text-slate-500">Verifies hardware identity & registers</p>
+              </div>
+            </div>
+
+            {/* Arduino Code Snippet */}
+            <div className="rounded-xl neu-pressed p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5">
+                  <Terminal size={14} className="text-cyber-cyan" />
+                  <span className="text-[10px] font-mono font-bold uppercase text-slate-700">
+                    ESP32 Arduino C++ Code Template with Auth Code
+                  </span>
+                </div>
+                <button
+                  onClick={handleCopyCode}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg neu-button text-[10px] font-mono text-cyber-cyan"
+                >
+                  {copiedCode ? <Check size={10} className="text-emerald-600" /> : <Copy size={10} />}
+                  {copiedCode ? 'COPIED!' : 'COPY CODE'}
+                </button>
+              </div>
+
+              <pre className="p-3 rounded-xl bg-slate-900 text-sky-300 font-mono text-[10px] sm:text-[11px] overflow-x-auto max-h-[220px] max-w-full">
+                {SAMPLE_ESP32_CODE}
+              </pre>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Grid of Devices */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {devices.map((device) => {
+          const signal = rssiToQuality(device.signalRssi);
+          const isSelected = selectedDeviceId === device.uuid;
+          const authCode = device.authCode || 'ATH-8F92-4C10';
+
+          return (
+            <GlassCard
+              key={device.uuid}
+              variant={isSelected ? 'glow' : 'default'}
+              padding="md"
+              hover
+              onClick={() => setSelectedDeviceId(isSelected ? null : device.uuid)}
+            >
+              {/* Top Row */}
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg neu-pressed flex items-center justify-center flex-shrink-0">
+                    <Cpu size={14} className="text-cyber-cyan" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-800 truncate">{device.name}</p>
+                    <p className="text-[9px] font-mono text-slate-500 truncate">{device.serialNumber}</p>
+                  </div>
+                </div>
+                <StatusIndicator status={deviceStatusToUi(device.status)} size="sm" />
+              </div>
+
+              {/* Auth Code Bar */}
+              <div className="flex items-center justify-between px-2.5 py-1.5 mb-3 rounded-lg neu-pressed">
+                <div className="flex items-center gap-1.5">
+                  <Key size={12} className="text-cyber-cyan" />
+                  <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Auth Code:</span>
+                  <span className="text-[10px] font-mono font-bold text-slate-800">{authCode}</span>
+                </div>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(authCode);
+                  }}
+                  title="Copy Auth Code for Hardware"
+                  className="text-[9px] font-mono text-cyber-cyan hover:text-sky-700 flex items-center gap-1"
+                >
+                  <Copy size={9} />
+                  COPY
+                </button>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                {/* Signal */}
+                <div className="text-center p-1.5 rounded-lg neu-pressed">
+                  <Signal size={10} className={clsx('mx-auto mb-0.5', signal.color)} />
+                  <p className="text-[9px] text-slate-500">Signal</p>
+                  <p className={clsx('text-[10px] font-mono font-medium', signal.color)}>
+                    {device.signalRssi} dBm
+                  </p>
+                </div>
+
+                {/* Battery */}
+                <div className="text-center p-1.5 rounded-lg neu-pressed">
+                  <BatteryMedium
+                    size={10}
+                    className={clsx(
+                      'mx-auto mb-0.5',
+                      device.batteryLevel > 50
+                        ? 'text-cyber-emerald'
+                        : device.batteryLevel > 20
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                    )}
+                  />
+                  <p className="text-[9px] text-slate-500">Battery</p>
+                  <p className="text-[10px] font-mono font-medium text-slate-700">
+                    {device.batteryLevel}%
+                  </p>
+                </div>
+
+                {/* Zone */}
+                <div className="text-center p-1.5 rounded-lg neu-pressed">
+                  <MapPin size={10} className="mx-auto mb-0.5 text-slate-500" />
+                  <p className="text-[9px] text-slate-500">Zone</p>
+                  <p className="text-[10px] font-mono font-medium text-slate-700 uppercase">
+                    {device.zoneId}
+                  </p>
+                </div>
+
+                {/* Last Seen */}
+                <div className="text-center p-1.5 rounded-lg neu-pressed">
+                  <Clock size={10} className="mx-auto mb-0.5 text-slate-500" />
+                  <p className="text-[9px] text-slate-500">Seen</p>
+                  <p className="text-[10px] font-mono font-medium text-slate-700">
+                    {timeAgo(device.lastSeen)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-300/40">
+                <span className="text-[9px] font-mono text-slate-500">
+                  FW {device.firmwareVersion}
+                </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] font-mono text-slate-600 font-medium">
+                    {device.sensorsAttached.length} sensors
+                  </span>
+                  <ChevronRight size={10} className="text-slate-500" />
+                </div>
+              </div>
+            </GlassCard>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,29 @@
+# --- Stage 1: Build Backend Server ---
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Copy monorepo workspace files
+COPY package.json package-lock.json ./
+COPY packages/shared ./packages/shared
+COPY apps/backend ./apps/backend
+
+# Install dependencies and build shared package + backend
+RUN npm ci
+RUN npm run build --prefix packages/shared
+RUN npm run build --prefix apps/backend
+
+# --- Stage 2: Runtime Runner ---
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=4000
+
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/backend ./apps/backend
+COPY --from=builder /app/packages/shared ./packages/shared
+
+EXPOSE 4000
+
+CMD ["npm", "run", "start", "--workspace=apps/backend"]

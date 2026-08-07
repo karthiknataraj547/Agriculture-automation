@@ -1,0 +1,6 @@
+{
+  "buildCommand": "cd /vercel/path0/packages/shared && npx tsc && cd /vercel/path0/apps/frontend && npx next build",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "installCommand": "npm install"
+}

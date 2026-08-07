@@ -1,0 +1,44 @@
+{
+  "name": "aether-crop-spatial-iot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Enterprise Smart Agriculture Spatial IoT Platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=packages/shared\" \"npm run dev --workspace=apps/backend\" \"npm run dev --workspace=apps/frontend\"",
+    "build": "npm run build --prefix packages/shared && cd apps/frontend && npm run build",
+    "build:all": "npm run build --prefix packages/shared && npm run build --prefix apps/backend && cd apps/frontend && npm run build",
+    "start": "npm run start --workspace=apps/backend",
+    "simulator": "npm run simulator --workspace=apps/backend"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19",
+    "@types/three": "^0.162.0",
+    "autoprefixer": "^10.4.18",
+    "concurrently": "^8.2.2",
+    "next": "^14.2.35",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.99.0",
+    "@react-three/fiber": "^8.15.16",
+    "clsx": "^2.1.0",
+    "framer-motion": "^11.0.8",
+    "lucide-react": "^0.344.0",
+    "next": "^14.2.35",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.12.2",
+    "socket.io-client": "^4.7.4",
+    "tailwind-merge": "^2.2.1",
+    "three": "^0.162.0",
+    "zustand": "^4.5.1"
+  }
+}

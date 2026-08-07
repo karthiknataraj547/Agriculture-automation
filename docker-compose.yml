@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # ─── Backend Gateway Service ───
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: aether_agriculture_backend
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
+    restart: always
+
+  # ─── Frontend Next.js Web App ───
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: aether_agriculture_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NEXT_PUBLIC_API_URL=http://localhost:4000
+    depends_on:
+      - backend
+    restart: always
+
+  # ─── Eclipse Mosquitto MQTT Broker ───
+  mqtt_broker:
+    image: eclipse-mosquitto:latest
+    container_name: aether_mqtt_broker
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    restart: always
