@@ -52,15 +52,21 @@ function CanvasLoader() {
 }
 
 export default function DashboardPage() {
-  const { isAuthenticated } = useAuthStore();
-  const { activeView } = useSpatialStore();
+  const { isAuthenticated, user } = useAuthStore();
+  const { activeView, loadGlobalStateForUser } = useSpatialStore();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // Client-side hydration check
+  // Client-side hydration check & load user farm state
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.email) {
+      loadGlobalStateForUser(user.email);
+    }
+  }, [isAuthenticated, user, loadGlobalStateForUser]);
 
   // Initialize WebSocket connection
   useWebSocketFeed();

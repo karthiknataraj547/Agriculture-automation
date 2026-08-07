@@ -82,95 +82,25 @@ export interface SpatialStoreState {
 
   // Zero Data Reset Action
   resetAllDataToZero: () => void;
+
+  // Global State Sync
+  syncStateToCloud: (email?: string) => void;
+  loadGlobalStateForUser: (email: string) => Promise<void>;
 }
 
-// ALL ZERO VALUE INITIALIZATION
+const STORAGE_STATE_KEY = 'aether_farm_persisted_state';
+
 const ZERO_PUMPS: PumpState[] = [
-  {
-    id: 'pump-1',
-    name: 'Pump Main Alpha',
-    zoneId: 'zone-1',
-    zoneName: 'Zone 1: Corn Field',
-    status: 'OFF',
-    runtimeMinutes: 0,
-    manualOverride: false,
-    flowRateLmin: 0,
-  },
-  {
-    id: 'pump-2',
-    name: 'Pump Sector Beta',
-    zoneId: 'zone-2',
-    zoneName: 'Zone 2: Soybean Sector',
-    status: 'OFF',
-    runtimeMinutes: 0,
-    manualOverride: false,
-    flowRateLmin: 0,
-  },
-  {
-    id: 'pump-3',
-    name: 'Pump East Gamma',
-    zoneId: 'zone-3',
-    zoneName: 'Zone 3: Vineyard East',
-    status: 'OFF',
-    runtimeMinutes: 0,
-    manualOverride: false,
-    flowRateLmin: 0,
-  },
-  {
-    id: 'pump-4',
-    name: 'Pump North Delta',
-    zoneId: 'zone-4',
-    zoneName: 'Zone 4: Orchard North',
-    status: 'OFF',
-    runtimeMinutes: 0,
-    manualOverride: false,
-    flowRateLmin: 0,
-  },
+  { id: 'pump-1', name: 'Pump Main Alpha', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
+  { id: 'pump-2', name: 'Pump Sector Beta', zoneId: 'zone-2', zoneName: 'Zone 2: Soybean Sector', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
+  { id: 'pump-3', name: 'Pump East Gamma', zoneId: 'zone-3', zoneName: 'Zone 3: Vineyard East', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
+  { id: 'pump-4', name: 'Pump North Delta', zoneId: 'zone-4', zoneName: 'Zone 4: Orchard North', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
 ];
 
 const ZERO_SCHEDULES: IrrigationSchedule[] = [
-  {
-    id: 'sch-1',
-    name: 'Early Morning Deep Soak',
-    enabled: false,
-    farmId: 'farm-01',
-    zoneId: 'zone-1',
-    zoneName: 'Zone 1: Corn Field',
-    pumpId: 'pump-1',
-    startTime: '00:00',
-    durationMinutes: 0,
-    daysOfWeek: [],
-    targetMoistureMin: 0,
-    status: 'PAUSED',
-  },
-  {
-    id: 'sch-2',
-    name: 'Evening Orchard Mist',
-    enabled: false,
-    farmId: 'farm-01',
-    zoneId: 'zone-4',
-    zoneName: 'Zone 4: Orchard North',
-    pumpId: 'pump-4',
-    startTime: '00:00',
-    durationMinutes: 0,
-    daysOfWeek: [],
-    targetMoistureMin: 0,
-    status: 'PAUSED',
-  },
-  {
-    id: 'sch-3',
-    name: 'Vineyard Midday Moisture Boost',
-    enabled: false,
-    farmId: 'farm-01',
-    zoneId: 'zone-3',
-    zoneName: 'Zone 3: Vineyard East',
-    pumpId: 'pump-3',
-    startTime: '00:00',
-    durationMinutes: 0,
-    daysOfWeek: [],
-    targetMoistureMin: 0,
-    status: 'PAUSED',
-  },
+  { id: 'sch-1', name: 'Early Morning Deep Soak', enabled: false, farmId: 'farm-01', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', pumpId: 'pump-1', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
+  { id: 'sch-2', name: 'Evening Orchard Mist', enabled: false, farmId: 'farm-01', zoneId: 'zone-4', zoneName: 'Zone 4: Orchard North', pumpId: 'pump-4', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
+  { id: 'sch-3', name: 'Vineyard Midday Moisture Boost', enabled: false, farmId: 'farm-01', zoneId: 'zone-3', zoneName: 'Zone 3: Vineyard East', pumpId: 'pump-3', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
 ];
 
 const createZeroReading = (zoneId: string): TelemetryReading => ({
@@ -210,6 +140,18 @@ const ZERO_TELEMETRY_MAP = new Map<string, TelemetryReading>([
   ['zone-4', createZeroReading('zone-4')],
 ]);
 
+const getLocalPersistedState = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_STATE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const initialLocal = getLocalPersistedState();
+
 export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   activeView: 'SPATIAL_3D',
   selectedZoneId: 'zone-1',
@@ -224,13 +166,13 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   },
   devices: [],
   insights: [],
-  rules: [],
-  pumps: ZERO_PUMPS,
-  schedules: ZERO_SCHEDULES,
+  rules: initialLocal?.rules || [],
+  pumps: initialLocal?.pumps || ZERO_PUMPS,
+  schedules: initialLocal?.schedules || ZERO_SCHEDULES,
   motionAlert: null,
   themeMode: 'light',
-  emergencyStop: false,
-  rainOverride: false,
+  emergencyStop: initialLocal?.emergencyStop || false,
+  rainOverride: initialLocal?.rainOverride || false,
   isZeroDataMode: true,
 
   setActiveView: (view) => set({ activeView: view }),
@@ -239,53 +181,40 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
 
   updateTelemetryStream: (reading) =>
     set((state) => {
-      // If zero data mode is explicitly turned on, maintain 0 values
-      if (state.isZeroDataMode) {
-        return state;
-      }
-
+      if (state.isZeroDataMode) return state;
       const nextMap = new Map(state.latestReadings);
       nextMap.set(reading.zoneId, reading);
-
-      let motionAlertUpdate = state.motionAlert;
-      if (reading.motionDetected) {
-        const zoneNames: Record<string, string> = {
-          'zone-1': 'Zone 1: Corn Field',
-          'zone-2': 'Zone 2: Soybean Sector',
-          'zone-3': 'Zone 3: Vineyard East',
-          'zone-4': 'Zone 4: Orchard North',
-        };
-        motionAlertUpdate = {
-          active: true,
-          zoneId: reading.zoneId,
-          zoneName: zoneNames[reading.zoneId] || `Zone ${reading.zoneId}`,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-          message: `PIR Sensor Triggered: Movement detected in ${zoneNames[reading.zoneId] || reading.zoneId}!`,
-        };
-      }
-
-      return { latestReadings: nextMap, motionAlert: motionAlertUpdate };
+      return { latestReadings: nextMap };
     }),
 
   setAggregatedStats: (stats) => set((state) => (state.isZeroDataMode ? state : { aggregatedStats: stats })),
   setDevices: (devices) => set({ devices }),
   setInsights: (insights) => set({ insights }),
-  setRules: (rules) => set({ rules }),
+  setRules: (rules) => {
+    set({ rules });
+    get().syncStateToCloud();
+  },
 
-  toggleEmergencyStop: () =>
+  toggleEmergencyStop: () => {
     set((state) => {
       const nextEmergency = !state.emergencyStop;
       const updatedPumps = state.pumps.map((p) =>
         nextEmergency ? { ...p, status: 'OFF' as const, flowRateLmin: 0 } : p
       );
       return { emergencyStop: nextEmergency, pumps: updatedPumps };
-    }),
+    });
+    get().syncStateToCloud();
+  },
 
-  toggleRainOverride: () => set((state) => ({ rainOverride: !state.rainOverride })),
+  toggleRainOverride: () => {
+    set((state) => ({ rainOverride: !state.rainOverride }));
+    get().syncStateToCloud();
+  },
+
   toggleThemeMode: () =>
     set((state) => ({ themeMode: state.themeMode === 'light' ? 'dark' : 'light' })),
 
-  togglePumpState: (pumpId: string) =>
+  togglePumpState: (pumpId: string) => {
     set((state) => {
       const updatedPumps = state.pumps.map((p) => {
         if (p.id === pumpId) {
@@ -300,11 +229,16 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         return p;
       });
       return { pumps: updatedPumps, isZeroDataMode: false };
-    }),
+    });
+    get().syncStateToCloud();
+  },
 
-  addSchedule: (schedule) =>
-    set((state) => ({ schedules: [schedule, ...state.schedules] })),
-  toggleSchedule: (scheduleId) =>
+  addSchedule: (schedule) => {
+    set((state) => ({ schedules: [schedule, ...state.schedules] }));
+    get().syncStateToCloud();
+  },
+
+  toggleSchedule: (scheduleId) => {
     set((state) => ({
       schedules: state.schedules.map((s) =>
         s.id === scheduleId
@@ -315,11 +249,16 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
             }
           : s
       ),
-    })),
-  deleteSchedule: (scheduleId) =>
+    }));
+    get().syncStateToCloud();
+  },
+
+  deleteSchedule: (scheduleId) => {
     set((state) => ({
       schedules: state.schedules.filter((s) => s.id !== scheduleId),
-    })),
+    }));
+    get().syncStateToCloud();
+  },
 
   triggerMotionAlert: (zoneId, zoneName, message) =>
     set({
@@ -328,37 +267,70 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         zoneId,
         zoneName,
         timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        message:
-          message ||
-          `PIR Motion Sensor Alert: Intrusion detected in ${zoneName}!`,
+        message: message || `Intrusion detected in ${zoneName}!`,
       },
     }),
   dismissMotionAlert: () => set({ motionAlert: null }),
 
-  // Zero Data Reset Functionality
   resetAllDataToZero: () => {
-    const zeroMap = new Map<string, TelemetryReading>([
-      ['zone-1', createZeroReading('zone-1')],
-      ['zone-2', createZeroReading('zone-2')],
-      ['zone-3', createZeroReading('zone-3')],
-      ['zone-4', createZeroReading('zone-4')],
-    ]);
-
     set({
       isZeroDataMode: true,
-      latestReadings: zeroMap,
-      aggregatedStats: {
-        avgSoilMoisture: 0,
-        avgTemperature: 0,
-        avgTankLevel: 0,
-        totalWaterFlow: 0,
-        totalSensorsOnline: 0,
-      },
+      latestReadings: ZERO_TELEMETRY_MAP,
+      aggregatedStats: { avgSoilMoisture: 0, avgTemperature: 0, avgTankLevel: 0, totalWaterFlow: 0, totalSensorsOnline: 0 },
       pumps: ZERO_PUMPS,
       schedules: ZERO_SCHEDULES,
       motionAlert: null,
       emergencyStop: false,
       rainOverride: false,
     });
+  },
+
+  syncStateToCloud: (userEmail?: string) => {
+    const state = get();
+    const statePayload = {
+      pumps: state.pumps,
+      schedules: state.schedules,
+      rules: state.rules,
+      emergencyStop: state.emergencyStop,
+      rainOverride: state.rainOverride,
+    };
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(statePayload));
+      const sessionUser = sessionStorage.getItem('aether_active_session_user') || localStorage.getItem('aether_active_session_user');
+      const email = userEmail || (sessionUser ? JSON.parse(sessionUser).email : null);
+
+      if (email) {
+        fetch('/api/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, state: statePayload }),
+        }).catch(() => {});
+      }
+    }
+  },
+
+  loadGlobalStateForUser: async (email: string) => {
+    try {
+      const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.state) {
+          const s = json.state;
+          set({
+            pumps: s.pumps || ZERO_PUMPS,
+            schedules: s.schedules || ZERO_SCHEDULES,
+            rules: s.rules || [],
+            emergencyStop: Boolean(s.emergencyStop),
+            rainOverride: Boolean(s.rainOverride),
+          });
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(s));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[State Sync] Failed to load user state:', err);
+    }
   },
 }));
