@@ -53,6 +53,7 @@ export interface SpatialStoreState {
   // Controls & Overrides
   emergencyStop: boolean;
   rainOverride: boolean;
+  isZeroDataMode: boolean;
 
   // Actions
   setActiveView: (view: SpatialStoreState['activeView']) => void;
@@ -78,18 +79,22 @@ export interface SpatialStoreState {
   // Motion Alert Actions
   triggerMotionAlert: (zoneId: string, zoneName: string, message?: string) => void;
   dismissMotionAlert: () => void;
+
+  // Zero Data Reset Action
+  resetAllDataToZero: () => void;
 }
 
-const INITIAL_PUMPS: PumpState[] = [
+// ALL ZERO VALUE INITIALIZATION
+const ZERO_PUMPS: PumpState[] = [
   {
     id: 'pump-1',
     name: 'Pump Main Alpha',
     zoneId: 'zone-1',
     zoneName: 'Zone 1: Corn Field',
-    status: 'RUNNING',
-    runtimeMinutes: 142,
+    status: 'OFF',
+    runtimeMinutes: 0,
     manualOverride: false,
-    flowRateLmin: 28.5,
+    flowRateLmin: 0,
   },
   {
     id: 'pump-2',
@@ -107,7 +112,7 @@ const INITIAL_PUMPS: PumpState[] = [
     zoneId: 'zone-3',
     zoneName: 'Zone 3: Vineyard East',
     status: 'OFF',
-    runtimeMinutes: 65,
+    runtimeMinutes: 0,
     manualOverride: false,
     flowRateLmin: 0,
   },
@@ -116,43 +121,41 @@ const INITIAL_PUMPS: PumpState[] = [
     name: 'Pump North Delta',
     zoneId: 'zone-4',
     zoneName: 'Zone 4: Orchard North',
-    status: 'RUNNING',
-    runtimeMinutes: 88,
-    manualOverride: true,
-    flowRateLmin: 23.6,
+    status: 'OFF',
+    runtimeMinutes: 0,
+    manualOverride: false,
+    flowRateLmin: 0,
   },
 ];
 
-const INITIAL_SCHEDULES: IrrigationSchedule[] = [
+const ZERO_SCHEDULES: IrrigationSchedule[] = [
   {
     id: 'sch-1',
     name: 'Early Morning Deep Soak',
-    enabled: true,
+    enabled: false,
     farmId: 'farm-01',
     zoneId: 'zone-1',
     zoneName: 'Zone 1: Corn Field',
     pumpId: 'pump-1',
-    startTime: '06:00',
-    durationMinutes: 45,
-    daysOfWeek: ['MON', 'WED', 'FRI'],
-    targetMoistureMin: 35,
-    lastRun: new Date(Date.now() - 86400000).toISOString(),
-    status: 'SCHEDULED',
+    startTime: '00:00',
+    durationMinutes: 0,
+    daysOfWeek: [],
+    targetMoistureMin: 0,
+    status: 'PAUSED',
   },
   {
     id: 'sch-2',
     name: 'Evening Orchard Mist',
-    enabled: true,
+    enabled: false,
     farmId: 'farm-01',
     zoneId: 'zone-4',
     zoneName: 'Zone 4: Orchard North',
     pumpId: 'pump-4',
-    startTime: '18:30',
-    durationMinutes: 30,
-    daysOfWeek: ['TUE', 'THU', 'SAT'],
-    targetMoistureMin: 40,
-    lastRun: new Date(Date.now() - 43200000).toISOString(),
-    status: 'SCHEDULED',
+    startTime: '00:00',
+    durationMinutes: 0,
+    daysOfWeek: [],
+    targetMoistureMin: 0,
+    status: 'PAUSED',
   },
   {
     id: 'sch-3',
@@ -162,45 +165,88 @@ const INITIAL_SCHEDULES: IrrigationSchedule[] = [
     zoneId: 'zone-3',
     zoneName: 'Zone 3: Vineyard East',
     pumpId: 'pump-3',
-    startTime: '12:00',
-    durationMinutes: 20,
-    daysOfWeek: ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
-    targetMoistureMin: 30,
+    startTime: '00:00',
+    durationMinutes: 0,
+    daysOfWeek: [],
+    targetMoistureMin: 0,
     status: 'PAUSED',
   },
 ];
 
-export const useSpatialStore = create<SpatialStoreState>((set) => ({
+const createZeroReading = (zoneId: string): TelemetryReading => ({
+  deviceId: `esp32-node-${zoneId}`,
+  farmId: 'farm-alpha',
+  zoneId,
+  timestamp: new Date().toISOString(),
+  soilMoisture: 0,
+  soilMoistureDepth30cm: 0,
+  soilMoistureDepth60cm: 0,
+  soilTemperature: 0,
+  airTemperature: 0,
+  humidity: 0,
+  ec: 0,
+  ph: 0,
+  waterFlowRate: 0,
+  waterPressure: 0,
+  tankLevelPercent: 0,
+  nitrogen: 0,
+  phosphorus: 0,
+  potassium: 0,
+  rainRate: 0,
+  windSpeed: 0,
+  windDirection: 0,
+  solarIrradiance: 0,
+  uvIndex: 0,
+  leafWetness: 0,
+  solarVoltage: 0,
+  batteryLevelPercent: 0,
+  signalRssi: 0,
+});
+
+const ZERO_TELEMETRY_MAP = new Map<string, TelemetryReading>([
+  ['zone-1', createZeroReading('zone-1')],
+  ['zone-2', createZeroReading('zone-2')],
+  ['zone-3', createZeroReading('zone-3')],
+  ['zone-4', createZeroReading('zone-4')],
+]);
+
+export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   activeView: 'SPATIAL_3D',
   selectedZoneId: 'zone-1',
   selectedDeviceId: null,
-  latestReadings: new Map(),
+  latestReadings: ZERO_TELEMETRY_MAP,
   aggregatedStats: {
-    avgSoilMoisture: 42,
-    avgTemperature: 26.5,
-    avgTankLevel: 82,
-    totalWaterFlow: 48.5,
-    totalSensorsOnline: 32,
+    avgSoilMoisture: 0,
+    avgTemperature: 0,
+    avgTankLevel: 0,
+    totalWaterFlow: 0,
+    totalSensorsOnline: 0,
   },
   devices: [],
   insights: [],
   rules: [],
-  pumps: INITIAL_PUMPS,
-  schedules: INITIAL_SCHEDULES,
+  pumps: ZERO_PUMPS,
+  schedules: ZERO_SCHEDULES,
   motionAlert: null,
   themeMode: 'light',
   emergencyStop: false,
   rainOverride: false,
+  isZeroDataMode: true,
 
   setActiveView: (view) => set({ activeView: view }),
   setSelectedZoneId: (zoneId) => set({ selectedZoneId: zoneId }),
   setSelectedDeviceId: (deviceId) => set({ selectedDeviceId: deviceId }),
+
   updateTelemetryStream: (reading) =>
     set((state) => {
+      // If zero data mode is explicitly turned on, maintain 0 values
+      if (state.isZeroDataMode) {
+        return state;
+      }
+
       const nextMap = new Map(state.latestReadings);
       nextMap.set(reading.zoneId, reading);
 
-      // Check if PIR motion / animal intrusion is detected in incoming telemetry packet
       let motionAlertUpdate = state.motionAlert;
       if (reading.motionDetected) {
         const zoneNames: Record<string, string> = {
@@ -214,30 +260,31 @@ export const useSpatialStore = create<SpatialStoreState>((set) => ({
           zoneId: reading.zoneId,
           zoneName: zoneNames[reading.zoneId] || `Zone ${reading.zoneId}`,
           timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-          message: `PIR Sensor Triggered: Wildlife/Animal Movement detected in ${zoneNames[reading.zoneId] || reading.zoneId}! Automated deterrent siren armed.`,
+          message: `PIR Sensor Triggered: Movement detected in ${zoneNames[reading.zoneId] || reading.zoneId}!`,
         };
       }
 
       return { latestReadings: nextMap, motionAlert: motionAlertUpdate };
     }),
-  setAggregatedStats: (stats) => set({ aggregatedStats: stats }),
+
+  setAggregatedStats: (stats) => set((state) => (state.isZeroDataMode ? state : { aggregatedStats: stats })),
   setDevices: (devices) => set({ devices }),
   setInsights: (insights) => set({ insights }),
   setRules: (rules) => set({ rules }),
+
   toggleEmergencyStop: () =>
     set((state) => {
       const nextEmergency = !state.emergencyStop;
-      // If emergency stop activated, shut off all pumps
       const updatedPumps = state.pumps.map((p) =>
         nextEmergency ? { ...p, status: 'OFF' as const, flowRateLmin: 0 } : p
       );
       return { emergencyStop: nextEmergency, pumps: updatedPumps };
     }),
+
   toggleRainOverride: () => set((state) => ({ rainOverride: !state.rainOverride })),
   toggleThemeMode: () =>
     set((state) => ({ themeMode: state.themeMode === 'light' ? 'dark' : 'light' })),
 
-  // Pump actions
   togglePumpState: (pumpId: string) =>
     set((state) => {
       const updatedPumps = state.pumps.map((p) => {
@@ -252,10 +299,9 @@ export const useSpatialStore = create<SpatialStoreState>((set) => ({
         }
         return p;
       });
-      return { pumps: updatedPumps };
+      return { pumps: updatedPumps, isZeroDataMode: false };
     }),
 
-  // Schedule actions
   addSchedule: (schedule) =>
     set((state) => ({ schedules: [schedule, ...state.schedules] })),
   toggleSchedule: (scheduleId) =>
@@ -275,7 +321,6 @@ export const useSpatialStore = create<SpatialStoreState>((set) => ({
       schedules: state.schedules.filter((s) => s.id !== scheduleId),
     })),
 
-  // Motion Alert actions
   triggerMotionAlert: (zoneId, zoneName, message) =>
     set({
       motionAlert: {
@@ -285,8 +330,35 @@ export const useSpatialStore = create<SpatialStoreState>((set) => ({
         timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
         message:
           message ||
-          `PIR Motion Sensor Alert: Wildlife intrusion detected in ${zoneName}! Sirens & flashing floodlights activated.`,
+          `PIR Motion Sensor Alert: Intrusion detected in ${zoneName}!`,
       },
     }),
   dismissMotionAlert: () => set({ motionAlert: null }),
+
+  // Zero Data Reset Functionality
+  resetAllDataToZero: () => {
+    const zeroMap = new Map<string, TelemetryReading>([
+      ['zone-1', createZeroReading('zone-1')],
+      ['zone-2', createZeroReading('zone-2')],
+      ['zone-3', createZeroReading('zone-3')],
+      ['zone-4', createZeroReading('zone-4')],
+    ]);
+
+    set({
+      isZeroDataMode: true,
+      latestReadings: zeroMap,
+      aggregatedStats: {
+        avgSoilMoisture: 0,
+        avgTemperature: 0,
+        avgTankLevel: 0,
+        totalWaterFlow: 0,
+        totalSensorsOnline: 0,
+      },
+      pumps: ZERO_PUMPS,
+      schedules: ZERO_SCHEDULES,
+      motionAlert: null,
+      emergencyStop: false,
+      rainOverride: false,
+    });
+  },
 }));

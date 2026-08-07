@@ -3,6 +3,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
+// Auth Component
+import { LoginPage } from '../components/auth/LoginPage';
+import { useAuthStore } from '../store/useAuthStore';
+
 // Layout & Navigation
 import { SpatialShell } from '../components/dashboard/SpatialShell';
 import { CommandPalette } from '../components/command/CommandPalette';
@@ -48,8 +52,15 @@ function CanvasLoader() {
 }
 
 export default function DashboardPage() {
+  const { isAuthenticated } = useAuthStore();
   const { activeView } = useSpatialStore();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Client-side hydration check
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Initialize WebSocket connection
   useWebSocketFeed();
@@ -69,6 +80,19 @@ export default function DashboardPage() {
   const handleCloseCommandPalette = useCallback(() => {
     setCommandPaletteOpen(false);
   }, []);
+
+  if (!isMounted) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-[#e6ecf5] dark:bg-[#0b0f19]">
+        <div className="w-8 h-8 border-2 border-cyber-cyan/30 border-t-cyber-cyan rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Render Login Interface Page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
   return (
     <>

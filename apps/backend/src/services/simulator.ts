@@ -8,6 +8,15 @@ export class ESP32Simulator {
   private static timer: NodeJS.Timeout | null = null;
   private static isRunning = false;
   private static callbackFn: ((reading: TelemetryReading, ruleLogs: any[]) => void) | null = null;
+  private static zeroMode = true;
+
+  public static setZeroMode(enable: boolean): void {
+    this.zeroMode = enable;
+  }
+
+  public static isZeroMode(): boolean {
+    return this.zeroMode;
+  }
 
   public static start(onBroadcast?: (reading: TelemetryReading, ruleLogs: any[]) => void): void {
     if (this.isRunning) return;
@@ -20,11 +29,11 @@ export class ESP32Simulator {
     const deviceManager = IoTDeviceManager.getInstance();
 
     const zones = [
-      { id: 'zone-1', name: 'Corn Field Sector A', baseMoisture: 32, baseTemp: 28 },
-      { id: 'zone-2', name: 'Soybean Sector B', baseMoisture: 44, baseTemp: 26 },
-      { id: 'zone-3', name: 'Vineyard East', baseMoisture: 28, baseTemp: 31 },
-      { id: 'zone-4', name: 'Orchard North', baseMoisture: 52, baseTemp: 25 },
-      { id: 'zone-5', name: 'Hydroponic Greenhouse', baseMoisture: 65, baseTemp: 24 }
+      { id: 'zone-1', name: 'Corn Field Sector A', baseMoisture: 0, baseTemp: 0 },
+      { id: 'zone-2', name: 'Soybean Sector B', baseMoisture: 0, baseTemp: 0 },
+      { id: 'zone-3', name: 'Vineyard East', baseMoisture: 0, baseTemp: 0 },
+      { id: 'zone-4', name: 'Orchard North', baseMoisture: 0, baseTemp: 0 },
+      { id: 'zone-5', name: 'Hydroponic Greenhouse', baseMoisture: 0, baseTemp: 0 }
     ];
 
     let step = 0;
@@ -34,43 +43,65 @@ export class ESP32Simulator {
       const currentZone = zones[step % zones.length];
       const deviceId = `esp32-node-alpha-0${(step % 3) + 1}`;
 
-      // Simulate realistic fluctuation with sinusoidal noise
-      const sineVal = Math.sin(step * 0.2);
-      const randomNoise = (Math.random() - 0.5) * 2;
-
-      const soilMoisture = Math.max(15, Math.min(85, Math.round(currentZone.baseMoisture + sineVal * 4 + randomNoise)));
-      const airTemp = Number((currentZone.baseTemp + sineVal * 2 + randomNoise * 0.5).toFixed(1));
-      const humidity = Math.max(30, Math.min(95, Math.round(65 - sineVal * 5 + randomNoise * 2)));
-
-      const reading: TelemetryReading = {
-        deviceId,
-        farmId: 'farm-alpha',
-        zoneId: currentZone.id,
-        timestamp: new Date().toISOString(),
-        soilMoisture,
-        soilMoistureDepth30cm: soilMoisture - 2,
-        soilMoistureDepth60cm: soilMoisture + 5,
-        soilTemperature: Number((airTemp - 2).toFixed(1)),
-        airTemperature: airTemp,
-        humidity,
-        ec: Number((1.4 + sineVal * 0.2).toFixed(2)),
-        ph: Number((6.5 + randomNoise * 0.1).toFixed(2)),
-        waterFlowRate: Number((12.5 + sineVal * 3).toFixed(1)),
-        waterPressure: Number((38 + sineVal * 4).toFixed(1)),
-        tankLevelPercent: Math.max(10, Math.min(100, Math.round(85 - (step % 20) * 0.5))),
-        nitrogen: Math.round(140 + sineVal * 10),
-        phosphorus: Math.round(45 + sineVal * 5),
-        potassium: Math.round(180 + sineVal * 12),
-        rainRate: sineVal > 0.8 ? Number((randomNoise * 4).toFixed(1)) : 0,
-        windSpeed: Number((12 + sineVal * 5).toFixed(1)),
-        windDirection: Math.round((180 + sineVal * 90) % 360),
-        solarIrradiance: Math.round(750 + sineVal * 150),
-        uvIndex: Math.max(1, Math.round(6 + sineVal * 3)),
-        leafWetness: Math.round(40 + sineVal * 20),
-        solarVoltage: Number((13.8 + randomNoise * 0.2).toFixed(2)),
-        batteryLevelPercent: 95,
-        signalRssi: Math.round(-65 + randomNoise * 5)
-      };
+      const reading: TelemetryReading = this.zeroMode
+        ? {
+            deviceId,
+            farmId: 'farm-alpha',
+            zoneId: currentZone.id,
+            timestamp: new Date().toISOString(),
+            soilMoisture: 0,
+            soilMoistureDepth30cm: 0,
+            soilMoistureDepth60cm: 0,
+            soilTemperature: 0,
+            airTemperature: 0,
+            humidity: 0,
+            ec: 0,
+            ph: 0,
+            waterFlowRate: 0,
+            waterPressure: 0,
+            tankLevelPercent: 0,
+            nitrogen: 0,
+            phosphorus: 0,
+            potassium: 0,
+            rainRate: 0,
+            windSpeed: 0,
+            windDirection: 0,
+            solarIrradiance: 0,
+            uvIndex: 0,
+            leafWetness: 0,
+            solarVoltage: 0,
+            batteryLevelPercent: 0,
+            signalRssi: 0
+          }
+        : {
+            deviceId,
+            farmId: 'farm-alpha',
+            zoneId: currentZone.id,
+            timestamp: new Date().toISOString(),
+            soilMoisture: 0,
+            soilMoistureDepth30cm: 0,
+            soilMoistureDepth60cm: 0,
+            soilTemperature: 0,
+            airTemperature: 0,
+            humidity: 0,
+            ec: 0,
+            ph: 0,
+            waterFlowRate: 0,
+            waterPressure: 0,
+            tankLevelPercent: 0,
+            nitrogen: 0,
+            phosphorus: 0,
+            potassium: 0,
+            rainRate: 0,
+            windSpeed: 0,
+            windDirection: 0,
+            solarIrradiance: 0,
+            uvIndex: 0,
+            leafWetness: 0,
+            solarVoltage: 0,
+            batteryLevelPercent: 0,
+            signalRssi: 0
+          };
 
       // 1. Telemetry Ingestion
       telemetryService.recordReading(reading);
@@ -88,7 +119,7 @@ export class ESP32Simulator {
       if (this.callbackFn) {
         this.callbackFn(reading, ruleLogs);
       }
-    }, 1500); // Broadcast every 1.5 seconds for live experience
+    }, 1500);
   }
 
   public static stop(): void {
