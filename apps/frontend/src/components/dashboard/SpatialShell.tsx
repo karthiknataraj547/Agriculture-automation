@@ -103,10 +103,10 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
       >
         {/* Brand Icon Module */}
         <div className="flex flex-col items-center mb-3 relative">
-          <div className="w-12 h-12 rounded-xl skeuo-pressed flex items-center justify-center text-sky-600 dark:text-cyan-400">
+          <div className="w-12 h-12 rounded-xl skeuo-pressed flex items-center justify-center text-sky-600 dark:text-cyan-400 shadow-inner">
             <Radio size={22} className="animate-pulse" />
           </div>
-          <span className="text-[8px] font-mono font-bold tracking-widest text-slate-500 uppercase mt-1">
+          <span className="text-[9px] font-mono font-extrabold tracking-widest text-slate-900 dark:text-slate-100 uppercase mt-1">
             AETHER
           </span>
         </div>
@@ -125,12 +125,12 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                 className={clsx(
                   'w-12 h-12 rounded-xl flex flex-col items-center justify-center transition-all duration-150 group mx-auto',
                   isActive
-                    ? 'skeuo-button-active text-sky-600 dark:text-cyan-400 font-bold'
-                    : 'skeuo-button text-slate-600 dark:text-slate-400 hover:text-sky-600 dark:hover:text-cyan-400'
+                    ? 'skeuo-button-active text-sky-600 dark:text-cyan-400 font-extrabold'
+                    : 'skeuo-button text-slate-900 dark:text-slate-200 hover:text-sky-600 dark:hover:text-cyan-400 font-bold'
                 )}
               >
                 <span>{item.icon}</span>
-                <span className="text-[7px] font-mono tracking-tighter uppercase mt-0.5 truncate max-w-[44px]">
+                <span className="text-[7px] font-mono tracking-tighter uppercase mt-0.5 truncate max-w-[44px] font-bold">
                   {item.label}
                 </span>
               </button>
@@ -143,7 +143,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
           onClick={onOpenCommandPalette}
           title="Command Palette (Ctrl+K)"
           aria-label="Open command palette"
-          className="w-12 h-12 rounded-xl flex items-center justify-center skeuo-button text-slate-600 dark:text-slate-400 hover:text-sky-600 dark:hover:text-cyan-400"
+          className="w-12 h-12 rounded-xl flex items-center justify-center skeuo-button text-slate-900 dark:text-slate-200 hover:text-sky-600 dark:hover:text-cyan-400 font-bold"
         >
           <Search size={18} />
         </button>
@@ -157,7 +157,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
           <div className="flex items-center gap-3 md:gap-5 min-w-0">
             <button
               onClick={() => setDrawerOpen(true)}
-              className="md:hidden w-9 h-9 rounded-lg skeuo-button flex items-center justify-center text-slate-700 dark:text-slate-200"
+              className="md:hidden w-9 h-9 rounded-lg skeuo-button flex items-center justify-center text-slate-900 dark:text-slate-100 font-bold"
               aria-label="Open navigation menu"
               aria-expanded={drawerOpen}
               aria-controls="mobile-drawer"
@@ -167,7 +167,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
             <div className="flex items-center gap-2">
               <span className="skeuo-rivet hidden sm:inline-block" />
-              <h1 className="text-xs md:text-sm font-mono font-bold tracking-[0.25em] text-slate-800 dark:text-slate-100 uppercase truncate">
+              <h1 className="text-xs md:text-sm font-mono font-extrabold tracking-[0.25em] text-slate-900 dark:text-slate-100 uppercase truncate">
                 {NAV_ITEMS.find((n) => n.key === activeView)?.label ?? 'Dashboard'}
               </h1>
             </div>

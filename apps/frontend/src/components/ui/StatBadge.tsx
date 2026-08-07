@@ -78,7 +78,7 @@ export function StatBadge({
 
       {/* Glass LCD Display Text */}
       <div className="min-w-0 flex-1">
-        <p className="text-[10px] uppercase tracking-wider text-slate-500 font-mono font-semibold truncate">
+        <p className="text-[10px] uppercase tracking-wider text-slate-800 dark:text-slate-200 font-mono font-extrabold truncate">
           {label}
         </p>
         <div className="flex items-baseline gap-1">
@@ -91,7 +91,7 @@ export function StatBadge({
             {displayValue}
           </span>
           {unit && (
-            <span className="text-[10px] text-slate-500 font-mono font-semibold">{unit}</span>
+            <span className="text-[10px] text-slate-800 dark:text-slate-200 font-mono font-extrabold">{unit}</span>
           )}
           {trend && (
             <span

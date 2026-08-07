@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Power, Activity, Clock, Droplet, ShieldAlert, Cpu } from 'lucide-react';
+import { Power, Clock, Droplet, ShieldAlert } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
 import { useSpatialStore } from '../../store/useSpatialStore';
@@ -22,13 +22,13 @@ export function PumpControlPanel() {
         <div className="flex items-center gap-2.5">
           <span className="skeuo-rivet" />
           <Power size={18} className="text-sky-600 dark:text-cyan-400" />
-          <span className="text-xs font-mono uppercase tracking-[0.2em] text-slate-800 dark:text-slate-100 font-bold">
+          <span className="text-xs font-mono uppercase tracking-[0.2em] text-slate-900 dark:text-slate-100 font-extrabold">
             MASTER PUMP ACTUATOR CONSOLE
           </span>
         </div>
         <div className="flex items-center gap-2">
           <span className="skeuo-led skeuo-led-cyan" />
-          <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400 tracking-wider">
+          <span className="text-xs font-mono font-extrabold text-emerald-700 dark:text-emerald-400 tracking-wider">
             {runningCount} / {pumps.length} PUMPS ONLINE
           </span>
         </div>
@@ -37,7 +37,7 @@ export function PumpControlPanel() {
       {/* Emergency Stop Alert if active */}
       {emergencyStop && (
         <div
-          className="p-4 mb-5 rounded-xl skeuo-panel border-2 border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-mono font-bold flex items-center gap-3 shadow-lg"
+          className="p-4 mb-5 rounded-xl skeuo-panel border-2 border-rose-500 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs font-mono font-extrabold flex items-center gap-3 shadow-lg"
           role="alert"
           aria-live="assertive"
         >
@@ -63,14 +63,18 @@ export function PumpControlPanel() {
                 <div className="flex items-center gap-3">
                   <div
                     className={`w-11 h-11 rounded-xl flex items-center justify-center skeuo-pressed ${
-                      isRunning ? 'text-emerald-500' : 'text-slate-400'
+                      isRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-400'
                     }`}
                   >
                     <Power size={20} className={isRunning ? 'drop-shadow-[0_0_8px_#22c55e]' : ''} />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold tracking-wide text-slate-800 dark:text-slate-100 font-mono uppercase">{pump.name}</h3>
-                    <p className="text-[10px] font-mono text-slate-500 font-semibold">{pump.zoneName}</p>
+                    <h3 className="text-sm font-extrabold tracking-wider text-slate-900 dark:text-slate-100 font-mono uppercase">
+                      {pump.name}
+                    </h3>
+                    <p className="text-xs font-mono text-slate-700 dark:text-slate-300 font-bold mt-0.5">
+                      {pump.zoneName}
+                    </p>
                   </div>
                 </div>
 
@@ -87,7 +91,7 @@ export function PumpControlPanel() {
                 <div className="p-3 rounded-lg skeuo-glass-bezel text-center">
                   <div className="flex items-center justify-center gap-1.5 text-sky-400 mb-1">
                     <Droplet size={14} />
-                    <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400 font-bold">Flow Telemetry</span>
+                    <span className="text-[9px] font-mono uppercase tracking-wider text-slate-300 font-bold">Flow Telemetry</span>
                   </div>
                   <span className="text-base font-bold font-mono text-sky-300 tabular-nums drop-shadow-md">
                     {pump.flowRateLmin.toFixed(1)} <span className="text-[10px] text-slate-400">L/min</span>
@@ -98,7 +102,7 @@ export function PumpControlPanel() {
                 <div className="p-3 rounded-lg skeuo-glass-bezel text-center">
                   <div className="flex items-center justify-center gap-1.5 text-amber-400 mb-1">
                     <Clock size={14} />
-                    <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400 font-bold">Duty Meter</span>
+                    <span className="text-[9px] font-mono uppercase tracking-wider text-slate-300 font-bold">Duty Meter</span>
                   </div>
                   <span className="text-base font-bold font-mono text-amber-300 tabular-nums drop-shadow-md">
                     {pump.runtimeMinutes} <span className="text-[10px] text-slate-400">mins</span>
@@ -108,13 +112,13 @@ export function PumpControlPanel() {
 
               {/* Physical Actuation Control Bar */}
               <div className="flex items-center justify-between pt-3 border-t border-slate-300 dark:border-slate-800">
-                <span className="text-[9px] font-mono text-slate-500 uppercase font-bold tracking-wider">
+                <span className="text-[10px] font-mono text-slate-800 dark:text-slate-200 uppercase font-extrabold tracking-wider">
                   {pump.manualOverride ? '⚡ MANUAL OVERRIDE' : '🤖 AUTO SCHEDULE'}
                 </span>
 
                 {/* 3D Mechanical Toggle Switch Control */}
                 <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-mono font-bold text-slate-600 dark:text-slate-400">
+                  <span className="text-xs font-mono font-extrabold text-slate-900 dark:text-slate-100">
                     {isRunning ? 'ON' : 'OFF'}
                   </span>
                   <div

@@ -11,14 +11,14 @@ export function MotionAlertBanner() {
     return (
       <div className="flex items-center justify-between px-4 py-2 mb-3 rounded-xl neu-pressed">
         <div className="flex items-center gap-2">
-          <ShieldAlert size={14} className="text-cyber-emerald" />
-          <span className="text-[10px] font-mono text-slate-600 font-medium uppercase tracking-wider">
-            PIR Motion & Wildlife Perimeter Defense: ARMED & MONITORING
+          <ShieldAlert size={16} className="text-emerald-600 dark:text-emerald-400" />
+          <span className="text-xs font-mono text-slate-900 dark:text-slate-100 font-extrabold uppercase tracking-wider">
+            PIR MOTION & WILDLIFE PERIMETER DEFENSE: ARMED & MONITORING
           </span>
         </div>
         <button
           onClick={() => triggerMotionAlert('zone-2', 'Zone 2: Soybean Sector', 'Simulated PIR Intrusion: Wild Boar / Deer detected in Zone 2!')}
-          className="text-[9px] font-mono px-2.5 py-1 rounded-lg neu-button text-slate-600 hover:text-cyber-crimson transition-colors"
+          className="text-[10px] font-mono px-3 py-1 rounded-lg skeuo-button text-slate-900 dark:text-slate-100 font-extrabold hover:text-rose-600 transition-colors shadow-sm"
         >
           TEST MOTION ALERT
         </button>

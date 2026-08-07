@@ -12,10 +12,10 @@ interface SpatialButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 }
 
 const variantTextColors = {
-  primary: 'text-sky-600 dark:text-cyan-400 border-sky-500/50 hover:border-sky-500',
-  ghost: 'text-slate-700 dark:text-slate-300 hover:text-sky-600 dark:hover:text-cyan-400',
-  danger: 'text-rose-600 dark:text-rose-400 border-rose-500/50 hover:border-rose-500',
-  success: 'text-emerald-600 dark:text-emerald-400 border-emerald-500/50 hover:border-emerald-500',
+  primary: 'text-sky-700 dark:text-cyan-400 border-sky-500/50 hover:border-sky-500 font-extrabold',
+  ghost: 'text-slate-900 dark:text-slate-100 font-extrabold hover:text-sky-600 dark:hover:text-cyan-400',
+  danger: 'text-rose-700 dark:text-rose-400 border-rose-500/50 hover:border-rose-500 font-extrabold',
+  success: 'text-emerald-700 dark:text-emerald-400 border-emerald-500/50 hover:border-emerald-500 font-extrabold',
 };
 
 const sizeStyles = {
@@ -36,7 +36,7 @@ export function SpatialButton({
   return (
     <button
       className={clsx(
-        'inline-flex items-center justify-center font-mono font-semibold uppercase tracking-wider',
+        'inline-flex items-center justify-center font-mono font-extrabold uppercase tracking-wider',
         'skeuo-button transition-all duration-150',
         'disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none',
         variantTextColors[variant],

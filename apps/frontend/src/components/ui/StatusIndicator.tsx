@@ -66,7 +66,7 @@ export function StatusIndicator({
         <span className={clsx('skeuo-led', config.class, sz.dot)} />
       </span>
       {label !== undefined && (
-        <span className={clsx('font-mono font-semibold tracking-wide uppercase', sz.text, 'text-slate-700 dark:text-slate-300')}>
+        <span className={clsx('font-mono font-extrabold tracking-wide uppercase', sz.text, 'text-slate-900 dark:text-slate-100')}>
           {label ?? config.label}
         </span>
       )}
