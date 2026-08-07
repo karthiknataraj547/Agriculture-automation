@@ -89,7 +89,7 @@ export interface SpatialStoreState {
 }
 
 const STORAGE_STATE_KEY = 'aether_farm_persisted_state';
-const STORAGE_VIEW_KEY = 'aether_active_view';
+const STORAGE_VIEW_KEY = 'aether_active_view_device';
 
 const ZERO_PUMPS: PumpState[] = [
   { id: 'pump-1', name: 'Pump Main Alpha', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
@@ -192,7 +192,6 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       sessionStorage.setItem(STORAGE_VIEW_KEY, view);
       localStorage.setItem(STORAGE_VIEW_KEY, view);
     }
-    get().syncStateToCloud();
   },
 
   setSelectedZoneId: (zoneId) => set({ selectedZoneId: zoneId }),
@@ -304,19 +303,19 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     });
   },
 
+  // Sync ONLY DOMAIN DATA across devices (Pumps, Schedules, Rules, Overrides). Does NOT force view/path switching!
   syncStateToCloud: (userEmail?: string) => {
     const state = get();
-    const statePayload = {
+    const domainDataPayload = {
       pumps: state.pumps,
       schedules: state.schedules,
       rules: state.rules,
       emergencyStop: state.emergencyStop,
       rainOverride: state.rainOverride,
-      activeView: state.activeView,
     };
 
     if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(statePayload));
+      localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(domainDataPayload));
       const sessionUser = sessionStorage.getItem('aether_active_session_user') || localStorage.getItem('aether_active_session_user');
       const email = userEmail || (sessionUser ? JSON.parse(sessionUser).email : null);
 
@@ -324,12 +323,13 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         fetch('/api/state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, state: statePayload }),
+          body: JSON.stringify({ email, state: domainDataPayload }),
         }).catch(() => {});
       }
     }
   },
 
+  // Fetch live DOMAIN DATA (Pump status ON/OFF, Schedules, Rules, Overrides). Keeps local activeView intact!
   loadGlobalStateForUser: async (email: string) => {
     try {
       const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
@@ -339,15 +339,18 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
           const s = json.state;
           const current = get();
 
-          // Only set state if values changed to prevent UI flicker
           const newPumpsStr = JSON.stringify(s.pumps || ZERO_PUMPS);
           const currentPumpsStr = JSON.stringify(current.pumps);
           const newSchedulesStr = JSON.stringify(s.schedules || ZERO_SCHEDULES);
           const currentSchedulesStr = JSON.stringify(current.schedules);
+          const newRulesStr = JSON.stringify(s.rules || []);
+          const currentRulesStr = JSON.stringify(current.rules);
 
+          // Update domain data ONLY if values changed across devices
           if (
             newPumpsStr !== currentPumpsStr ||
             newSchedulesStr !== currentSchedulesStr ||
+            newRulesStr !== currentRulesStr ||
             Boolean(s.emergencyStop) !== current.emergencyStop ||
             Boolean(s.rainOverride) !== current.rainOverride
           ) {
@@ -357,7 +360,6 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
               rules: s.rules || [],
               emergencyStop: Boolean(s.emergencyStop),
               rainOverride: Boolean(s.rainOverride),
-              activeView: s.activeView || current.activeView,
             });
             if (typeof window !== 'undefined') {
               localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(s));
