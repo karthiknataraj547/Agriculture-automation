@@ -89,7 +89,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
   }, [setActiveView]);
 
   return (
-    <div className={clsx('flex flex-col md:flex-row h-[100dvh] max-h-[100dvh] w-full overflow-hidden transition-colors duration-300', themeMode === 'dark' ? 'dark bg-[#090d16]' : 'bg-[#dbe2ef]')}>
+    <div className={clsx('flex flex-col md:flex-row h-[100dvh] max-h-[100dvh] w-full overflow-hidden transition-colors duration-300', themeMode === 'dark' ? 'dark bg-[#090d16]' : 'bg-[#e8eef7] text-[#0b132b]')}>
       {/* ─── Skip to Content ─── */}
       <a href="#main-content" className="skip-to-content">
         Skip to main content

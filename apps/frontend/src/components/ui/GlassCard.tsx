@@ -40,7 +40,7 @@ export function GlassCard({
     <div
       onClick={onClick}
       className={clsx(
-        'relative transition-all duration-200',
+        'relative transition-all duration-200 text-slate-900 dark:text-slate-100 font-extrabold',
         variantStyles[variant],
         paddingStyles[padding],
         hover &&
