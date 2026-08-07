@@ -12,26 +12,22 @@ import {
   KeyRound,
   CheckCircle2,
   AlertCircle,
-  RotateCcw,
-  Sparkles,
   ArrowRight,
+  Loader2,
+  Globe,
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { SpatialButton } from '../ui/SpatialButton';
 import { useAuthStore } from '../../store/useAuthStore';
-import { useSpatialStore } from '../../store/useSpatialStore';
 
 export function LoginPage() {
-  const { login, registerCustomerAccount, updatePassword, hasCustomerCreatedPassword } = useAuthStore();
-  const { resetAllDataToZero } = useSpatialStore();
+  const { login, registerCustomerAccount, updatePassword, isLoading } = useAuthStore();
 
-  const [mode, setMode] = useState<'LOGIN' | 'CREATE_ACCOUNT' | 'FORGOT_PASS'>(
-    hasCustomerCreatedPassword ? 'LOGIN' : 'CREATE_ACCOUNT'
-  );
+  const [mode, setMode] = useState<'LOGIN' | 'CREATE_ACCOUNT' | 'FORGOT_PASS'>('LOGIN');
 
   // Form fields
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('customer@aethercrop.io');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [oldPassword, setOldPassword] = useState('');
@@ -40,7 +36,6 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [isResetDataDone, setIsResetDataDone] = useState(false);
 
   // Calculate password strength
   const getPasswordStrength = (pass: string) => {
@@ -55,30 +50,39 @@ export function LoginPage() {
 
   const strength = getPasswordStrength(password);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
 
     if (mode === 'LOGIN') {
-      const result = login(password, email);
+      if (!email || !password) {
+        setErrorMessage('Please enter both email/username and password.');
+        return;
+      }
+      const result = await login(password, email);
       if (!result.success) {
         setErrorMessage(result.message || 'Login failed.');
       }
     } else if (mode === 'CREATE_ACCOUNT') {
-      if (password !== confirmPassword) {
-        setErrorMessage('Passwords do not match. Please verify your entries.');
+      if (!email || !password) {
+        setErrorMessage('Email/username and password are required.');
         return;
       }
 
-      const result = registerCustomerAccount(name || 'Customer Operator', email, password);
+      if (password !== confirmPassword) {
+        setErrorMessage('Passwords do not match. Please re-enter your password.');
+        return;
+      }
+
+      const result = await registerCustomerAccount(name || 'Customer Operator', email, password);
       if (!result.success) {
         setErrorMessage(result.message || 'Registration failed.');
       } else {
-        setSuccessMessage('Customer account & password created! Logging in...');
+        setSuccessMessage('Customer account created globally! Logging in...');
       }
     } else if (mode === 'FORGOT_PASS') {
-      const result = updatePassword(oldPassword, password);
+      const result = await updatePassword(oldPassword, password);
       if (!result.success) {
         setErrorMessage(result.message || 'Password update failed.');
       } else {
@@ -86,12 +90,6 @@ export function LoginPage() {
         setMode('LOGIN');
       }
     }
-  };
-
-  const handleResetDataClick = () => {
-    resetAllDataToZero();
-    setIsResetDataDone(true);
-    setTimeout(() => setIsResetDataDone(false), 4000);
   };
 
   return (
@@ -109,10 +107,10 @@ export function LoginPage() {
             Precision Irrigation & Hardware Automation System
           </p>
 
-          {/* Zero Data Indicator Badge */}
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full neu-pressed text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold mt-2">
-            <Sparkles size={12} />
-            <span>ALL WEB TOOL DATA RESET TO ZERO (0)</span>
+          {/* Global Access Indicator Badge */}
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full neu-pressed text-[10px] font-mono text-cyber-cyan font-semibold mt-1">
+            <Globe size={12} />
+            <span>GLOBAL CROSS-DEVICE AUTHENTICATION</span>
           </div>
         </div>
 
@@ -160,12 +158,12 @@ export function LoginPage() {
           <div className="mb-4">
             <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">
               {mode === 'LOGIN' && 'Customer Login Portal'}
-              {mode === 'CREATE_ACCOUNT' && 'Create Customer Password'}
+              {mode === 'CREATE_ACCOUNT' && 'Create Account & Password'}
               {mode === 'FORGOT_PASS' && 'Reset Customer Password'}
             </h2>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              {mode === 'LOGIN' && 'Enter your customer-created credentials to access the farm dashboard.'}
-              {mode === 'CREATE_ACCOUNT' && 'Set up your personalized customer password for secure access.'}
+              {mode === 'LOGIN' && 'Sign in with your registered account credentials from any device.'}
+              {mode === 'CREATE_ACCOUNT' && 'Create your customer account & password globally accessible across all devices.'}
               {mode === 'FORGOT_PASS' && 'Specify your new customer password below.'}
             </p>
           </div>
@@ -366,33 +364,27 @@ export function LoginPage() {
               type="submit"
               variant="primary"
               size="lg"
+              disabled={isLoading}
               className="w-full mt-6 neu-convex-glow flex items-center justify-center gap-2"
             >
-              <span>
-                {mode === 'LOGIN' && 'Sign In to Dashboard'}
-                {mode === 'CREATE_ACCOUNT' && 'Save Customer Password & Log In'}
-                {mode === 'FORGOT_PASS' && 'Update Password'}
-              </span>
-              <ArrowRight size={16} />
+              {isLoading ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Authenticating...</span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    {mode === 'LOGIN' && 'Sign In to Dashboard'}
+                    {mode === 'CREATE_ACCOUNT' && 'Create Account Globally'}
+                    {mode === 'FORGOT_PASS' && 'Update Password'}
+                  </span>
+                  <ArrowRight size={16} />
+                </>
+              )}
             </SpatialButton>
           </form>
         </GlassCard>
-
-        {/* Zero Data Reset Button Footer */}
-        <div className="p-3 rounded-2xl neu-flat flex items-center justify-between">
-          <div className="flex items-center gap-2 text-slate-500 text-xs">
-            <RotateCcw size={14} className="text-cyber-cyan" />
-            <span className="text-[10px] font-mono">Web Tool State: All Zero</span>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleResetDataClick}
-            className="px-3 py-1.5 rounded-xl neu-button text-[10px] font-mono font-bold text-cyber-cyan uppercase hover:text-cyber-emerald transition-all"
-          >
-            {isResetDataDone ? '✓ Reset Done' : 'Reset All Data (0)'}
-          </button>
-        </div>
       </div>
     </div>
   );

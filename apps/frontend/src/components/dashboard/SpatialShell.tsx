@@ -21,10 +21,10 @@ import {
   X,
   User,
   LogOut,
-  RotateCcw,
   KeyRound,
   CheckCircle2,
   AlertCircle,
+  Globe,
 } from 'lucide-react';
 import { useSpatialStore, SpatialStoreState } from '../../store/useSpatialStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -70,8 +70,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
     toggleRainOverride,
     themeMode,
     toggleThemeMode,
-    resetAllDataToZero,
-    isZeroDataMode,
   } = useSpatialStore();
 
   const { user, logout, updatePassword } = useAuthStore();
@@ -79,8 +77,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
   const [timeString, setTimeString] = useState<string>('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [userModalOpen, setUserModalOpen] = useState(false);
-  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
-  const [resetFeedback, setResetFeedback] = useState(false);
 
   // Password change state
   const [changePassOpen, setChangePassOpen] = useState(false);
@@ -103,34 +99,26 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
       if (e.key === 'Escape') {
         if (drawerOpen) setDrawerOpen(false);
         if (userModalOpen) setUserModalOpen(false);
-        if (resetConfirmOpen) setResetConfirmOpen(false);
         if (changePassOpen) setChangePassOpen(false);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [drawerOpen, userModalOpen, resetConfirmOpen, changePassOpen]);
+  }, [drawerOpen, userModalOpen, changePassOpen]);
 
   const handleNavClick = useCallback((key: ViewKey) => {
     setActiveView(key);
     setDrawerOpen(false);
   }, [setActiveView]);
 
-  const handleExecuteReset = () => {
-    resetAllDataToZero();
-    setResetConfirmOpen(false);
-    setResetFeedback(true);
-    setTimeout(() => setResetFeedback(false), 3500);
-  };
-
-  const handleChangePasswordSubmit = (e: React.FormEvent) => {
+  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassMessage(null);
-    const result = updatePassword(oldPass, newPass);
+    const result = await updatePassword(oldPass, newPass);
     if (!result.success) {
       setPassMessage({ type: 'error', text: result.message || 'Password update failed.' });
     } else {
-      setPassMessage({ type: 'success', text: 'Customer password updated successfully!' });
+      setPassMessage({ type: 'success', text: 'Customer password updated globally!' });
       setOldPass('');
       setNewPass('');
       setTimeout(() => {
@@ -222,24 +210,12 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
             </h1>
             <div className="hidden sm:block h-4 w-px bg-slate-300 dark:bg-slate-700" />
             <div className="hidden sm:block">
-              <StatusIndicator status="online" label={isZeroDataMode ? 'ZERO DATA MODE' : 'GATEWAY LIVE'} size="sm" />
+              <StatusIndicator status="online" label="GATEWAY LIVE" size="sm" />
             </div>
           </div>
 
           {/* Right Section */}
           <div className="flex items-center gap-1.5 md:gap-2.5">
-            {/* RESET DATA TO ZERO BUTTON */}
-            <SpatialButton
-              variant={isZeroDataMode ? 'primary' : 'ghost'}
-              size="sm"
-              icon={<RotateCcw size={12} className={resetFeedback ? 'animate-spin' : ''} />}
-              onClick={() => setResetConfirmOpen(true)}
-              title="Reset all web tool data to zero value"
-            >
-              <span className="hidden lg:inline">{resetFeedback ? 'ZEROED!' : 'RESET DATA (0)'}</span>
-              <span className="lg:hidden">RESET (0)</span>
-            </SpatialButton>
-
             {/* Theme Switcher Toggle */}
             <SpatialButton
               variant="ghost"
@@ -290,14 +266,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
             </button>
           </div>
         </header>
-
-        {/* Feedback Alert Banner if Data Reset */}
-        {resetFeedback && (
-          <div className="bg-emerald-600 text-white text-[11px] font-mono font-bold px-4 py-1.5 text-center flex items-center justify-center gap-2 animate-bounce">
-            <CheckCircle2 size={14} />
-            <span>ALL WEB TOOL DATA HAS BEEN RESET TO ZERO VALUES (0)</span>
-          </div>
-        )}
 
         {/* ─── Content ─── */}
         <main
@@ -413,14 +381,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
             <div className="p-4 border-t border-white/80 dark:border-white/10 space-y-2">
               <button
-                onClick={() => { setResetConfirmOpen(true); setDrawerOpen(false); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl neu-button text-cyber-cyan text-xs font-mono uppercase font-bold min-h-[44px]"
-              >
-                <RotateCcw size={16} />
-                <span>Reset Data to Zero</span>
-              </button>
-
-              <button
                 onClick={() => { logout(); setDrawerOpen(false); }}
                 className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl neu-button text-red-600 text-xs font-mono uppercase font-bold min-h-[44px]"
               >
@@ -461,9 +421,12 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                   <p className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">Email Address</p>
                   <p className="text-xs font-mono text-slate-700 dark:text-slate-300">{user?.email || 'customer@aethercrop.io'}</p>
                 </div>
-                <div className="p-3 rounded-xl neu-pressed space-y-1">
-                  <p className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">Access Role</p>
-                  <p className="text-xs font-mono text-cyber-cyan font-bold">{user?.role || 'Farm Owner / Operator'}</p>
+                <div className="p-3 rounded-xl neu-pressed space-y-1 flex items-center justify-between">
+                  <div>
+                    <p className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">Global Account Status</p>
+                    <p className="text-xs font-mono text-cyber-cyan font-bold">Active & Synced</p>
+                  </div>
+                  <Globe size={16} className="text-cyber-cyan" />
                 </div>
               </div>
 
@@ -492,46 +455,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                   className="w-full justify-center"
                 >
                   Sign Out / Log Out
-                </SpatialButton>
-              </div>
-            </GlassCard>
-          </div>
-        </div>
-      )}
-
-      {/* ─── RESET DATA CONFIRMATION MODAL ─── */}
-      {resetConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-sm">
-            <GlassCard variant="default" padding="lg" className="border border-red-500/40 shadow-2xl">
-              <div className="flex items-center gap-2 mb-3 text-red-600 dark:text-red-400">
-                <RotateCcw size={20} />
-                <h3 className="text-sm font-mono font-bold uppercase tracking-wider">
-                  Reset All Tool Data?
-                </h3>
-              </div>
-
-              <p className="text-xs text-slate-600 dark:text-slate-300 mb-6 leading-relaxed">
-                This action will set all telemetry readings, pump runtime metrics, water flow stats, weather sensors, and active schedules in the web tool back to <strong className="font-mono text-cyber-cyan">ZERO VALUE (0)</strong>.
-              </p>
-
-              <div className="flex gap-3">
-                <SpatialButton
-                  variant="ghost"
-                  size="md"
-                  onClick={() => setResetConfirmOpen(false)}
-                  className="flex-1 justify-center"
-                >
-                  Cancel
-                </SpatialButton>
-                <SpatialButton
-                  variant="danger"
-                  size="md"
-                  icon={<RotateCcw size={14} />}
-                  onClick={handleExecuteReset}
-                  className="flex-1 justify-center"
-                >
-                  Reset To 0
                 </SpatialButton>
               </div>
             </GlassCard>
@@ -615,7 +538,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                     size="md"
                     className="flex-1 justify-center"
                   >
-                    Update
+                    Update Globally
                   </SpatialButton>
                 </div>
               </form>

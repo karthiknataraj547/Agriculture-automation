@@ -11,139 +11,148 @@ export interface UserProfile {
 export interface AuthStoreState {
   user: UserProfile | null;
   isAuthenticated: boolean;
-  customerPassword: string;
-  hasCustomerCreatedPassword: boolean;
+  isLoading: boolean;
   
   // Actions
-  login: (password: string, email?: string) => { success: boolean; message?: string };
-  registerCustomerAccount: (name: string, email: string, password: string) => { success: boolean; message?: string };
-  updatePassword: (oldPassword: string, newPassword: string) => { success: boolean; message?: string };
+  login: (password: string, email: string) => Promise<{ success: boolean; message?: string }>;
+  registerCustomerAccount: (name: string, email: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  updatePassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
+  checkSession: () => void;
 }
 
-// LocalStorage Keys
-const STORAGE_USER_KEY = 'aether_customer_user';
-const STORAGE_AUTH_KEY = 'aether_customer_auth';
-const STORAGE_PASS_KEY = 'aether_customer_pass';
+const STORAGE_SESSION_KEY = 'aether_active_session';
 
-const getInitialUser = (): UserProfile | null => {
+const getInitialSession = (): UserProfile | null => {
   if (typeof window === 'undefined') return null;
   try {
-    const saved = localStorage.getItem(STORAGE_USER_KEY);
+    const saved = sessionStorage.getItem(STORAGE_SESSION_KEY) || localStorage.getItem(STORAGE_SESSION_KEY);
     return saved ? JSON.parse(saved) : null;
   } catch {
     return null;
   }
 };
 
-const getInitialAuth = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  try {
-    return localStorage.getItem(STORAGE_AUTH_KEY) === 'true';
-  } catch {
-    return false;
-  }
-};
-
-const getInitialPassword = (): string => {
-  if (typeof window === 'undefined') return '';
-  try {
-    return localStorage.getItem(STORAGE_PASS_KEY) || '';
-  } catch {
-    return '';
-  }
-};
-
 export const useAuthStore = create<AuthStoreState>((set, get) => ({
-  user: getInitialUser(),
-  isAuthenticated: getInitialAuth(),
-  customerPassword: getInitialPassword(),
-  hasCustomerCreatedPassword: Boolean(getInitialPassword()),
+  user: getInitialSession(),
+  isAuthenticated: Boolean(getInitialSession()),
+  isLoading: false,
 
-  login: (password: string, email?: string) => {
-    const currentPass = get().customerPassword;
-    const currentUser = get().user;
-
-    // If customer hasn't created a password yet, inform them to set one up
-    if (!currentPass) {
-      return {
-        success: false,
-        message: 'No customer account found. Please click "Create Account & Password" to set up your customer password.',
-      };
+  checkSession: () => {
+    const user = getInitialSession();
+    if (user) {
+      set({ user, isAuthenticated: true });
     }
+  },
 
-    if (password === currentPass) {
-      const updatedUser = currentUser || {
-        id: 'usr-customer-01',
-        name: email ? email.split('@')[0] : 'Customer User',
-        email: email || 'customer@aethercrop.io',
-        role: 'Farm Operator / Owner',
-        createdAt: new Date().toISOString(),
-      };
+  login: async (password: string, email: string) => {
+    set({ isLoading: true });
+    try {
+      const response = await fetch('/api/auth?action=login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
 
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_AUTH_KEY, 'true');
-        localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(updatedUser));
+      const data = await response.json();
+
+      if (response.ok && data.success && data.user) {
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(data.user));
+          localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(data.user));
+        }
+        set({ user: data.user, isAuthenticated: true, isLoading: false });
+        return { success: true, message: data.message };
       }
 
-      set({ isAuthenticated: true, user: updatedUser });
-      return { success: true };
+      set({ isLoading: false });
+      return {
+        success: false,
+        message: data.message || 'Invalid email or password.',
+      };
+    } catch (err: any) {
+      set({ isLoading: false });
+      return {
+        success: false,
+        message: 'Network error connecting to global auth server. Please try again.',
+      };
     }
-
-    return { success: false, message: 'Invalid password. Please check your credentials.' };
   },
 
-  registerCustomerAccount: (name: string, email: string, password: string) => {
-    if (!password || password.length < 4) {
-      return { success: false, message: 'Password must be at least 4 characters long.' };
+  registerCustomerAccount: async (name: string, email: string, password: string) => {
+    set({ isLoading: true });
+    try {
+      const response = await fetch('/api/auth?action=register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success && data.user) {
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(data.user));
+          localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(data.user));
+        }
+        set({ user: data.user, isAuthenticated: true, isLoading: false });
+        return { success: true, message: data.message };
+      }
+
+      set({ isLoading: false });
+      return {
+        success: false,
+        message: data.message || 'Failed to create global account.',
+      };
+    } catch (err: any) {
+      set({ isLoading: false });
+      return {
+        success: false,
+        message: 'Network error connecting to global auth server. Please try again.',
+      };
     }
-
-    const newUser: UserProfile = {
-      id: `usr-cust-${Date.now().toString().slice(-4)}`,
-      name: name.trim() || 'Customer User',
-      email: email.trim().toLowerCase() || 'customer@aethercrop.io',
-      role: 'Farm Owner & System Administrator',
-      createdAt: new Date().toISOString(),
-    };
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(newUser));
-      localStorage.setItem(STORAGE_PASS_KEY, password);
-      localStorage.setItem(STORAGE_AUTH_KEY, 'true');
-    }
-
-    set({
-      user: newUser,
-      customerPassword: password,
-      hasCustomerCreatedPassword: true,
-      isAuthenticated: true,
-    });
-
-    return { success: true, message: 'Customer account created successfully!' };
   },
 
-  updatePassword: (oldPassword: string, newPassword: string) => {
-    const currentPass = get().customerPassword;
-    if (currentPass && oldPassword !== currentPass) {
-      return { success: false, message: 'Current password does not match.' };
+  updatePassword: async (oldPassword: string, newPassword: string) => {
+    const currentUser = get().user;
+    if (!currentUser || !currentUser.email) {
+      return { success: false, message: 'You must be logged in to update password.' };
     }
 
-    if (!newPassword || newPassword.length < 4) {
-      return { success: false, message: 'New password must be at least 4 characters long.' };
-    }
+    set({ isLoading: true });
+    try {
+      const response = await fetch('/api/auth?action=update-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: currentUser.email,
+          oldPassword,
+          newPassword,
+        }),
+      });
 
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_PASS_KEY, newPassword);
-    }
+      const data = await response.json();
+      set({ isLoading: false });
 
-    set({ customerPassword: newPassword, hasCustomerCreatedPassword: true });
-    return { success: true, message: 'Customer password updated successfully!' };
+      if (response.ok && data.success) {
+        return { success: true, message: data.message };
+      }
+
+      return { success: false, message: data.message || 'Failed to update password.' };
+    } catch (err: any) {
+      set({ isLoading: false });
+      return {
+        success: false,
+        message: 'Network error connecting to global auth server. Please try again.',
+      };
+    }
   },
 
   logout: () => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_AUTH_KEY, 'false');
+      sessionStorage.removeItem(STORAGE_SESSION_KEY);
+      localStorage.removeItem(STORAGE_SESSION_KEY);
     }
-    set({ isAuthenticated: false });
+    set({ user: null, isAuthenticated: false });
   },
 }));
