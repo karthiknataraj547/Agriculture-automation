@@ -37,7 +37,7 @@ export function LoginPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Calculate password strength
+  // Password strength meter
   const getPasswordStrength = (pass: string) => {
     if (!pass) return { score: 0, label: 'None', color: 'bg-slate-300' };
     if (pass.length < 4) return { score: 1, label: 'Weak', color: 'bg-red-500' };
@@ -110,7 +110,7 @@ export function LoginPage() {
           {/* Global Access Indicator Badge */}
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full neu-pressed text-[10px] font-mono text-cyber-cyan font-semibold mt-1">
             <Globe size={12} />
-            <span>GLOBAL CROSS-DEVICE AUTHENTICATION</span>
+            <span>GLOBAL CLOUD AUTHENTICATION</span>
           </div>
         </div>
 
@@ -163,7 +163,7 @@ export function LoginPage() {
             </h2>
             <p className="text-[11px] text-slate-500 mt-0.5">
               {mode === 'LOGIN' && 'Sign in with your registered account credentials from any device.'}
-              {mode === 'CREATE_ACCOUNT' && 'Create your customer account & password globally accessible across all devices.'}
+              {mode === 'CREATE_ACCOUNT' && 'Create your customer account & password stored globally in cloud database.'}
               {mode === 'FORGOT_PASS' && 'Specify your new customer password below.'}
             </p>
           </div>
@@ -370,13 +370,13 @@ export function LoginPage() {
               {isLoading ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  <span>Authenticating...</span>
+                  <span>Connecting to Cloud DB...</span>
                 </>
               ) : (
                 <>
                   <span>
                     {mode === 'LOGIN' && 'Sign In to Dashboard'}
-                    {mode === 'CREATE_ACCOUNT' && 'Create Account Globally'}
+                    {mode === 'CREATE_ACCOUNT' && 'Save Account Globally'}
                     {mode === 'FORGOT_PASS' && 'Update Password'}
                   </span>
                   <ArrowRight size={16} />

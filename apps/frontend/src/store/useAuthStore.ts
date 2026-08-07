@@ -21,7 +21,7 @@ export interface AuthStoreState {
   checkSession: () => void;
 }
 
-const STORAGE_SESSION_KEY = 'aether_active_session';
+const STORAGE_SESSION_KEY = 'aether_active_session_user';
 
 const getInitialSession = (): UserProfile | null => {
   if (typeof window === 'undefined') return null;
@@ -74,7 +74,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
       set({ isLoading: false });
       return {
         success: false,
-        message: 'Network error connecting to global auth server. Please try again.',
+        message: 'Network error connecting to global auth server. Please check your internet connection.',
       };
     }
   },
@@ -102,7 +102,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
       set({ isLoading: false });
       return {
         success: false,
-        message: data.message || 'Failed to create global account.',
+        message: data.message || 'Failed to create account in global database.',
       };
     } catch (err: any) {
       set({ isLoading: false });

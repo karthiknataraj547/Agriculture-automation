@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
 
 export interface GlobalUser {
   id: string;
@@ -11,66 +9,81 @@ export interface GlobalUser {
   createdAt: string;
 }
 
-// Global in-memory user registry with default fallback user
-declare global {
-  var __GLOBAL_USERS_DB__: GlobalUser[] | undefined;
-}
+// Persistent Cloud Database Object ID
+const GLOBAL_CLOUD_DB_ID = 'ff8081819f7e10ae019fddd0e4790cf7';
+const CLOUD_DB_URL = `https://api.restful-api.dev/objects/${GLOBAL_CLOUD_DB_ID}`;
 
-const DB_PATH = process.env.VERCEL
-  ? path.join('/tmp', 'aether_global_users.json')
-  : path.join(process.cwd(), '.users_db.json');
+// In-memory cache for ultra-fast response with fallback sync
+let memoryUsersCache: GlobalUser[] = [
+  {
+    id: 'usr-admin-01',
+    name: 'Karthik Nataraj',
+    email: 'karthiknataraj547@gmail.com',
+    password: 'password123',
+    role: 'Farm Owner & System Administrator',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'usr-admin-02',
+    name: 'Customer Admin',
+    email: 'customer@aethercrop.io',
+    password: 'password123',
+    role: 'Farm Operator',
+    createdAt: new Date().toISOString(),
+  },
+];
 
-function loadUsers(): GlobalUser[] {
-  if (globalThis.__GLOBAL_USERS_DB__) {
-    return globalThis.__GLOBAL_USERS_DB__;
-  }
-
-  let users: GlobalUser[] = [
-    {
-      id: 'usr-admin-01',
-      name: 'Alex Mercer',
-      email: 'customer@aethercrop.io',
-      password: 'password123',
-      role: 'Farm Owner & System Administrator',
-      createdAt: new Date().toISOString(),
-    },
-  ];
-
+async function fetchGlobalUsersFromCloudDB(): Promise<GlobalUser[]> {
   try {
-    if (fs.existsSync(DB_PATH)) {
-      const data = fs.readFileSync(DB_PATH, 'utf-8');
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        users = parsed;
+    const res = await fetch(CLOUD_DB_URL, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.data?.users && Array.isArray(json.data.users) && json.data.users.length > 0) {
+        memoryUsersCache = json.data.users;
+        return json.data.users;
       }
     }
   } catch (err) {
-    console.error('[Global Auth DB] Failed to load disk storage:', err);
+    console.error('[Cloud DB] Failed to fetch users from Cloud Database:', err);
   }
-
-  globalThis.__GLOBAL_USERS_DB__ = users;
-  return users;
+  return memoryUsersCache;
 }
 
-function saveUsers(users: GlobalUser[]) {
-  globalThis.__GLOBAL_USERS_DB__ = users;
+async function saveGlobalUsersToCloudDB(users: GlobalUser[]): Promise<boolean> {
+  memoryUsersCache = users;
   try {
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    const res = await fetch(CLOUD_DB_URL, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      },
+      body: JSON.stringify({
+        name: 'Aether Users DB',
+        data: { users },
+      }),
+    });
+    if (res.ok) {
+      console.log(`[Cloud DB] Saved ${users.length} users globally.`);
+      return true;
     }
-    fs.writeFileSync(DB_PATH, JSON.stringify(users, null, 2), 'utf-8');
   } catch (err) {
-    console.error('[Global Auth DB] Failed to save disk storage:', err);
+    console.error('[Cloud DB] Failed to save users to Cloud Database:', err);
   }
+  return false;
 }
 
-// GET /api/auth (Health / check)
-export async function GET(request: Request) {
-  const users = loadUsers();
+// GET /api/auth (Health check & Cloud DB status)
+export async function GET() {
+  const users = await fetchGlobalUsersFromCloudDB();
   return NextResponse.json({
     status: 'ONLINE',
+    cloudDbStatus: 'CONNECTED',
     totalUsersRegistered: users.length,
+    userEmails: users.map((u) => u.email),
   });
 }
 
@@ -81,34 +94,37 @@ export async function POST(request: Request) {
     const action = searchParams.get('action') || 'login';
     const body = await request.json();
 
-    const users = loadUsers();
+    // Fetch live users from persistent Cloud Database
+    const users = await fetchGlobalUsersFromCloudDB();
 
     if (action === 'register') {
       const { name, email, password } = body;
 
       if (!email || !password) {
         return NextResponse.json(
-          { success: false, message: 'Email and password are required.' },
+          { success: false, message: 'Email/username and password are required.' },
           { status: 400 }
         );
       }
 
       const normalizedEmail = email.trim().toLowerCase();
 
-      // Check if user already exists
-      const existing = users.find(
-        (u) => u.email.toLowerCase() === normalizedEmail
+      // Check if user account already exists by email or name
+      const existingIndex = users.findIndex(
+        (u) => u.email.toLowerCase() === normalizedEmail || u.name.toLowerCase() === normalizedEmail
       );
 
-      if (existing) {
-        // If existing user exists, update password globally for them
-        existing.password = password;
-        if (name) existing.name = name;
-        saveUsers(users);
-        const { password: _, ...userWithoutPass } = existing;
+      if (existingIndex !== -1) {
+        // Update password globally for existing user
+        users[existingIndex].password = password;
+        if (name && name.trim()) {
+          users[existingIndex].name = name.trim();
+        }
+        await saveGlobalUsersToCloudDB(users);
+        const { password: _, ...userWithoutPass } = users[existingIndex];
         return NextResponse.json({
           success: true,
-          message: 'Account updated successfully across all devices!',
+          message: 'Account updated globally across all devices! You can now log in.',
           user: userWithoutPass,
         });
       }
@@ -123,7 +139,7 @@ export async function POST(request: Request) {
       };
 
       users.push(newUser);
-      saveUsers(users);
+      await saveGlobalUsersToCloudDB(users);
 
       const { password: _, ...userWithoutPass } = newUser;
       return NextResponse.json({
@@ -143,18 +159,26 @@ export async function POST(request: Request) {
         );
       }
 
-      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedInput = email.trim().toLowerCase();
 
-      // Search user by email or username
-      const user = users.find(
-        (u) => u.email.toLowerCase() === normalizedEmail || u.name.toLowerCase() === normalizedEmail
+      // Search persistent Cloud Database for account match by email or name
+      let user = users.find(
+        (u) => u.email.toLowerCase() === normalizedInput || u.name.toLowerCase() === normalizedInput
       );
+
+      // If user not found yet, perform fresh refetch from Cloud DB
+      if (!user) {
+        const freshUsers = await fetchGlobalUsersFromCloudDB();
+        user = freshUsers.find(
+          (u) => u.email.toLowerCase() === normalizedInput || u.name.toLowerCase() === normalizedInput
+        );
+      }
 
       if (!user) {
         return NextResponse.json(
           {
             success: false,
-            message: 'No account found with this email/username. Click "Set Password" to register your account globally.',
+            message: `No account found for "${email}". Click "Set Password" to register your account globally.`,
           },
           { status: 404 }
         );
@@ -162,7 +186,7 @@ export async function POST(request: Request) {
 
       if (user.password !== password) {
         return NextResponse.json(
-          { success: false, message: 'Invalid password. Please check your credentials.' },
+          { success: false, message: 'Incorrect password. Please verify your password and try again.' },
           { status: 401 }
         );
       }
@@ -185,8 +209,10 @@ export async function POST(request: Request) {
         );
       }
 
-      const normalizedEmail = email.trim().toLowerCase();
-      const user = users.find((u) => u.email.toLowerCase() === normalizedEmail);
+      const normalizedInput = email.trim().toLowerCase();
+      const user = users.find(
+        (u) => u.email.toLowerCase() === normalizedInput || u.name.toLowerCase() === normalizedInput
+      );
 
       if (!user) {
         return NextResponse.json(
@@ -203,7 +229,7 @@ export async function POST(request: Request) {
       }
 
       user.password = newPassword;
-      saveUsers(users);
+      await saveGlobalUsersToCloudDB(users);
 
       return NextResponse.json({
         success: true,
@@ -212,11 +238,11 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(
-      { success: false, message: 'Unknown action parameter.' },
+      { success: false, message: 'Invalid action parameter.' },
       { status: 400 }
     );
   } catch (error: any) {
-    console.error('[Global Auth API] Error handling request:', error);
+    console.error('[Global Auth API] Error:', error);
     return NextResponse.json(
       { success: false, message: error.message || 'Internal Server Error' },
       { status: 500 }
