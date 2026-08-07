@@ -57,14 +57,23 @@ export default function DashboardPage() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // Client-side hydration check & load user farm state
+  // Client-side hydration check
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
+  // 1-second auto-sync interval for cross-device real-time sync (Mobile <-> Laptop)
   useEffect(() => {
     if (isAuthenticated && user?.email) {
+      // Immediate initial load
       loadGlobalStateForUser(user.email);
+
+      // 1-second auto-polling interval
+      const interval = setInterval(() => {
+        loadGlobalStateForUser(user.email);
+      }, 1000);
+
+      return () => clearInterval(interval);
     }
   }, [isAuthenticated, user, loadGlobalStateForUser]);
 

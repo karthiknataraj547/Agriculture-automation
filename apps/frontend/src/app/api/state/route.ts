@@ -1,61 +1,59 @@
 import { NextResponse } from 'next/server';
 import { encryptPayload, decryptPayload } from '../auth/crypto';
 
-// Persistent State Database ID
 const STATE_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
-// Memory cache of encrypted farm states by user email
+// Ultra-fast in-memory state store
 let stateStoreCache: Record<string, string> = {};
+let isSyncingState = false;
 
 async function fetchStateFromCloud(): Promise<Record<string, string>> {
+  if (isSyncingState) return stateStoreCache;
+  isSyncingState = true;
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 600);
     const res = await fetch(STATE_DB_URL, {
-      cache: 'no-store',
+      signal: controller.signal,
       headers: { 'Cache-Control': 'no-cache' },
-    });
+    }).finally(() => clearTimeout(timeout));
+
     if (res.ok) {
       const json = await res.json();
       if (json?.data?.farmStates) {
         stateStoreCache = json.data.farmStates;
-        return json.data.farmStates;
       }
     }
-  } catch (err) {
-    console.error('[State DB] Fetch error:', err);
+  } catch {
+    // Return cache on delay
+  } finally {
+    isSyncingState = false;
   }
   return stateStoreCache;
 }
 
-async function saveStateToCloud(states: Record<string, string>): Promise<boolean> {
+function saveStateToCloudAsync(states: Record<string, string>) {
   stateStoreCache = states;
-  try {
-    // First get existing DB payload
-    const getRes = await fetch(STATE_DB_URL, { cache: 'no-store' });
-    let existingData: any = {};
-    if (getRes.ok) {
-      const json = await getRes.json();
-      existingData = json.data || {};
-    }
-
-    await fetch(STATE_DB_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'Aether Users DB',
-        data: {
-          ...existingData,
-          farmStates: states,
-        },
-      }),
-    });
-    return true;
-  } catch (err) {
-    console.error('[State DB] Save error:', err);
-    return false;
-  }
+  fetch(STATE_DB_URL, { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : {}))
+    .then((json: any) => {
+      const existingData = json?.data || {};
+      return fetch(STATE_DB_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Aether Users DB',
+          data: {
+            ...existingData,
+            farmStates: states,
+          },
+        }),
+      });
+    })
+    .catch(() => {});
 }
 
-// GET /api/state?email=...
+// GET /api/state?email=... (Ultra-fast response)
 export async function GET(req: Request) {
   try {
     const email = new URL(req.url).searchParams.get('email');
@@ -64,9 +62,15 @@ export async function GET(req: Request) {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const states = await fetchStateFromCloud();
-    const encryptedData = states[normalizedEmail];
+    
+    // Non-blocking background fetch if empty, otherwise use memory cache
+    if (!stateStoreCache[normalizedEmail]) {
+      await fetchStateFromCloud();
+    } else {
+      fetchStateFromCloud().catch(() => {});
+    }
 
+    const encryptedData = stateStoreCache[normalizedEmail];
     if (!encryptedData) {
       return NextResponse.json({ success: true, state: null });
     }
@@ -88,13 +92,12 @@ export async function POST(req: Request) {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const states = await fetchStateFromCloud();
-
+    
     // Encrypt state payload using AES-256-GCM before saving
-    states[normalizedEmail] = encryptPayload(state);
+    stateStoreCache[normalizedEmail] = encryptPayload(state);
 
     // Save encrypted state to cloud DB asynchronously
-    saveStateToCloud(states).catch(() => {});
+    saveStateToCloudAsync(stateStoreCache);
 
     return NextResponse.json({ success: true, message: 'State saved globally' });
   } catch (err: any) {

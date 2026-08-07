@@ -89,6 +89,7 @@ export interface SpatialStoreState {
 }
 
 const STORAGE_STATE_KEY = 'aether_farm_persisted_state';
+const STORAGE_VIEW_KEY = 'aether_active_view';
 
 const ZERO_PUMPS: PumpState[] = [
   { id: 'pump-1', name: 'Pump Main Alpha', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
@@ -140,6 +141,16 @@ const ZERO_TELEMETRY_MAP = new Map<string, TelemetryReading>([
   ['zone-4', createZeroReading('zone-4')],
 ]);
 
+const getInitialView = (): SpatialStoreState['activeView'] => {
+  if (typeof window === 'undefined') return 'SPATIAL_3D';
+  try {
+    const saved = sessionStorage.getItem(STORAGE_VIEW_KEY) || localStorage.getItem(STORAGE_VIEW_KEY);
+    return (saved as any) || 'SPATIAL_3D';
+  } catch {
+    return 'SPATIAL_3D';
+  }
+};
+
 const getLocalPersistedState = () => {
   if (typeof window === 'undefined') return null;
   try {
@@ -153,7 +164,7 @@ const getLocalPersistedState = () => {
 const initialLocal = getLocalPersistedState();
 
 export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
-  activeView: 'SPATIAL_3D',
+  activeView: getInitialView(),
   selectedZoneId: 'zone-1',
   selectedDeviceId: null,
   latestReadings: ZERO_TELEMETRY_MAP,
@@ -175,7 +186,15 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   rainOverride: initialLocal?.rainOverride || false,
   isZeroDataMode: true,
 
-  setActiveView: (view) => set({ activeView: view }),
+  setActiveView: (view) => {
+    set({ activeView: view });
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem(STORAGE_VIEW_KEY, view);
+      localStorage.setItem(STORAGE_VIEW_KEY, view);
+    }
+    get().syncStateToCloud();
+  },
+
   setSelectedZoneId: (zoneId) => set({ selectedZoneId: zoneId }),
   setSelectedDeviceId: (deviceId) => set({ selectedDeviceId: deviceId }),
 
@@ -293,6 +312,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       rules: state.rules,
       emergencyStop: state.emergencyStop,
       rainOverride: state.rainOverride,
+      activeView: state.activeView,
     };
 
     if (typeof window !== 'undefined') {
@@ -317,20 +337,36 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         const json = await res.json();
         if (json.success && json.state) {
           const s = json.state;
-          set({
-            pumps: s.pumps || ZERO_PUMPS,
-            schedules: s.schedules || ZERO_SCHEDULES,
-            rules: s.rules || [],
-            emergencyStop: Boolean(s.emergencyStop),
-            rainOverride: Boolean(s.rainOverride),
-          });
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(s));
+          const current = get();
+
+          // Only set state if values changed to prevent UI flicker
+          const newPumpsStr = JSON.stringify(s.pumps || ZERO_PUMPS);
+          const currentPumpsStr = JSON.stringify(current.pumps);
+          const newSchedulesStr = JSON.stringify(s.schedules || ZERO_SCHEDULES);
+          const currentSchedulesStr = JSON.stringify(current.schedules);
+
+          if (
+            newPumpsStr !== currentPumpsStr ||
+            newSchedulesStr !== currentSchedulesStr ||
+            Boolean(s.emergencyStop) !== current.emergencyStop ||
+            Boolean(s.rainOverride) !== current.rainOverride
+          ) {
+            set({
+              pumps: s.pumps || ZERO_PUMPS,
+              schedules: s.schedules || ZERO_SCHEDULES,
+              rules: s.rules || [],
+              emergencyStop: Boolean(s.emergencyStop),
+              rainOverride: Boolean(s.rainOverride),
+              activeView: s.activeView || current.activeView,
+            });
+            if (typeof window !== 'undefined') {
+              localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(s));
+            }
           }
         }
       }
-    } catch (err) {
-      console.error('[State Sync] Failed to load user state:', err);
+    } catch {
+      // Silently handle polling delay
     }
   },
 }));
