@@ -9,12 +9,10 @@ export interface GlobalUser {
   createdAt: string;
 }
 
-// Persistent Cloud Database Object ID
-const GLOBAL_CLOUD_DB_ID = 'ff8081819f7e10ae019fddd0e4790cf7';
-const CLOUD_DB_URL = `https://api.restful-api.dev/objects/${GLOBAL_CLOUD_DB_ID}`;
+const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
-// In-memory cache for ultra-fast response with fallback sync
-let memoryUsersCache: GlobalUser[] = [
+// Ultra-fast in-memory cache
+let usersCache: GlobalUser[] = [
   {
     id: 'usr-admin-01',
     name: 'Karthik Nataraj',
@@ -33,219 +31,124 @@ let memoryUsersCache: GlobalUser[] = [
   },
 ];
 
-async function fetchGlobalUsersFromCloudDB(): Promise<GlobalUser[]> {
+// Non-blocking background sync
+let isSyncing = false;
+async function syncFromCloudDB(): Promise<GlobalUser[]> {
+  if (isSyncing) return usersCache;
+  isSyncing = true;
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 600); // 600ms fast timeout
     const res = await fetch(CLOUD_DB_URL, {
-      cache: 'no-store',
-      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' },
-    });
+      signal: controller.signal,
+      headers: { 'Cache-Control': 'no-cache' },
+    }).finally(() => clearTimeout(timeout));
+
     if (res.ok) {
       const json = await res.json();
-      if (json?.data?.users && Array.isArray(json.data.users) && json.data.users.length > 0) {
-        memoryUsersCache = json.data.users;
-        return json.data.users;
+      if (json?.data?.users?.length) {
+        usersCache = json.data.users;
       }
     }
-  } catch (err) {
-    console.error('[Cloud DB] Failed to fetch users from Cloud Database:', err);
+  } catch {
+    // Return cached users on network delay
+  } finally {
+    isSyncing = false;
   }
-  return memoryUsersCache;
+  return usersCache;
 }
 
-async function saveGlobalUsersToCloudDB(users: GlobalUser[]): Promise<boolean> {
-  memoryUsersCache = users;
-  try {
-    const res = await fetch(CLOUD_DB_URL, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-      },
-      body: JSON.stringify({
-        name: 'Aether Users DB',
-        data: { users },
-      }),
-    });
-    if (res.ok) {
-      console.log(`[Cloud DB] Saved ${users.length} users globally.`);
-      return true;
-    }
-  } catch (err) {
-    console.error('[Cloud DB] Failed to save users to Cloud Database:', err);
-  }
-  return false;
+function syncToCloudDBAsync(users: GlobalUser[]) {
+  usersCache = users;
+  fetch(CLOUD_DB_URL, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Aether Users DB', data: { users } }),
+  }).catch(() => {});
 }
 
-// GET /api/auth (Health check & Cloud DB status)
 export async function GET() {
-  const users = await fetchGlobalUsersFromCloudDB();
-  return NextResponse.json({
-    status: 'ONLINE',
-    cloudDbStatus: 'CONNECTED',
-    totalUsersRegistered: users.length,
-    userEmails: users.map((u) => u.email),
-  });
+  const users = await syncFromCloudDB();
+  return NextResponse.json({ status: 'ONLINE', count: users.length });
 }
 
-// POST /api/auth?action=login | register | update-password
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const action = searchParams.get('action') || 'login';
-    const body = await request.json();
+    const action = new URL(req.url).searchParams.get('action') || 'login';
+    const body = await req.json();
+    const { name, email, password, oldPassword, newPassword } = body;
 
-    // Fetch live users from persistent Cloud Database
-    const users = await fetchGlobalUsersFromCloudDB();
+    const targetEmail = (email || '').trim().toLowerCase();
 
-    if (action === 'register') {
-      const { name, email, password } = body;
+    // Fast sync attempt (falls back immediately to memory cache if API is slow)
+    const users = usersCache.length > 2 ? usersCache : await Promise.race([
+      syncFromCloudDB(),
+      new Promise<GlobalUser[]>((resolve) => setTimeout(() => resolve(usersCache), 150))
+    ]);
 
-      if (!email || !password) {
-        return NextResponse.json(
-          { success: false, message: 'Email/username and password are required.' },
-          { status: 400 }
-        );
-      }
-
-      const normalizedEmail = email.trim().toLowerCase();
-
-      // Check if user account already exists by email or name
-      const existingIndex = users.findIndex(
-        (u) => u.email.toLowerCase() === normalizedEmail || u.name.toLowerCase() === normalizedEmail
-      );
-
-      if (existingIndex !== -1) {
-        // Update password globally for existing user
-        users[existingIndex].password = password;
-        if (name && name.trim()) {
-          users[existingIndex].name = name.trim();
-        }
-        await saveGlobalUsersToCloudDB(users);
-        const { password: _, ...userWithoutPass } = users[existingIndex];
-        return NextResponse.json({
-          success: true,
-          message: 'Account updated globally across all devices! You can now log in.',
-          user: userWithoutPass,
-        });
-      }
-
-      const newUser: GlobalUser = {
-        id: `usr-global-${Date.now().toString().slice(-6)}`,
-        name: name ? name.trim() : normalizedEmail.split('@')[0],
-        email: normalizedEmail,
-        password,
-        role: 'Farm Owner & System Administrator',
-        createdAt: new Date().toISOString(),
-      };
-
-      users.push(newUser);
-      await saveGlobalUsersToCloudDB(users);
-
-      const { password: _, ...userWithoutPass } = newUser;
-      return NextResponse.json({
-        success: true,
-        message: 'Account created globally! You can now log in from any device.',
-        user: userWithoutPass,
-      });
-    }
+    const findUser = (str: string) =>
+      users.find((u) => u.email.toLowerCase() === str || u.name.toLowerCase() === str);
 
     if (action === 'login') {
-      const { email, password } = body;
-
-      if (!email || !password) {
-        return NextResponse.json(
-          { success: false, message: 'Please enter your email/username and password.' },
-          { status: 400 }
-        );
+      if (!targetEmail || !password) {
+        return NextResponse.json({ success: false, message: 'Email and password required.' }, { status: 400 });
       }
 
-      const normalizedInput = email.trim().toLowerCase();
-
-      // Search persistent Cloud Database for account match by email or name
-      let user = users.find(
-        (u) => u.email.toLowerCase() === normalizedInput || u.name.toLowerCase() === normalizedInput
-      );
-
-      // If user not found yet, perform fresh refetch from Cloud DB
+      const user = findUser(targetEmail);
       if (!user) {
-        const freshUsers = await fetchGlobalUsersFromCloudDB();
-        user = freshUsers.find(
-          (u) => u.email.toLowerCase() === normalizedInput || u.name.toLowerCase() === normalizedInput
-        );
+        return NextResponse.json({ success: false, message: `No account for "${email}". Click "Set Password" to create.` }, { status: 404 });
       }
-
-      if (!user) {
-        return NextResponse.json(
-          {
-            success: false,
-            message: `No account found for "${email}". Click "Set Password" to register your account globally.`,
-          },
-          { status: 404 }
-        );
-      }
-
       if (user.password !== password) {
-        return NextResponse.json(
-          { success: false, message: 'Incorrect password. Please verify your password and try again.' },
-          { status: 401 }
-        );
+        return NextResponse.json({ success: false, message: 'Incorrect password.' }, { status: 401 });
       }
 
-      const { password: _, ...userWithoutPass } = user;
-      return NextResponse.json({
-        success: true,
-        message: 'Authentication successful.',
-        user: userWithoutPass,
-      });
+      const { password: _, ...cleanUser } = user;
+      return NextResponse.json({ success: true, user: cleanUser });
+    }
+
+    if (action === 'register') {
+      if (!targetEmail || !password) {
+        return NextResponse.json({ success: false, message: 'Email and password required.' }, { status: 400 });
+      }
+
+      const existingIndex = users.findIndex((u) => u.email.toLowerCase() === targetEmail || u.name.toLowerCase() === targetEmail);
+      let user: GlobalUser;
+
+      if (existingIndex !== -1) {
+        users[existingIndex].password = password;
+        if (name?.trim()) users[existingIndex].name = name.trim();
+        user = users[existingIndex];
+      } else {
+        user = {
+          id: `usr-${Date.now().toString().slice(-6)}`,
+          name: name?.trim() || targetEmail.split('@')[0],
+          email: targetEmail,
+          password,
+          role: 'Farm Owner & System Administrator',
+          createdAt: new Date().toISOString(),
+        };
+        users.push(user);
+      }
+
+      syncToCloudDBAsync(users);
+      const { password: _, ...cleanUser } = user;
+      return NextResponse.json({ success: true, user: cleanUser });
     }
 
     if (action === 'update-password') {
-      const { email, oldPassword, newPassword } = body;
-
-      if (!email || !newPassword) {
-        return NextResponse.json(
-          { success: false, message: 'Email and new password are required.' },
-          { status: 400 }
-        );
-      }
-
-      const normalizedInput = email.trim().toLowerCase();
-      const user = users.find(
-        (u) => u.email.toLowerCase() === normalizedInput || u.name.toLowerCase() === normalizedInput
-      );
-
-      if (!user) {
-        return NextResponse.json(
-          { success: false, message: 'User account not found.' },
-          { status: 404 }
-        );
-      }
-
+      const user = findUser(targetEmail);
+      if (!user) return NextResponse.json({ success: false, message: 'User not found.' }, { status: 404 });
       if (oldPassword && user.password !== oldPassword) {
-        return NextResponse.json(
-          { success: false, message: 'Current password does not match.' },
-          { status: 401 }
-        );
+        return NextResponse.json({ success: false, message: 'Current password mismatch.' }, { status: 401 });
       }
 
       user.password = newPassword;
-      await saveGlobalUsersToCloudDB(users);
-
-      return NextResponse.json({
-        success: true,
-        message: 'Password updated globally across all devices!',
-      });
+      syncToCloudDBAsync(users);
+      return NextResponse.json({ success: true, message: 'Password updated.' });
     }
 
-    return NextResponse.json(
-      { success: false, message: 'Invalid action parameter.' },
-      { status: 400 }
-    );
-  } catch (error: any) {
-    console.error('[Global Auth API] Error:', error);
-    return NextResponse.json(
-      { success: false, message: error.message || 'Internal Server Error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, message: 'Invalid action.' }, { status: 400 });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, message: err.message || 'Server error' }, { status: 500 });
   }
 }
