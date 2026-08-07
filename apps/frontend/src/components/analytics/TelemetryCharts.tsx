@@ -108,7 +108,7 @@ export function TelemetryCharts() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-2">
           <Activity size={14} className="text-cyber-cyan" />
-          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-slate-500 font-medium">
+          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-slate-900 dark:text-slate-100 font-extrabold">
             Live Telemetry — {selectedZoneId.toUpperCase()}
           </span>
         </div>
@@ -145,14 +145,14 @@ export function TelemetryCharts() {
             />
             <XAxis
               dataKey="time"
-              tick={{ fontSize: 9, fill: '#64748b' }}
+              tick={{ fontSize: 9, fill: '#020617' }}
               axisLine={{ stroke: 'rgba(148, 163, 184, 0.2)' }}
               tickLine={false}
               interval="preserveStartEnd"
             />
             <YAxis
               domain={config.domain}
-              tick={{ fontSize: 9, fill: '#64748b' }}
+              tick={{ fontSize: 9, fill: '#020617' }}
               axisLine={false}
               tickLine={false}
               width={35}
@@ -163,10 +163,10 @@ export function TelemetryCharts() {
                 border: '1px solid rgba(255, 255, 255, 0.8)',
                 borderRadius: '12px',
                 fontSize: '11px',
-                color: '#1e293b',
+                color: '#020617',
                 boxShadow: '6px 6px 16px #b8c4d8, -6px -6px 16px #ffffff',
               }}
-              labelStyle={{ color: '#475569', fontSize: '10px', fontFamily: 'monospace' }}
+              labelStyle={{ color: '#020617', fontSize: '10px', fontFamily: 'monospace', fontWeight: 'bold' }}
               formatter={(value: number) => [`${value} ${config.unit}`, config.label]}
             />
             <Area
@@ -189,8 +189,8 @@ export function TelemetryCharts() {
       </div>
 
       {/* Live value footer */}
-      <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between">
-        <span className="text-[9px] font-mono text-slate-600 uppercase tracking-wider">
+      <div className="mt-3 pt-3 border-t border-slate-300 dark:border-slate-800 flex items-center justify-between">
+        <span className="text-[9px] font-mono text-slate-900 dark:text-slate-100 font-extrabold uppercase tracking-wider">
           Latest Reading
         </span>
         <span
