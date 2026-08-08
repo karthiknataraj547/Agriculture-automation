@@ -60,7 +60,7 @@ ${clientInclude}
 // ─── NETWORK CONFIGURATION ───
 const char* WIFI_SSID = "${wifiSsid}";
 const char* WIFI_PASS = "${wifiPass}";
-const char* MQTT_HOST = "${mqttBrokerHost}"; // Public test broker or your laptop IP (e.g. 192.168.1.X)
+const char* MQTT_HOST = "${mqttBrokerHost}"; // Public test broker or your laptop IP
 const int   MQTT_PORT = ${mqttPort};
 const char* DEVICE_ID = "${deviceId}";
 
@@ -83,7 +83,12 @@ void setup() {
   pinMode(PIN_RELAY_PUMP, OUTPUT);
   digitalWrite(PIN_RELAY_PUMP, LOW); // Default Relay OFF
 
-  pinMode(PIN_PIR_MOTION, INPUT);
+  #ifdef INPUT_PULLDOWN
+    pinMode(PIN_PIR_MOTION, INPUT_PULLDOWN);
+  #else
+    pinMode(PIN_PIR_MOTION, INPUT);
+  #endif
+
   dht.begin();
 
   ${isTls ? 'netClient.setInsecure(); // Skip certificate verification for prototype TLS' : ''}
@@ -126,8 +131,7 @@ void connectMQTT() {
       if (state == -2) {
         Serial.println("[MQTT ERROR -2 RESOLUTION]");
         Serial.println(" -> Host unreachable or network connection failed.");
-        Serial.println(" -> Fix 1: Make sure MQTT_HOST is 'test.mosquitto.org' or your Laptop IP.");
-        Serial.println(" -> Fix 2: Check Wi-Fi router permits outbound TCP port 1883.");
+        Serial.println(" -> Fix: Make sure MQTT_HOST is 'test.mosquitto.org' or your Laptop IP.");
       }
       delay(5000);
     }
@@ -172,20 +176,39 @@ void sendAck(const char* commandId, const char* status, const char* relayState) 
 }
 
 void publishTelemetry() {
+  // Read Analog Soil Moisture Pin
   int rawAnalog = analogRead(PIN_SOIL_MOISTURE);
-  float soilPercent = map(rawAnalog, ${isEsp8266 ? '1024, 0' : '4095, 0'}, 0, 100);
-  soilPercent = constrain(soilPercent, 0, 100);
+  float soilPercent = 0.0;
+  
+  // If sensor is not connected (floating pin value extreme or invalid), default strictly to 0
+  if (rawAnalog > 5 && rawAnalog < ${isEsp8266 ? '1020' : '4090'}) {
+    soilPercent = map(rawAnalog, ${isEsp8266 ? '1024, 0' : '4095, 0'}, 0, 100);
+    soilPercent = constrain(soilPercent, 0, 100);
+  } else {
+    soilPercent = 0.0; // Strictly 0 when sensor is disconnected
+  }
 
+  // Read DHT Temperature & Humidity
   float tempC = dht.readTemperature();
   float humidity = dht.readHumidity();
+
+  // Strictly 0.0 when DHT sensor is not connected (dht.read returns NaN)
+  float safeTemp = isnan(tempC) ? 0.0 : tempC;
+  float safeHumidity = isnan(humidity) ? 0.0 : humidity;
+
+  // Read PIR Motion Pin (Strictly false when pin is floating / disconnected)
   bool motion = digitalRead(PIN_PIR_MOTION) == HIGH;
+  if (isnan(tempC) && rawAnalog >= ${isEsp8266 ? '1020' : '4090'}) {
+    // Hardware is completely un-sensorized prototype board
+    motion = false;
+  }
 
   StaticJsonDocument<512> doc;
   doc["deviceId"] = DEVICE_ID;
   doc["boardId"] = "${board.boardId}";
-  doc["soilMoisture"] = isnan(soilPercent) ? 42.5 : soilPercent;
-  doc["airTemperature"] = isnan(tempC) ? 28.4 : tempC;
-  doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
+  doc["soilMoisture"] = soilPercent;
+  doc["airTemperature"] = safeTemp;
+  doc["humidity"] = safeHumidity;
   doc["motionDetected"] = motion;
   doc["waterFlowRate"] = digitalRead(PIN_RELAY_PUMP) == HIGH ? 14.5 : 0.0;
   doc["rssi"] = WiFi.RSSI();
