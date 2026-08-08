@@ -1,24 +1,24 @@
 'use client';
 
 import React from 'react';
-import { Power, Clock, Droplet, ShieldAlert } from 'lucide-react';
+import { Power, Clock, Droplet, ShieldAlert, Play, Square } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
 import { useSpatialStore } from '../../store/useSpatialStore';
 import { MotionAlertBanner } from '../alerts/MotionAlertBanner';
 
 export function PumpControlPanel() {
-  const { pumps, togglePumpState, emergencyStop } = useSpatialStore();
+  const { pumps, togglePumpState, setPumpState, emergencyStop } = useSpatialStore();
 
   const runningCount = pumps.filter((p) => p.status === 'RUNNING').length;
 
   return (
-    <div>
+    <div className="space-y-4">
       {/* Motion Intrusion Banner */}
       <MotionAlertBanner />
 
       {/* Console Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-5 skeuo-panel p-3.5 rounded-xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 skeuo-panel p-3.5 rounded-xl">
         <div className="flex items-center gap-2.5">
           <span className="skeuo-rivet" />
           <Power size={18} className="text-sky-600 dark:text-cyan-400" />
@@ -37,7 +37,7 @@ export function PumpControlPanel() {
       {/* Emergency Stop Alert if active */}
       {emergencyStop && (
         <div
-          className="p-4 mb-5 rounded-xl skeuo-panel border-2 border-rose-500 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs font-mono font-extrabold flex items-center gap-3 shadow-lg"
+          className="p-4 rounded-xl skeuo-panel border-2 border-rose-500 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs font-mono font-extrabold flex items-center gap-3 shadow-lg"
           role="alert"
           aria-live="assertive"
         >
@@ -110,6 +110,37 @@ export function PumpControlPanel() {
                 </div>
               </div>
 
+              {/* Explicit Push-Button Controls */}
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <button
+                  type="button"
+                  disabled={emergencyStop}
+                  onClick={() => setPumpState(pump.id, 'RUNNING')}
+                  className={`flex items-center justify-center gap-1.5 py-2.5 min-h-[44px] rounded-xl text-xs font-mono font-extrabold transition-all cursor-pointer ${
+                    isRunning
+                      ? 'bg-emerald-600 text-white shadow-md'
+                      : 'neu-button text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10'
+                  } ${emergencyStop ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <Play size={14} className="fill-current" />
+                  <span>START PUMP</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={emergencyStop}
+                  onClick={() => setPumpState(pump.id, 'OFF')}
+                  className={`flex items-center justify-center gap-1.5 py-2.5 min-h-[44px] rounded-xl text-xs font-mono font-extrabold transition-all cursor-pointer ${
+                    !isRunning
+                      ? 'bg-rose-600 text-white shadow-md'
+                      : 'neu-button text-rose-700 dark:text-rose-400 hover:bg-rose-500/10'
+                  } ${emergencyStop ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <Square size={14} className="fill-current" />
+                  <span>STOP PUMP</span>
+                </button>
+              </div>
+
               {/* Physical Actuation Control Bar */}
               <div className="flex items-center justify-between pt-3 border-t border-slate-300 dark:border-slate-800">
                 <span className="text-[10px] font-mono text-slate-800 dark:text-slate-200 uppercase font-extrabold tracking-wider">
@@ -123,7 +154,7 @@ export function PumpControlPanel() {
                   </span>
                   <div
                     onClick={() => !emergencyStop && togglePumpState(pump.id)}
-                    className={`skeuo-switch-track ${isRunning ? 'active' : ''} ${emergencyStop ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`skeuo-switch-track cursor-pointer ${isRunning ? 'active' : ''} ${emergencyStop ? 'opacity-50 cursor-not-allowed' : ''}`}
                     title={isRunning ? 'Turn Off' : 'Start Pump'}
                     role="switch"
                     aria-checked={isRunning}

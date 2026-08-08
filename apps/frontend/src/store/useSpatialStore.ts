@@ -54,6 +54,7 @@ export interface SpatialStoreState {
   emergencyStop: boolean;
   rainOverride: boolean;
   isZeroDataMode: boolean;
+  lastUserActionTime: number;
 
   // Actions
   setActiveView: (view: SpatialStoreState['activeView']) => void;
@@ -71,6 +72,7 @@ export interface SpatialStoreState {
   
   // Pump Actions
   togglePumpState: (pumpId: string) => void;
+  setPumpState: (pumpId: string, status: 'RUNNING' | 'OFF') => void;
   
   // Schedule Actions
   addSchedule: (schedule: IrrigationSchedule) => void;
@@ -200,6 +202,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   emergencyStop: initialLocal?.emergencyStop || false,
   rainOverride: initialLocal?.rainOverride || false,
   isZeroDataMode: true,
+  lastUserActionTime: 0,
 
   setActiveView: (view) => {
     set({ activeView: view });
@@ -222,13 +225,16 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     }),
 
   setAggregatedStats: (stats) => set((state) => (state.isZeroDataMode ? state : { aggregatedStats: stats })),
+  
   setDevices: (devices) => {
-    set({ devices });
+    set({ devices, lastUserActionTime: Date.now() });
     get().syncStateToCloud();
   },
+
   setInsights: (insights) => set({ insights }),
+  
   setRules: (rules) => {
-    set({ rules });
+    set({ rules, lastUserActionTime: Date.now() });
     get().syncStateToCloud();
   },
 
@@ -238,13 +244,13 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       const updatedPumps = state.pumps.map((p) =>
         nextEmergency ? { ...p, status: 'OFF' as const, flowRateLmin: 0 } : p
       );
-      return { emergencyStop: nextEmergency, pumps: updatedPumps };
+      return { emergencyStop: nextEmergency, pumps: updatedPumps, lastUserActionTime: Date.now() };
     });
     get().syncStateToCloud();
   },
 
   toggleRainOverride: () => {
-    set((state) => ({ rainOverride: !state.rainOverride }));
+    set((state) => ({ rainOverride: !state.rainOverride, lastUserActionTime: Date.now() }));
     get().syncStateToCloud();
   },
 
@@ -289,13 +295,31 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         }
         return p;
       });
-      return { pumps: updatedPumps };
+      return { pumps: updatedPumps, lastUserActionTime: Date.now() };
+    });
+    get().syncStateToCloud();
+  },
+
+  setPumpState: (pumpId, status) => {
+    set((state) => {
+      const updatedPumps = state.pumps.map((p) => {
+        if (p.id === pumpId) {
+          return {
+            ...p,
+            status,
+            manualOverride: true,
+            flowRateLmin: status === 'RUNNING' ? 14.5 : 0,
+          };
+        }
+        return p;
+      });
+      return { pumps: updatedPumps, lastUserActionTime: Date.now() };
     });
     get().syncStateToCloud();
   },
 
   addSchedule: (schedule) => {
-    set((state) => ({ schedules: [schedule, ...state.schedules] }));
+    set((state) => ({ schedules: [schedule, ...state.schedules], lastUserActionTime: Date.now() }));
     get().syncStateToCloud();
   },
 
@@ -306,12 +330,16 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
           ? { ...s, enabled: !s.enabled, status: !s.enabled ? ('SCHEDULED' as const) : ('PAUSED' as const) }
           : s
       ),
+      lastUserActionTime: Date.now(),
     }));
     get().syncStateToCloud();
   },
 
   deleteSchedule: (scheduleId) => {
-    set((state) => ({ schedules: state.schedules.filter((s) => s.id !== scheduleId) }));
+    set((state) => ({
+      schedules: state.schedules.filter((s) => s.id !== scheduleId),
+      lastUserActionTime: Date.now(),
+    }));
     get().syncStateToCloud();
   },
 
@@ -345,6 +373,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       emergencyStop: false,
       rainOverride: false,
       isZeroDataMode: true,
+      lastUserActionTime: Date.now(),
     });
     get().syncStateToCloud();
   },
@@ -395,16 +424,29 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
 
   loadGlobalStateForUser: async (email) => {
     if (!email || typeof window === 'undefined') return;
+    const currentState = get();
+    
+    // Protection: If user performed an action within the last 3.5 seconds, defer GET polling overwrite
+    if (Date.now() - currentState.lastUserActionTime < 3500) {
+      return;
+    }
+
     try {
       const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
       const data = await res.json();
       if (data.success && data.state) {
         const cloudState = data.state;
+
+        // Double check user action timestamp before setting state
+        if (Date.now() - get().lastUserActionTime < 3500) {
+          return;
+        }
+
         set((state) => ({
           pumps: cloudState.pumps || state.pumps,
           schedules: cloudState.schedules || state.schedules,
           rules: cloudState.rules || state.rules,
-          devices: cloudState.devices !== undefined ? cloudState.devices : state.devices,
+          devices: Array.isArray(cloudState.devices) ? cloudState.devices : state.devices,
           emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : state.emergencyStop,
           rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : state.rainOverride,
         }));
