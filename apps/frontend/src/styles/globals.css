@@ -15,40 +15,38 @@ html, body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Light Mode Body */
 body {
   background-color: #f1f5f9;
   color: #0f172a;
   font-family: var(--font-inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif);
   background-image: 
-    radial-gradient(circle at 50% 0%, rgba(2, 132, 199, 0.05) 0%, transparent 60%),
-    linear-gradient(rgba(203, 213, 225, 0.25) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(203, 213, 225, 0.25) 1px, transparent 1px);
+    radial-gradient(circle at 50% 0%, rgba(2, 132, 199, 0.04) 0%, transparent 60%),
+    linear-gradient(rgba(203, 213, 225, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(203, 213, 225, 0.2) 1px, transparent 1px);
   background-size: 100% 100%, 32px 32px, 32px 32px;
   background-attachment: fixed;
-  transition: background-color 0.25s ease, color 0.25s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* ──────────────────────────────────────────
-   Dark Mode Root Body
-   ────────────────────────────────────────── */
-
+/* Dark Mode Body */
 html.dark body, body.dark {
   background-color: #090d16 !important;
   color: #f8fafc !important;
   background-image: 
-    radial-gradient(circle at 50% 0%, rgba(0, 243, 255, 0.08) 0%, transparent 65%),
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px) !important;
+    radial-gradient(circle at 50% 0%, rgba(0, 243, 255, 0.06) 0%, transparent 65%),
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px) !important;
 }
 
 /* ──────────────────────────────────────────
-   Cards / Panels / Buttons Base (Light Mode Default)
+   GLARE-FREE CARDS & PANELS (Light Mode)
    ────────────────────────────────────────── */
 
 .skeuo-panel, .skeuo-card, .neu-flat, .neu-convex, .glass-panel, .glass-card {
   position: relative;
   background: #ffffff;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
   border: 1px solid #e2e8f0;
   border-radius: 1rem;
   color: #0f172a;
@@ -57,7 +55,7 @@ html.dark body, body.dark {
 .skeuo-panel-glow, .neu-convex-glow {
   position: relative;
   background: linear-gradient(145deg, #f0f9ff, #e0f2fe);
-  box-shadow: 0 4px 16px rgba(2, 132, 199, 0.15);
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.12);
   border: 1.5px solid #0284c7;
   border-radius: 1rem;
   color: #0f172a;
@@ -65,7 +63,7 @@ html.dark body, body.dark {
 
 .skeuo-pressed, .neu-pressed {
   background: #f8fafc;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.06);
+  box-shadow: none;
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
   color: #0f172a;
@@ -75,30 +73,81 @@ html.dark body, body.dark {
 .skeuo-button, .neu-button {
   position: relative;
   background: #ffffff;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   border: 1px solid #cbd5e1;
   border-radius: 0.75rem;
   color: #0f172a !important;
   font-weight: 800 !important;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.15s ease-in-out;
   cursor: pointer;
   user-select: none;
 }
 
 .skeuo-button:hover, .neu-button:hover {
-  box-shadow: 0 4px 10px rgba(2, 132, 199, 0.2);
+  background: #f8fafc;
   border-color: #0284c7;
   color: #0284c7 !important;
-  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.15);
 }
 
 .skeuo-button:active, .skeuo-button-active,
 .neu-button:active, .neu-button-active {
-  background: #f1f5f9 !important;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+  background: #e2e8f0 !important;
   border-color: #0284c7 !important;
   color: #0284c7 !important;
-  transform: translateY(1px) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* ──────────────────────────────────────────
+   GLARE-FREE CARDS & PANELS (Dark Mode)
+   ────────────────────────────────────────── */
+
+html.dark .skeuo-panel, html.dark .skeuo-card, html.dark .neu-flat, html.dark .neu-convex, html.dark .glass-panel, html.dark .glass-card,
+.dark .skeuo-panel, .dark .skeuo-card, .dark .neu-flat, .dark .neu-convex, .dark .glass-panel, .dark .glass-card {
+  background: #0f172a !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35) !important;
+  border: 1px solid #334155 !important;
+  color: #f8fafc !important;
+}
+
+html.dark .skeuo-pressed, html.dark .neu-pressed,
+.dark .skeuo-pressed, .dark .neu-pressed {
+  background: #090d16 !important;
+  box-shadow: none !important;
+  border: 1px solid #1e293b !important;
+  color: #f8fafc !important;
+}
+
+html.dark .skeuo-button, html.dark .neu-button,
+.dark .skeuo-button, .dark .neu-button {
+  background: #1e293b !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid #334155 !important;
+  color: #f8fafc !important;
+}
+
+html.dark .skeuo-button:hover, html.dark .neu-button:hover,
+.dark .skeuo-button:hover, .dark .neu-button:hover {
+  background: #334155 !important;
+  border-color: #00f3ff !important;
+  color: #00f3ff !important;
+  box-shadow: 0 2px 8px rgba(0, 243, 255, 0.2) !important;
+}
+
+html.dark .skeuo-button:active, html.dark .skeuo-button-active,
+html.dark .neu-button:active, html.dark .neu-button-active,
+.dark .skeuo-button:active, .dark .skeuo-button-active,
+.dark .neu-button:active, .dark .neu-button-active {
+  background: #090d16 !important;
+  border-color: #00f3ff !important;
+  color: #00f3ff !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5) !important;
+}
+
+html.dark header, html.dark aside,
+.dark header, .dark aside {
+  background-color: #090d16 !important;
+  border-color: #334155 !important;
 }
 
 /* Glass Viewport LCD Lens Bezel */
@@ -109,104 +158,26 @@ html.dark body, body.dark {
   color: #38bdf8 !important;
   border: 2px solid #334155;
   border-radius: 0.625rem;
-  box-shadow: inset 3px 3px 8px rgba(0,0,0,0.9), inset -2px -2px 6px rgba(255,255,255,0.1), 0 4px 10px rgba(0,0,0,0.2);
 }
 
 /* LED Indicator Bulbs */
 .skeuo-led {
   display: inline-block; width: 12px; height: 12px; border-radius: 50%;
   position: relative;
-  box-shadow: inset -1px -1px 2px rgba(0,0,0,0.4), inset 1px 1px 2px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.25);
   border: 1px solid rgba(0,0,0,0.3);
 }
-.skeuo-led-green {
-  background: radial-gradient(circle at 35% 35%, #fff 0%, #4ade80 30%, #16a34a 70%, #15803d 100%);
-  box-shadow: 0 0 10px #22c55e;
-}
-.skeuo-led-cyan {
-  background: radial-gradient(circle at 35% 35%, #fff 0%, #38bdf8 30%, #0284c7 70%, #0369a1 100%);
-  box-shadow: 0 0 10px #0284c7;
-}
-.skeuo-led-red {
-  background: radial-gradient(circle at 35% 35%, #fff 0%, #f87171 30%, #dc2626 70%, #991b1b 100%);
-  box-shadow: 0 0 10px #ef4444;
-}
-.skeuo-led-amber {
-  background: radial-gradient(circle at 35% 35%, #fff 0%, #fbbf24 30%, #d97706 70%, #b45309 100%);
-  box-shadow: 0 0 10px #f59e0b;
-}
-.skeuo-led-off {
-  background: radial-gradient(circle at 35% 35%, #94a3b8 0%, #64748b 60%, #334155 100%);
-  box-shadow: inset 1px 1px 2px rgba(0,0,0,0.6);
-}
-
-/* ──────────────────────────────────────────
-   DARK MODE OVERRIDES (DARK CARDS + WHITE TEXT)
-   ────────────────────────────────────────── */
-
-html.dark .skeuo-panel, html.dark .skeuo-card, html.dark .neu-flat, html.dark .neu-convex, html.dark .glass-panel, html.dark .glass-card,
-.dark .skeuo-panel, .dark .skeuo-card, .dark .neu-flat, .dark .neu-convex, .dark .glass-panel, .dark .glass-card {
-  background: linear-gradient(145deg, #1e293b, #0f172a 60%, #090d16) !important;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4), inset 1px 1px 0 rgba(255,255,255,0.08) !important;
-  border: 1px solid #334155 !important;
-  color: #f8fafc !important;
-}
-
-html.dark .skeuo-pressed, html.dark .neu-pressed,
-.dark .skeuo-pressed, .dark .neu-pressed {
-  background: linear-gradient(145deg, #090d16, #0f172a) !important;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5) !important;
-  border: 1px solid #1e293b !important;
-  color: #f8fafc !important;
-}
-
-html.dark .skeuo-button, html.dark .neu-button,
-.dark .skeuo-button, .dark .neu-button {
-  background: linear-gradient(145deg, #1e293b, #0f172a) !important;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4) !important;
-  border: 1px solid #334155 !important;
-  color: #f8fafc !important;
-}
-
-html.dark .skeuo-button:hover, html.dark .neu-button:hover,
-.dark .skeuo-button:hover, .dark .neu-button:hover {
-  background: linear-gradient(145deg, #334155, #1e293b) !important;
-  box-shadow: 0 4px 12px rgba(0, 243, 255, 0.25) !important;
-  border-color: #00f3ff !important;
-  color: #00f3ff !important;
-}
-
-html.dark .skeuo-button:active, html.dark .skeuo-button-active,
-html.dark .neu-button:active, html.dark .neu-button-active,
-.dark .skeuo-button:active, .dark .skeuo-button-active,
-.dark .neu-button:active, .dark .neu-button-active {
-  background: linear-gradient(145deg, #090d16, #0f172a) !important;
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6) !important;
-  border-color: #00f3ff !important;
-  color: #00f3ff !important;
-}
-
-html.dark header, html.dark aside,
-.dark header, .dark aside {
-  background-color: #090d16 !important;
-  border-color: #334155 !important;
-}
+.skeuo-led-green { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.skeuo-led-cyan { background: #0284c7; box-shadow: 0 0 8px #0284c7; }
+.skeuo-led-red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+.skeuo-led-amber { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+.skeuo-led-off { background: #475569; }
 
 /* Custom Scrollbars */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track {
-  background: #f1f5f9;
-}
-html.dark ::-webkit-scrollbar-track, .dark ::-webkit-scrollbar-track {
-  background: #090d16;
-}
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 4px;
-}
-html.dark ::-webkit-scrollbar-thumb, .dark ::-webkit-scrollbar-thumb {
-  background: #334155;
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+html.dark ::-webkit-scrollbar-track, .dark ::-webkit-scrollbar-track { background: #090d16; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+html.dark ::-webkit-scrollbar-thumb, .dark ::-webkit-scrollbar-thumb { background: #334155; }
 ::-webkit-scrollbar-thumb:hover { background: #0284c7; }
 
 *:focus-visible {

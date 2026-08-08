@@ -15,10 +15,17 @@ interface StatBadgeProps {
 }
 
 const severityColors = {
-  normal: 'text-sky-600 dark:text-cyan-400',
-  warning: 'text-amber-600 dark:text-amber-400',
-  critical: 'text-rose-600 dark:text-rose-400',
-  success: 'text-emerald-600 dark:text-emerald-400',
+  normal: 'text-sky-600 dark:text-cyan-400 bg-sky-50 dark:bg-sky-950/50 border-sky-200 dark:border-sky-800',
+  warning: 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800',
+  critical: 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800',
+  success: 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800',
+};
+
+const valueColors = {
+  normal: 'text-sky-700 dark:text-cyan-400',
+  warning: 'text-amber-700 dark:text-amber-400',
+  critical: 'text-rose-700 dark:text-rose-400',
+  success: 'text-emerald-700 dark:text-emerald-400',
 };
 
 export function StatBadge({
@@ -65,27 +72,27 @@ export function StatBadge({
   }, [value, animate]);
 
   return (
-    <div className={clsx('flex items-center gap-3 min-w-0 skeuo-panel p-2.5 rounded-xl', className)}>
-      {/* Metallic Icon Socket */}
+    <div className={clsx('flex items-center gap-2.5 min-w-0 p-1', className)}>
+      {/* Glare-Free Icon Socket */}
       <div
         className={clsx(
-          'flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center skeuo-pressed',
+          'flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border shadow-xs',
           severityColors[severity]
         )}
       >
         {icon}
       </div>
 
-      {/* Glass LCD Display Text */}
+      {/* Crystal Clear LCD Display Text */}
       <div className="min-w-0 flex-1">
-        <p className="text-[10px] uppercase tracking-wider text-slate-800 dark:text-slate-200 font-mono font-extrabold truncate">
+        <p className="text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 font-mono font-extrabold truncate">
           {label}
         </p>
         <div className="flex items-baseline gap-1">
           <span
             className={clsx(
-              'text-lg font-mono font-bold tabular-nums drop-shadow-sm',
-              severityColors[severity]
+              'text-base sm:text-lg font-mono font-extrabold tabular-nums',
+              valueColors[severity]
             )}
           >
             {displayValue}
@@ -97,9 +104,9 @@ export function StatBadge({
             <span
               className={clsx(
                 'text-[10px] ml-1 font-mono font-bold',
-                trend === 'up' && 'text-emerald-500',
-                trend === 'down' && 'text-rose-500',
-                trend === 'stable' && 'text-slate-400'
+                trend === 'up' && 'text-emerald-600 dark:text-emerald-400',
+                trend === 'down' && 'text-rose-600 dark:text-rose-400',
+                trend === 'stable' && 'text-slate-500'
               )}
             >
               {trend === 'up' ? '▲' : trend === 'down' ? '▼' : '—'}
