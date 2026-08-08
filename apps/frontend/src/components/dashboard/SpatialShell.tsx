@@ -15,14 +15,12 @@ import {
   CloudRain,
   Sun,
   Moon,
-  Clock,
   User,
   LogOut,
   KeyRound,
   CheckCircle2,
   AlertCircle,
   Globe,
-  RefreshCw,
   Power,
   Calendar,
 } from 'lucide-react';
@@ -46,7 +44,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
     toggleRainOverride,
     themeMode,
     toggleThemeMode,
-    forceCloudSync,
   } = useSpatialStore();
 
   const { user, logout, updatePassword } = useAuthStore();
@@ -54,8 +51,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
   const [timeString, setTimeString] = useState<string>('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [userModalOpen, setUserModalOpen] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncSuccessMsg, setSyncSuccessMsg] = useState(false);
 
   // Password change state
   const [changePassOpen, setChangePassOpen] = useState(false);
@@ -114,15 +109,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
   const handleNavClick = (viewKey: (typeof NAV_ITEMS)[number]['key']) => {
     setActiveView(viewKey);
     setDrawerOpen(false);
-  };
-
-  const handleForceSync = async () => {
-    if (!user?.email) return;
-    setIsSyncing(true);
-    await forceCloudSync(user.email);
-    setIsSyncing(false);
-    setSyncSuccessMsg(true);
-    setTimeout(() => setSyncSuccessMsg(false), 2000);
   };
 
   const handleChangePasswordSubmit = async (e: React.FormEvent) => {
@@ -196,8 +182,8 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
         <div className="p-3 border-t border-slate-200 dark:border-slate-800">
           <div className="p-2.5 rounded-xl neu-pressed text-[10px] font-mono text-slate-600 dark:text-slate-400 space-y-1">
             <div className="flex items-center justify-between font-bold">
-              <span>SYNC STATUS</span>
-              <span className="text-emerald-700 dark:text-emerald-400">ONLINE</span>
+              <span>AUTO SYNC</span>
+              <span className="text-emerald-700 dark:text-emerald-400">ACTIVE</span>
             </div>
             <p className="truncate text-slate-800 dark:text-slate-200 font-bold">{user?.email}</p>
           </div>
@@ -230,21 +216,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
           {/* Controls */}
           <div className="flex items-center gap-2">
-            {/* Force Cloud Sync Button */}
-            <button
-              onClick={handleForceSync}
-              disabled={isSyncing}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl neu-button text-xs font-mono font-bold transition-all min-h-[40px] ${
-                syncSuccessMsg ? 'text-emerald-600 border border-emerald-500' : 'text-sky-600 dark:text-cyber-cyan hover:text-sky-700'
-              }`}
-              title="Force Instant Cross-Device Cloud Sync"
-            >
-              <RefreshCw size={14} className={isSyncing ? 'animate-spin text-sky-600' : ''} />
-              <span className="hidden sm:inline">
-                {isSyncing ? 'SYNCING...' : syncSuccessMsg ? 'SYNCED!' : 'CLOUD SYNC'}
-              </span>
-            </button>
-
             {/* Theme Toggle Button */}
             <SpatialButton
               variant="ghost"
@@ -313,7 +284,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
               SYSTEM OPERATIONAL
             </span>
             <span>ACCOUNT: {user?.email}</span>
-            <span>LATENCY: 12ms</span>
+            <span>AUTO SYNC: ACTIVE</span>
           </div>
 
           <div className="flex items-center gap-4">
@@ -416,23 +387,13 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                 <div className="p-3 rounded-xl neu-pressed space-y-1 flex items-center justify-between">
                   <div>
                     <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Cloud Account Sync</p>
-                    <p className="text-xs font-mono text-emerald-700 dark:text-emerald-400 font-bold">AES-256 Cloud Encrypted</p>
+                    <p className="text-xs font-mono text-emerald-700 dark:text-emerald-400 font-bold">Automatic Background Sync</p>
                   </div>
-                  <Globe size={16} className="text-sky-600 dark:text-cyber-cyan" />
+                  <Globe size={16} className="text-sky-600 dark:text-cyber-cyan animate-pulse" />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={handleForceSync}
-                  disabled={isSyncing}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl neu-button text-xs font-mono font-bold text-sky-600 dark:text-cyber-cyan"
-                >
-                  <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-                  <span>RESTART & RE-SYNC ALL DEVICES</span>
-                </button>
-
                 <SpatialButton
                   variant="primary"
                   size="md"
