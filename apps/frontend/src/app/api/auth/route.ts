@@ -40,56 +40,56 @@ const seedDefaultUsers = (): GlobalUserRecord[] => {
 };
 
 let usersCache: GlobalUserRecord[] = seedDefaultUsers();
-let isSyncing = false;
 
-async function syncFromCloudDB(): Promise<GlobalUserRecord[]> {
-  if (isSyncing) return usersCache;
-  isSyncing = true;
+// Reliable, Awaited Cloud Database Fetch
+async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 600);
     const res = await fetch(CLOUD_DB_URL, {
-      signal: controller.signal,
       headers: { 'Cache-Control': 'no-cache' },
-    }).finally(() => clearTimeout(timeout));
+      cache: 'no-store',
+    });
 
     if (res.ok) {
       const json: any = await res.json();
-      if (json?.data?.users?.length) {
+      if (json?.data?.users && Array.isArray(json.data.users) && json.data.users.length > 0) {
         usersCache = json.data.users;
       }
     }
-  } catch {
-    // Return cache on delay
-  } finally {
-    isSyncing = false;
+  } catch (e) {
+    console.error('[Auth Cloud DB] Fetch error:', e);
   }
   return usersCache;
 }
 
-function syncToCloudDBAsync(users: GlobalUserRecord[]) {
-  usersCache = users;
-  fetch(CLOUD_DB_URL, { cache: 'no-store' })
-    .then((r) => (r.ok ? r.json() : {}))
-    .then((json: any) => {
-      const existingStates = json?.data?.farmStates || {};
-      return fetch(CLOUD_DB_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'Aether Users DB',
-          data: {
-            users,
-            farmStates: existingStates,
-          },
-        }),
-      });
-    })
-    .catch(() => {});
+// Reliable, Awaited Cloud Database Write
+async function saveUsersToCloudDB(users: GlobalUserRecord[]): Promise<boolean> {
+  try {
+    usersCache = users;
+    const getRes = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
+    const existingJson = getRes.ok ? await getRes.json() : {};
+    const existingData = existingJson?.data || {};
+
+    const putRes = await fetch(CLOUD_DB_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Aether Users DB',
+        data: {
+          ...existingData,
+          users,
+        },
+      }),
+    });
+
+    return putRes.ok;
+  } catch (err) {
+    console.error('[Auth Cloud DB] Save error:', err);
+    return false;
+  }
 }
 
 export async function GET() {
-  const users = await syncFromCloudDB();
+  const users = await fetchUsersFromCloudDB();
   return NextResponse.json(
     { status: 'ONLINE', security: 'PBKDF2+AES-256-GCM', count: users.length },
     {
@@ -109,11 +109,8 @@ export async function POST(req: Request) {
 
     const targetEmail = (email || '').trim().toLowerCase();
 
-    // Fast sync attempt
-    const users = usersCache.length > 2 ? usersCache : await Promise.race([
-      syncFromCloudDB(),
-      new Promise<GlobalUserRecord[]>((resolve) => setTimeout(() => resolve(usersCache), 150))
-    ]);
+    // ALWAYS AWAIT fresh cloud database users list to prevent stale password mismatch
+    const users = await fetchUsersFromCloudDB();
 
     const findUser = (str: string) =>
       users.find((u) => u.email.toLowerCase() === str || u.name.toLowerCase() === str);
@@ -138,7 +135,7 @@ export async function POST(req: Request) {
           user.passwordHash = hash;
           user.salt = salt;
           delete (user as any).password;
-          syncToCloudDBAsync(users);
+          await saveUsersToCloudDB(users);
         }
       }
 
@@ -178,7 +175,9 @@ export async function POST(req: Request) {
         users.push(user);
       }
 
-      syncToCloudDBAsync(users);
+      // MUST AWAIT cloud database write so Vercel Serverless runtime doesn't freeze the PUT request
+      await saveUsersToCloudDB(users);
+
       const { passwordHash: _, salt: __, ...sanitizedUser } = user;
       return NextResponse.json({ success: true, user: sanitizedUser });
     }
@@ -198,8 +197,9 @@ export async function POST(req: Request) {
       user.salt = salt;
       delete (user as any).password;
 
-      syncToCloudDBAsync(users);
-      return NextResponse.json({ success: true, message: 'Password updated securely.' });
+      // MUST AWAIT cloud database write
+      await saveUsersToCloudDB(users);
+      return NextResponse.json({ success: true, message: 'Password updated securely in Cloud DB.' });
     }
 
     return NextResponse.json({ success: false, message: 'Invalid action.' }, { status: 400 });
