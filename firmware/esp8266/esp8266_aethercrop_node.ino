@@ -2,7 +2,7 @@
  * ═══════════════════════════════════════════════════════════════════════════════════
  *  AETHERCROP SPATIAL IOT PLATFORM — ESP8266 FIRMWARE NODE (NodeMCU / D1 Mini)
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  Hardware Target : ESP8266 NodeMCU v2/v3 / WeMos D1 Mini / ESP-12E
+ *  Hardware Target : ESP8266 NodeMCU v2/v3 / WeMos D1 Mini / Generic ESP8266 Module
  *  Features        : MQTT Telemetry, HTTP REST Backup, Relay Control, Sensor Sampling
  *  Libraries Needed:
  *    - ESP8266WiFi (Built-in ESP8266 Board Core)
@@ -18,6 +18,20 @@
 #include <ArduinoJson.h>
 #include <DHT.h>
 #include <ESP8266HTTPClient.h>
+
+// ─── UNIVERSAL ESP8266 PIN MAP FALLBACKS (Guarantees compilation on all Arduino board settings) ───
+#ifndef D1
+  #define D1 5  // GPIO 5
+#endif
+#ifndef D2
+  #define D2 4  // GPIO 4
+#endif
+#ifndef D4
+  #define D4 2  // GPIO 2
+#endif
+#ifndef D5
+  #define D5 14 // GPIO 14
+#endif
 
 // ─── USER CONFIGURATION ───
 const char* WIFI_SSID       = "YOUR_WIFI_SSID";
@@ -40,13 +54,13 @@ const char* TOPIC_COMMANDS  = "aether/farm-alpha/zone-1/commands";
 // HTTP Fallback API (if MQTT is offline)
 const char* HTTP_API_URL    = "http://192.168.1.100:3000/api/state";
 
-// ─── PIN DEFINITIONS (ESP8266 NodeMCU / D1 Mini) ───
+// ─── PIN DEFINITIONS (ESP8266 NodeMCU / D1 Mini / Generic ESP8266) ───
 #define SOIL_MOISTURE_PIN  A0    // Analog Input 0 (0-1023)
-#define DHT_PIN            D4    // GPIO 2
+#define DHT_PIN            D4    // GPIO 2 (NodeMCU D4)
 #define DHT_TYPE           DHT11 // Change to DHT22 if using DHT22
-#define FLOW_SENSOR_PIN    D5    // GPIO 14 (Interrupt Pin for Flow Pulse Counter)
-#define RELAY_PUMP_PIN     D1    // GPIO 5 (Pump Relay Output)
-#define STATUS_LED_PIN     LED_BUILTIN // D4 / GPIO 2 (Active LOW on ESP8266)
+#define FLOW_SENSOR_PIN    D5    // GPIO 14 (NodeMCU D5 - Interrupt Pin for Flow Counter)
+#define RELAY_PUMP_PIN     D1    // GPIO 5 (NodeMCU D1 - Pump Relay Output)
+#define STATUS_LED_PIN     2     // GPIO 2 / Built-in LED (Active LOW on ESP8266)
 
 // ─── GLOBAL OBJECTS & VARIABLES ───
 WiFiClient espClient;

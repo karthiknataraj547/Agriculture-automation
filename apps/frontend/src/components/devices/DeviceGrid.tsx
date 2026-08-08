@@ -152,7 +152,15 @@ const SAMPLE_ESP8266_CODE = `// ESP8266 (NodeMCU / D1 Mini) Farm Smart Node Firm
 #include <ArduinoJson.h>
 #include <DHT.h>
 
-// ─── Pin Configuration (ESP8266 NodeMCU) ───
+// ─── Pin Map Fallbacks (Guarantees compilation on all ESP8266 boards) ───
+#ifndef D1
+  #define D1 5  // GPIO 5 (Relay Pin)
+#endif
+#ifndef D4
+  #define D4 2  // GPIO 2 (DHT Sensor Pin)
+#endif
+
+// ─── Pin Configuration (ESP8266 NodeMCU / Generic ESP8266) ───
 #define SOIL_PIN    A0  // Capacitive Soil Moisture Sensor (Analog A0 0-1V)
 #define DHT_PIN     D4  // GPIO 2 for DHT Temp & Humidity Sensor
 #define RELAY_PIN   D1  // GPIO 5 Signal Pin for Water Pump Relay
