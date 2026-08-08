@@ -71,6 +71,56 @@ export interface DeviceCommand {
   error?: string;
 }
 
+export interface BoardPinDefinition {
+  pinName: string;
+  gpioNumber: string;
+  supportedModes: ('ANALOG_IN' | 'DIGITAL_IO' | 'PWM' | 'I2C' | 'SPI')[];
+  recommendedFor?: string;
+}
+
+export interface IoTBoardDefinition {
+  boardId: string;
+  name: string;
+  family: 'ESP32' | 'ESP8266';
+  chip: string;
+  architecture: string;
+  flashSizeMb: number;
+  ramSizeKb: number;
+  gpioCount: number;
+  adcChannels: number;
+  wifiSupport: boolean;
+  bluetoothSupport: boolean;
+  mqttSupport: boolean;
+  tlsSupport: boolean;
+  arduinoCore: string;
+  boardManagerUrl: string;
+  wifiHeader: '<WiFi.h>' | '<ESP8266WiFi.h>';
+  requiredLibraries: string[];
+  recommendedPins: {
+    soilMoisturePin: string;
+    dhtPin: string;
+    relayPumpPin: string;
+    flowRatePin: string;
+    pirMotionPin: string;
+  };
+  validPins: BoardPinDefinition[];
+}
+
+export interface FirmwareGenerationRequest {
+  deviceId: string;
+  boardId: string;
+  wifiSsid: string;
+  wifiPass: string;
+  mqttBrokerHost: string;
+  mqttPort: number;
+  soilMoisturePin: string;
+  dhtPin: string;
+  relayPumpPin: string;
+  flowRatePin: string;
+  pirMotionPin: string;
+  dhtType: 'DHT11' | 'DHT22';
+}
+
 export interface TelemetryReading {
   deviceId: string;
   farmId: string;
@@ -130,6 +180,8 @@ export interface IoTDevice {
   lastSeen: string;
   batteryLevel: number;
   signalRssi: number;
+  boardId?: string;
+  boardFamily?: 'ESP32' | 'ESP8266';
   otaStatus: 'IDLE' | 'DOWNLOADING' | 'APPLYING' | 'SUCCESS' | 'FAILED';
   location: {
     lat: number;

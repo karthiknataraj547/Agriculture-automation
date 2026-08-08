@@ -26,6 +26,7 @@ import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
 import { useSpatialStore } from '../../store/useSpatialStore';
 import { DeviceStatus, IoTDevice } from '@aether/shared';
+import { BoardSelectorWizard } from './BoardSelectorWizard';
 
 function deviceStatusToUi(status: DeviceStatus): 'online' | 'offline' | 'warning' | 'critical' | 'maintenance' {
   switch (status) {
@@ -347,7 +348,10 @@ export function DeviceGrid() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {/* ESP32 / ESP8266 Microcontroller Board Selector & Firmware Provisioning Wizard */}
+      <BoardSelectorWizard />
+
       {/* Top Action Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-2">
         <div className="flex items-center gap-2 min-w-0">
