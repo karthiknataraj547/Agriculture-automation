@@ -94,7 +94,7 @@ export interface SpatialStoreState {
   forceCloudSync: (email?: string) => Promise<void>;
 }
 
-const STORAGE_STATE_KEY = 'aether_farm_persisted_state';
+const STORAGE_STATE_KEY = 'aether_farm_persisted_state_v3';
 const STORAGE_VIEW_KEY = 'aether_active_view_device';
 const STORAGE_THEME_KEY = 'aether_theme_mode';
 
@@ -211,7 +211,6 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   setActiveView: (view) => {
     set({ activeView: view });
     if (typeof window !== 'undefined') {
-      sessionStorage.getItem(STORAGE_VIEW_KEY);
       sessionStorage.setItem(STORAGE_VIEW_KEY, view);
       localStorage.setItem(STORAGE_VIEW_KEY, view);
     }
@@ -433,32 +432,56 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
 
     const currentState = get();
     
-    // Protection: If user performed an action within the last 3.5 seconds, defer GET polling overwrite
-    if (Date.now() - currentState.lastUserActionTime < 3500) {
+    // Protection: If user performed an action within the last 3 seconds, defer GET polling overwrite
+    if (Date.now() - currentState.lastUserActionTime < 3000) {
       return;
     }
 
     try {
       const res = await fetch(`/api/state?email=${encodeURIComponent(activeEmail)}`);
       const data = await res.json();
-      if (data.success && data.state) {
+      if (data.success && data.state && Object.keys(data.state).length > 0) {
         const cloudState = data.state;
 
         // Double check user action timestamp before setting state
-        if (Date.now() - get().lastUserActionTime < 3500) {
+        if (Date.now() - get().lastUserActionTime < 3000) {
           return;
         }
 
-        set((state) => ({
-          pumps: cloudState.pumps || state.pumps,
-          schedules: cloudState.schedules || state.schedules,
-          rules: cloudState.rules || state.rules,
-          devices: Array.isArray(cloudState.devices) ? cloudState.devices : state.devices,
-          emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : state.emergencyStop,
-          rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : state.rainOverride,
+        const newPumps = cloudState.pumps && Array.isArray(cloudState.pumps) && cloudState.pumps.length > 0
+          ? cloudState.pumps
+          : currentState.pumps;
+
+        const newSchedules = cloudState.schedules && Array.isArray(cloudState.schedules)
+          ? cloudState.schedules
+          : currentState.schedules;
+
+        const newDevices = Array.isArray(cloudState.devices)
+          ? cloudState.devices
+          : currentState.devices;
+
+        const newRules = Array.isArray(cloudState.rules)
+          ? cloudState.rules
+          : currentState.rules;
+
+        set({
+          pumps: newPumps,
+          schedules: newSchedules,
+          rules: newRules,
+          devices: newDevices,
+          emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : currentState.emergencyStop,
+          rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : currentState.rainOverride,
           isCloudHydrated: true,
+        });
+
+        localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify({
+          pumps: newPumps,
+          schedules: newSchedules,
+          rules: newRules,
+          devices: newDevices,
+          emergencyStop: cloudState.emergencyStop,
+          rainOverride: cloudState.rainOverride,
         }));
-        localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(cloudState));
       }
     } catch (err) {
       console.warn('Load global state failed:', err);
@@ -468,22 +491,46 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   forceCloudSync: async (emailArg) => {
     const activeEmail = emailArg || useAuthStore.getState().user?.email;
     if (!activeEmail || typeof window === 'undefined') return;
+
     try {
       const res = await fetch(`/api/state?email=${encodeURIComponent(activeEmail)}`);
       const data = await res.json();
-      if (data.success && data.state) {
+      const currentState = get();
+
+      if (data.success && data.state && Object.keys(data.state).length > 0) {
         const cloudState = data.state;
-        set({
-          pumps: cloudState.pumps || ZERO_PUMPS,
-          schedules: cloudState.schedules || ZERO_SCHEDULES,
-          rules: cloudState.rules || [],
-          devices: Array.isArray(cloudState.devices) ? cloudState.devices : [],
-          emergencyStop: cloudState.emergencyStop || false,
-          rainOverride: cloudState.rainOverride || false,
+        const mergedPumps = cloudState.pumps && Array.isArray(cloudState.pumps) && cloudState.pumps.length > 0
+          ? cloudState.pumps
+          : currentState.pumps;
+
+        const mergedSchedules = cloudState.schedules && Array.isArray(cloudState.schedules)
+          ? cloudState.schedules
+          : currentState.schedules;
+
+        const mergedDevices = Array.isArray(cloudState.devices)
+          ? cloudState.devices
+          : currentState.devices;
+
+        const mergedRules = Array.isArray(cloudState.rules)
+          ? cloudState.rules
+          : currentState.rules;
+
+        const toApply = {
+          pumps: mergedPumps,
+          schedules: mergedSchedules,
+          rules: mergedRules,
+          devices: mergedDevices,
+          emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : currentState.emergencyStop,
+          rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : currentState.rainOverride,
           isCloudHydrated: true,
           lastUserActionTime: 0,
-        });
-        localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(cloudState));
+        };
+
+        set(toApply);
+        localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(toApply));
+      } else {
+        // If cloud DB has no state yet, push local storage state so it doesn't get wiped
+        get().syncStateToCloud(activeEmail);
       }
     } catch (err) {
       console.warn('Force cloud sync failed:', err);

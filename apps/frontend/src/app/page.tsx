@@ -62,45 +62,18 @@ export default function DashboardPage() {
     setIsMounted(true);
   }, []);
 
-  // True Zero-Delay Real-Time SSE Stream Listener (< 50ms Cross-Device Sync)
+  // Crash-Proof Ultra-Fast Real-Time Polling Engine (400ms interval across devices)
   useEffect(() => {
     if (isAuthenticated && user?.email) {
-      // Immediate initial cloud state force sync on mount
+      // Immediate initial cloud state hydration on mount
       useSpatialStore.getState().forceCloudSync(user.email);
 
-      const emailParam = encodeURIComponent(user.email);
-      let eventSource: EventSource | null = null;
-
-      try {
-        eventSource = new EventSource(`/api/state/stream?email=${emailParam}`);
-
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'CONNECTED') return;
-
-            // Direct instant hydration in < 10ms upon incoming state broadcast
-            useSpatialStore.setState((state) => ({
-              pumps: data.pumps || state.pumps,
-              schedules: data.schedules || state.schedules,
-              rules: data.rules || state.rules,
-              devices: Array.isArray(data.devices) ? data.devices : state.devices,
-              emergencyStop: data.emergencyStop !== undefined ? data.emergencyStop : state.emergencyStop,
-              rainOverride: data.rainOverride !== undefined ? data.rainOverride : state.rainOverride,
-            }));
-          } catch {}
-        };
-      } catch {}
-
-      // Backup high-frequency 300ms polling fallback for network stability
+      // High-frequency 400ms polling for instant cross-device state synchronization
       const interval = setInterval(() => {
         loadGlobalStateForUser(user.email);
-      }, 300);
+      }, 400);
 
-      return () => {
-        clearInterval(interval);
-        if (eventSource) eventSource.close();
-      };
+      return () => clearInterval(interval);
     }
   }, [isAuthenticated, user, loadGlobalStateForUser]);
 
