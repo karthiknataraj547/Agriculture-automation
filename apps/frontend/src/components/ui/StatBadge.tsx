@@ -15,10 +15,10 @@ interface StatBadgeProps {
 }
 
 const severityColors = {
-  normal: 'text-sky-600 dark:text-cyan-400 bg-sky-50 dark:bg-sky-950/50 border-sky-200 dark:border-sky-800',
-  warning: 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800',
-  critical: 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800',
-  success: 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800',
+  normal: 'text-sky-600 dark:text-cyan-400 bg-sky-100 dark:bg-sky-950/80 border-sky-300 dark:border-cyan-500/60 shadow-xs',
+  warning: 'text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/80 border-amber-300 dark:border-amber-500/60 shadow-xs',
+  critical: 'text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/80 border-rose-300 dark:border-rose-500/60 shadow-xs',
+  success: 'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-500/60 shadow-xs',
 };
 
 const valueColors = {
@@ -73,10 +73,10 @@ export function StatBadge({
 
   return (
     <div className={clsx('flex items-center gap-2.5 min-w-0 p-1', className)}>
-      {/* Glare-Free Icon Socket */}
+      {/* Glare-Free Vivid Icon Socket */}
       <div
         className={clsx(
-          'flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border shadow-xs',
+          'flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center border shadow-xs transition-transform duration-200 hover:scale-105',
           severityColors[severity]
         )}
       >
@@ -85,7 +85,7 @@ export function StatBadge({
 
       {/* Crystal Clear LCD Display Text */}
       <div className="min-w-0 flex-1">
-        <p className="text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 font-mono font-extrabold truncate">
+        <p className="text-[10px] uppercase tracking-wider text-slate-800 dark:text-slate-200 font-mono font-extrabold truncate">
           {label}
         </p>
         <div className="flex items-baseline gap-1">
