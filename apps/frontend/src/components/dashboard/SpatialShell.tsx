@@ -157,7 +157,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
   };
 
   return (
-    <div className={clsx('flex flex-col md:flex-row h-[100dvh] max-h-[100dvh] w-full overflow-hidden transition-colors duration-300', themeMode === 'dark' ? 'dark bg-[#0b0f19]' : 'bg-[#e6ecf5]')}>
+    <div className={clsx('flex flex-col md:flex-row h-[100dvh] max-h-[100dvh] w-full overflow-hidden transition-colors duration-300', themeMode === 'dark' ? 'dark bg-[#0b0f19]' : 'bg-[#e2e8f0]')}>
       {/* Skip to Content */}
       <a href="#main-content" className="skip-to-content">
         Skip to main content
@@ -165,16 +165,16 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
       {/* ─── Desktop Left Sidebar ─── */}
       <aside
-        className="hidden md:flex flex-col items-center w-[68px] flex-shrink-0 py-4 gap-1 bg-[#e6ecf5] dark:bg-[#0b0f19] border-r border-white/80 dark:border-white/10 shadow-[6px_0_16px_#b6c3d7] z-20"
+        className="hidden md:flex flex-col items-center w-[68px] flex-shrink-0 py-4 gap-1 bg-[#e2e8f0] dark:bg-[#0b0f19] border-r border-slate-300 dark:border-white/10 shadow-md z-20"
         role="navigation"
         aria-label="Main navigation"
       >
         {/* Brand Icon */}
         <div className="flex flex-col items-center mb-4">
-          <div className="w-10 h-10 rounded-xl neu-button flex items-center justify-center text-cyber-cyan font-bold">
+          <div className="w-10 h-10 rounded-xl neu-button flex items-center justify-center text-sky-600 dark:text-cyber-cyan font-bold">
             <Radio size={20} className="animate-pulse" />
           </div>
-          <span className="text-[8px] font-mono font-bold tracking-widest text-slate-500 uppercase mt-1">
+          <span className="text-[8px] font-mono font-bold tracking-widest text-slate-800 dark:text-slate-400 uppercase mt-1">
             AETHER
           </span>
         </div>
@@ -193,8 +193,8 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                 className={clsx(
                   'w-11 h-11 rounded-xl flex flex-col items-center justify-center transition-all duration-200 group mx-auto',
                   isActive
-                    ? 'neu-button-active text-cyber-cyan font-bold'
-                    : 'neu-button text-slate-500 hover:text-slate-700'
+                    ? 'neu-button-active text-sky-700 dark:text-cyber-cyan font-bold'
+                    : 'neu-button text-slate-800 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
                 )}
               >
                 <span>{item.icon}</span>
@@ -211,7 +211,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
           onClick={onOpenCommandPalette}
           title="Command Palette (Ctrl+K)"
           aria-label="Open command palette"
-          className="w-11 h-11 rounded-xl flex items-center justify-center neu-button text-slate-500 hover:text-cyber-cyan transition-all duration-200"
+          className="w-11 h-11 rounded-xl flex items-center justify-center neu-button text-slate-800 dark:text-slate-300 hover:text-sky-600 dark:hover:text-cyber-cyan transition-all duration-200"
         >
           <Search size={18} />
         </button>
@@ -220,12 +220,12 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
       {/* ─── Main Area ─── */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 h-full overflow-hidden">
         {/* ─── Top Bar ─── */}
-        <header className="flex items-center justify-between h-12 md:h-12 px-3 md:px-5 flex-shrink-0 bg-[#e6ecf5] dark:bg-[#0b0f19] border-b border-white/80 dark:border-white/10 shadow-[0_4px_12px_#b6c3d7] z-10">
+        <header className="flex items-center justify-between h-12 md:h-12 px-3 md:px-5 flex-shrink-0 bg-[#e2e8f0] dark:bg-[#0b0f19] border-b border-slate-300 dark:border-white/10 shadow-sm z-10">
           {/* Left Section */}
           <div className="flex items-center gap-2 md:gap-4 min-w-0">
             <button
               onClick={() => setDrawerOpen(true)}
-              className="md:hidden w-9 h-9 rounded-lg neu-button flex items-center justify-center text-slate-600 dark:text-slate-300"
+              className="md:hidden w-9 h-9 rounded-lg neu-button flex items-center justify-center text-slate-900 dark:text-slate-100 font-bold"
               aria-label="Open navigation menu"
               aria-expanded={drawerOpen}
               aria-controls="mobile-drawer"
@@ -233,7 +233,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
               <Menu size={18} />
             </button>
 
-            <h1 className="text-xs font-mono font-bold tracking-[0.2em] text-slate-800 dark:text-slate-100 uppercase truncate">
+            <h1 className="text-xs font-mono font-extrabold tracking-[0.2em] text-slate-900 dark:text-slate-100 uppercase truncate">
               {NAV_ITEMS.find((n) => n.key === activeView)?.label ?? 'Dashboard'}
             </h1>
             <div className="hidden sm:block h-4 w-px bg-slate-300 dark:bg-slate-700" />
@@ -282,10 +282,10 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
             {/* USER PROFILE & AUTH BUTTON */}
             <button
               onClick={() => setUserModalOpen(true)}
-              className="flex items-center gap-2 px-2.5 py-1 rounded-xl neu-button text-slate-700 dark:text-slate-200 hover:text-cyber-cyan transition-all"
+              className="flex items-center gap-2 px-2.5 py-1 rounded-xl neu-button text-slate-900 dark:text-slate-100 hover:text-sky-600 dark:hover:text-cyber-cyan transition-all font-bold"
               title="User Account & Password Settings"
             >
-              <div className="w-6 h-6 rounded-lg neu-pressed flex items-center justify-center text-cyber-cyan">
+              <div className="w-6 h-6 rounded-lg neu-pressed flex items-center justify-center text-sky-600 dark:text-cyber-cyan">
                 <User size={14} />
               </div>
               <span className="hidden sm:inline text-xs font-mono font-bold truncate max-w-[100px]">
@@ -298,21 +298,36 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
         {/* ─── Content ─── */}
         <main
           id="main-content"
-          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 md:p-4 lg:p-5 pb-28 md:pb-5 touch-pan-y"
-          role="main"
-          aria-label="Dashboard content"
+          className="flex-1 overflow-y-auto p-3 md:p-6 bg-[#e2e8f0] dark:bg-[#0b0f19] transition-colors duration-300"
+          tabIndex={-1}
         >
           {children}
         </main>
+
+        {/* ─── Footer Status Bar (Desktop) ─── */}
+        <footer className="hidden md:flex items-center justify-between h-8 px-5 bg-[#e2e8f0] dark:bg-[#0b0f19] border-t border-slate-300 dark:border-white/10 text-[10px] font-mono text-slate-800 dark:text-slate-300 flex-shrink-0 font-bold">
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              SYSTEM OPERATIONAL
+            </span>
+            <span>NODES: 4/4 ACTIVE</span>
+            <span>LATENCY: 12ms</span>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <span className="text-slate-800 dark:text-slate-300 font-bold">{timeString} UTC</span>
+            <span className="text-sky-700 dark:text-cyber-cyan font-bold">AES-256 SECURE CLOUD</span>
+          </div>
+        </footer>
       </div>
 
-      {/* ─── Mobile Bottom Tab Bar ─── */}
+      {/* ─── Mobile Bottom Navigation Bar ─── */}
       <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#e6ecf5] dark:bg-[#0b0f19] border-t border-white/80 dark:border-white/10 shadow-[0_-4px_12px_rgba(0,0,0,0.1)] mobile-bottom-nav"
-        role="navigation"
-        aria-label="Quick navigation"
+        className="md:hidden flex-shrink-0 bg-[#e2e8f0] dark:bg-[#090d16] border-t border-slate-300 dark:border-slate-800 px-2 py-1 z-30 mobile-bottom-nav"
+        aria-label="Mobile primary navigation"
       >
-        <div className="flex items-center justify-around px-1 py-1">
+        <div className="flex items-center justify-around">
           {BOTTOM_TAB_ITEMS.map((item) => {
             const isActive = activeView === item.key;
             return (
@@ -324,12 +339,12 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                 className={clsx(
                   'flex flex-col items-center justify-center min-w-[56px] h-[52px] rounded-xl transition-all duration-200',
                   isActive
-                    ? 'text-cyber-cyan font-bold'
-                    : 'text-slate-500'
+                    ? 'text-sky-700 dark:text-cyber-cyan font-extrabold scale-105'
+                    : 'text-slate-700 dark:text-slate-300 font-extrabold hover:text-slate-900 dark:hover:text-slate-100'
                 )}
               >
                 <span className={clsx(isActive && 'scale-110 transition-transform')}>{item.icon}</span>
-                <span className="text-[8px] font-mono uppercase mt-0.5 tracking-tight">
+                <span className="text-[9px] font-mono font-bold uppercase mt-0.5 tracking-tight">
                   {item.shortLabel}
                 </span>
               </button>
@@ -343,12 +358,12 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
             className={clsx(
               'flex flex-col items-center justify-center min-w-[56px] h-[52px] rounded-xl transition-all',
               DRAWER_EXTRA_ITEMS.some(i => i.key === activeView)
-                ? 'text-cyber-cyan font-bold'
-                : 'text-slate-500'
+                ? 'text-sky-700 dark:text-cyber-cyan font-extrabold'
+                : 'text-slate-700 dark:text-slate-300 font-extrabold hover:text-slate-900 dark:hover:text-slate-100'
             )}
           >
             <Menu size={18} />
-            <span className="text-[8px] font-mono uppercase mt-0.5 tracking-tight">More</span>
+            <span className="text-[9px] font-mono font-bold uppercase mt-0.5 tracking-tight">More</span>
           </button>
         </div>
       </nav>
@@ -368,17 +383,17 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
             aria-hidden="true"
           />
 
-          <div className="relative w-[280px] max-w-[80vw] h-full bg-[#e6ecf5] dark:bg-[#0b0f19] shadow-2xl flex flex-col animate-slide-in-left">
-            <div className="flex items-center justify-between p-4 border-b border-white/80 dark:border-white/10">
+          <div className="relative w-[280px] max-w-[80vw] h-full bg-[#e2e8f0] dark:bg-[#0b0f19] shadow-2xl flex flex-col animate-slide-in-left">
+            <div className="flex items-center justify-between p-4 border-b border-slate-300 dark:border-white/10">
               <div className="flex items-center gap-2">
-                <Radio size={20} className="text-cyber-cyan animate-pulse" />
-                <span className="text-xs font-mono font-bold tracking-widest text-slate-700 dark:text-slate-200 uppercase">
+                <Radio size={20} className="text-sky-600 dark:text-cyber-cyan animate-pulse" />
+                <span className="text-xs font-mono font-bold tracking-widest text-slate-900 dark:text-slate-100 uppercase">
                   AETHERCROP
                 </span>
               </div>
               <button
                 onClick={() => setDrawerOpen(false)}
-                className="w-9 h-9 rounded-lg neu-button flex items-center justify-center text-slate-500 hover:text-red-500"
+                className="w-9 h-9 rounded-lg neu-button flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-red-500 font-bold"
                 aria-label="Close navigation menu"
               >
                 <X size={18} />
@@ -394,10 +409,10 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                     onClick={() => handleNavClick(item.key)}
                     aria-current={isActive ? 'page' : undefined}
                     className={clsx(
-                      'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 min-h-[44px]',
+                      'w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-mono uppercase font-bold transition-all min-h-[44px]',
                       isActive
-                        ? 'neu-button-active text-cyber-cyan font-bold'
-                        : 'neu-button text-slate-600 dark:text-slate-400 hover:text-slate-800'
+                        ? 'neu-button-active text-sky-700 dark:text-cyber-cyan font-extrabold'
+                        : 'neu-button text-slate-800 dark:text-slate-200 hover:text-slate-900 dark:hover:text-slate-100'
                     )}
                   >
                     {item.icon}
@@ -407,10 +422,10 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
               })}
             </nav>
 
-            <div className="p-4 border-t border-white/80 dark:border-white/10 space-y-2">
+            <div className="p-4 border-t border-slate-300 dark:border-white/10 space-y-2">
               <button
                 onClick={() => { logout(); setDrawerOpen(false); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl neu-button text-red-600 text-xs font-mono uppercase font-bold min-h-[44px]"
+                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl neu-button text-red-600 dark:text-red-400 text-xs font-mono uppercase font-bold min-h-[44px]"
               >
                 <LogOut size={16} />
                 <span>Log Out</span>
@@ -424,17 +439,17 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
       {userModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm">
-            <GlassCard variant="default" padding="lg" className="border border-white/80 shadow-2xl">
+            <GlassCard variant="default" padding="lg" className="border border-slate-300 dark:border-white/10 shadow-2xl">
               <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-300/40 dark:border-slate-700/40">
                 <div className="flex items-center gap-2">
-                  <User size={18} className="text-cyber-cyan" />
-                  <h2 className="text-sm font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                  <User size={18} className="text-sky-600 dark:text-cyber-cyan" />
+                  <h2 className="text-sm font-mono font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
                     Customer Account
                   </h2>
                 </div>
                 <button
                   onClick={() => setUserModalOpen(false)}
-                  className="w-8 h-8 rounded-lg neu-button flex items-center justify-center text-slate-500 hover:text-red-500"
+                  className="w-8 h-8 rounded-lg neu-button flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-red-500 font-bold"
                 >
                   <X size={16} />
                 </button>
@@ -442,19 +457,19 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
               <div className="space-y-3 mb-6">
                 <div className="p-3 rounded-xl neu-pressed space-y-1">
-                  <p className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">Operator Name</p>
-                  <p className="text-xs font-bold text-slate-800 dark:text-slate-200">{user?.name || 'Customer'}</p>
+                  <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Operator Name</p>
+                  <p className="text-xs font-extrabold text-slate-900 dark:text-slate-100">{user?.name || 'Customer'}</p>
                 </div>
                 <div className="p-3 rounded-xl neu-pressed space-y-1">
-                  <p className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">Email Address</p>
-                  <p className="text-xs font-mono text-slate-700 dark:text-slate-300">{user?.email || 'customer@aethercrop.io'}</p>
+                  <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Email Address</p>
+                  <p className="text-xs font-mono font-extrabold text-slate-900 dark:text-slate-100">{user?.email || 'customer@aethercrop.io'}</p>
                 </div>
                 <div className="p-3 rounded-xl neu-pressed space-y-1 flex items-center justify-between">
                   <div>
-                    <p className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">Global Account Status</p>
-                    <p className="text-xs font-mono text-cyber-cyan font-bold">Active & Synced</p>
+                    <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Global Account Status</p>
+                    <p className="text-xs font-mono text-sky-700 dark:text-cyber-cyan font-bold">Active & Synced</p>
                   </div>
-                  <Globe size={16} className="text-cyber-cyan" />
+                  <Globe size={16} className="text-sky-600 dark:text-cyber-cyan" />
                 </div>
               </div>
 
@@ -494,17 +509,17 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
       {changePassOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm">
-            <GlassCard variant="default" padding="lg" className="border border-cyber-cyan/40 shadow-2xl">
+            <GlassCard variant="default" padding="lg" className="border border-sky-500/40 dark:border-cyber-cyan/40 shadow-2xl">
               <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-300/40 dark:border-slate-700/40">
                 <div className="flex items-center gap-2">
-                  <KeyRound size={18} className="text-cyber-cyan" />
-                  <h3 className="text-sm font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                  <KeyRound size={18} className="text-sky-600 dark:text-cyber-cyan" />
+                  <h3 className="text-sm font-mono font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
                     Change Password
                   </h3>
                 </div>
                 <button
                   onClick={() => { setChangePassOpen(false); setPassMessage(null); }}
-                  className="w-8 h-8 rounded-lg neu-button flex items-center justify-center text-slate-500 hover:text-red-500"
+                  className="w-8 h-8 rounded-lg neu-button flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-red-500 font-bold"
                 >
                   <X size={16} />
                 </button>
@@ -512,8 +527,8 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
               {passMessage && (
                 <div
-                  className={`p-2.5 mb-4 rounded-xl neu-pressed text-xs font-mono flex items-center gap-2 ${
-                    passMessage.type === 'error' ? 'text-red-600 bg-red-500/10' : 'text-emerald-600 bg-emerald-500/10'
+                  className={`p-2.5 mb-4 rounded-xl neu-pressed text-xs font-mono font-bold flex items-center gap-2 ${
+                    passMessage.type === 'error' ? 'text-red-700 dark:text-red-400 bg-red-500/10' : 'text-emerald-700 dark:text-emerald-400 bg-emerald-500/10'
                   }`}
                 >
                   {passMessage.type === 'error' ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
@@ -523,7 +538,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
               <form onSubmit={handleChangePasswordSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold mb-1">
                     Current Password
                   </label>
                   <input
@@ -532,12 +547,12 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                     value={oldPass}
                     onChange={(e) => setOldPass(e.target.value)}
                     placeholder="Enter current password"
-                    className="w-full px-3 py-2 rounded-xl neu-pressed text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                    className="w-full px-3 py-2 rounded-xl neu-pressed text-xs text-slate-900 dark:text-slate-100 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold mb-1">
                     New Customer Password
                   </label>
                   <input
@@ -546,7 +561,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                     value={newPass}
                     onChange={(e) => setNewPass(e.target.value)}
                     placeholder="Enter new password"
-                    className="w-full px-3 py-2 rounded-xl neu-pressed text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                    className="w-full px-3 py-2 rounded-xl neu-pressed text-xs text-slate-900 dark:text-slate-100 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500"
                   />
                 </div>
 
@@ -566,7 +581,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                     size="md"
                     className="flex-1 justify-center"
                   >
-                    Update Globally
+                    Update Password
                   </SpatialButton>
                 </div>
               </form>
@@ -574,17 +589,6 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
           </div>
         </div>
       )}
-
-      {/* Drawer animation */}
-      <style jsx>{`
-        @keyframes slideInLeft {
-          from { transform: translateX(-100%); }
-          to { transform: translateX(0); }
-        }
-        .animate-slide-in-left {
-          animation: slideInLeft 0.25s ease-out;
-        }
-      `}</style>
     </div>
   );
 }

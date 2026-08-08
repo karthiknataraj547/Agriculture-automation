@@ -5,7 +5,7 @@
 :root {
   --neu-bg: #e2e8f0;
   --neu-shadow-dark: #cbd5e1;
-  --neu-shadow-light: #ffffff;
+  --neu-shadow-light: rgba(255, 255, 255, 0.4);
 }
 
 html, body {
@@ -23,8 +23,8 @@ body {
   font-family: var(--font-inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif);
   background-image: 
     radial-gradient(circle at 50% 0%, rgba(2, 132, 199, 0.05) 0%, transparent 60%),
-    linear-gradient(rgba(148, 163, 184, 0.15) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.15) 1px, transparent 1px);
+    linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
   background-size: 100% 100%, 32px 32px, 32px 32px;
   background-attachment: fixed;
   transition: background-color 0.3s ease, color 0.3s ease;
@@ -44,14 +44,14 @@ html.dark body, body.dark {
 }
 
 /* ──────────────────────────────────────────
-   Clean Neumorphic Card / Panel / Button Base (No Glare)
+   Clean Neumorphic Card / Panel / Button Base (GLARE-FREE)
    ────────────────────────────────────────── */
 
 .skeuo-panel, .skeuo-card, .neu-flat, .neu-convex, .glass-panel, .glass-card {
   position: relative;
   background: #e2e8f0;
-  box-shadow: 5px 5px 12px #cbd5e1, -5px -5px 12px rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 2px 2px 6px #cbd5e1, -1px -1px 3px rgba(255, 255, 255, 0.5);
+  border: 1px solid #cbd5e1;
   border-radius: 1rem;
   color: #0f172a;
 }
@@ -59,7 +59,7 @@ html.dark body, body.dark {
 .skeuo-panel-glow, .neu-convex-glow {
   position: relative;
   background: linear-gradient(145deg, #e0f2fe, #bae6fd);
-  box-shadow: 4px 4px 12px rgba(2, 132, 199, 0.2), -4px -4px 12px #ffffff;
+  box-shadow: 2px 2px 6px rgba(2, 132, 199, 0.2), -1px -1px 3px rgba(255, 255, 255, 0.5);
   border: 1.5px solid #0284c7;
   border-radius: 1rem;
   color: #0f172a;
@@ -67,7 +67,7 @@ html.dark body, body.dark {
 
 .skeuo-pressed, .neu-pressed {
   background: #e2e8f0;
-  box-shadow: inset 3px 3px 6px #cbd5e1, inset -3px -3px 6px rgba(255, 255, 255, 0.9);
+  box-shadow: inset 2px 2px 4px #cbd5e1, inset -1px -1px 3px rgba(255, 255, 255, 0.6);
   border: 1px solid #cbd5e1;
   border-radius: 0.75rem;
   color: #0f172a;
@@ -77,18 +77,18 @@ html.dark body, body.dark {
 .skeuo-button, .neu-button {
   position: relative;
   background: #e2e8f0;
-  box-shadow: 3px 3px 8px #cbd5e1, -3px -3px 8px rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 2px 2px 5px #cbd5e1, -1px -1px 3px rgba(255, 255, 255, 0.5);
+  border: 1px solid #cbd5e1;
   border-radius: 0.75rem;
   color: #0f172a !important;
-  font-weight: 700 !important;
+  font-weight: 800 !important;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
   user-select: none;
 }
 
 .skeuo-button:hover, .neu-button:hover {
-  box-shadow: 4px 4px 10px #94a3b8, -4px -4px 10px #ffffff;
+  box-shadow: 3px 3px 6px #94a3b8;
   border-color: #0284c7;
   color: #0284c7 !important;
   transform: translateY(-1px);
@@ -97,7 +97,7 @@ html.dark body, body.dark {
 .skeuo-button:active, .skeuo-button-active,
 .neu-button:active, .neu-button-active {
   background: #e2e8f0 !important;
-  box-shadow: inset 2px 2px 5px #cbd5e1, inset -2px -2px 5px #ffffff !important;
+  box-shadow: inset 2px 2px 4px #cbd5e1, inset -1px -1px 3px rgba(255, 255, 255, 0.6) !important;
   border-color: #0284c7 !important;
   color: #0284c7 !important;
   transform: translateY(1px) !important;
@@ -146,7 +146,6 @@ html.dark body, body.dark {
    HIGH CONTRAST LIGHT MODE TYPOGRAPHY
    ────────────────────────────────────────── */
 
-/* High-contrast dark slate text in Light Mode */
 .text-slate-100, .text-slate-200, .text-slate-300, .text-slate-400,
 .text-slate-500, .text-slate-600, .text-slate-700, .text-slate-800,
 .text-gray-100, .text-gray-200, .text-gray-300, .text-gray-400,
@@ -165,13 +164,13 @@ html.dark .text-slate-700, .dark .text-slate-700 { color: #e2e8f0 !important; }
 html.dark .text-slate-800, .dark .text-slate-800 { color: #f8fafc !important; }
 
 /* ──────────────────────────────────────────
-   DARK MODE NEUMORPHIC OVERRIDES
+   DARK MODE NEUMORPHIC OVERRIDES (GLARE-FREE)
    ────────────────────────────────────────── */
 
 html.dark .skeuo-panel, html.dark .skeuo-card, html.dark .neu-flat, html.dark .neu-convex, html.dark .glass-panel, html.dark .glass-card,
 .dark .skeuo-panel, .dark .skeuo-card, .dark .neu-flat, .dark .neu-convex, .dark .glass-panel, .dark .glass-card {
   background: linear-gradient(145deg, #1e293b, #0f172a 50%, #090d16);
-  box-shadow: 4px 4px 12px #04060a, -4px -4px 12px #141c2e, inset 1px 1px 0 rgba(255,255,255,0.08);
+  box-shadow: 2px 2px 6px #04060a, -1px -1px 3px rgba(30, 41, 59, 0.4);
   border: 1px solid #334155;
   color: #f8fafc;
 }
@@ -179,7 +178,7 @@ html.dark .skeuo-panel, html.dark .skeuo-card, html.dark .neu-flat, html.dark .n
 html.dark .skeuo-pressed, html.dark .neu-pressed,
 .dark .skeuo-pressed, .dark .neu-pressed {
   background: linear-gradient(145deg, #090d16, #0f172a);
-  box-shadow: inset 3px 3px 6px #04060a, inset -3px -3px 6px #141c2e;
+  box-shadow: inset 2px 2px 4px #04060a, inset -1px -1px 3px #141c2e;
   border: 1px solid #1e293b;
   color: #f8fafc;
 }
@@ -187,7 +186,7 @@ html.dark .skeuo-pressed, html.dark .neu-pressed,
 html.dark .skeuo-button, html.dark .neu-button,
 .dark .skeuo-button, .dark .neu-button {
   background: linear-gradient(145deg, #1e293b, #0f172a);
-  box-shadow: 3px 3px 8px #04060a, -3px -3px 8px #141c2e;
+  box-shadow: 2px 2px 6px #04060a, -1px -1px 3px rgba(30, 41, 59, 0.5);
   border: 1px solid #334155;
   color: #f8fafc !important;
 }
@@ -195,7 +194,7 @@ html.dark .skeuo-button, html.dark .neu-button,
 html.dark .skeuo-button:hover, html.dark .neu-button:hover,
 .dark .skeuo-button:hover, .dark .neu-button:hover {
   background: linear-gradient(145deg, #334155, #1e293b);
-  box-shadow: 4px 4px 10px rgba(0, 243, 255, 0.2), -4px -4px 10px #10192a;
+  box-shadow: 3px 3px 8px rgba(0, 243, 255, 0.2);
   border-color: #00f3ff;
   color: #00f3ff !important;
 }
@@ -205,7 +204,7 @@ html.dark .neu-button:active, html.dark .neu-button-active,
 .dark .skeuo-button:active, .dark .skeuo-button-active,
 .dark .neu-button:active, .dark .neu-button-active {
   background: linear-gradient(145deg, #090d16, #0f172a) !important;
-  box-shadow: inset 2px 2px 6px #04060a, inset -2px -2px 6px #141c2e !important;
+  box-shadow: inset 2px 2px 4px #04060a, inset -1px -1px 3px #141c2e !important;
   border-color: #00f3ff !important;
   color: #00f3ff !important;
 }
@@ -220,7 +219,7 @@ html.dark header, html.dark aside,
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track {
   background: #e2e8f0;
-  box-shadow: inset 2px 2px 4px #cbd5e1, inset -1px -1px 3px #fff;
+  box-shadow: inset 2px 2px 4px #cbd5e1;
 }
 html.dark ::-webkit-scrollbar-track, .dark ::-webkit-scrollbar-track {
   background: #090d16;
