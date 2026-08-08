@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Radio,
   Trash2,
+  AlertCircle,
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
@@ -52,8 +53,11 @@ function rssiToQuality(rssi: number): { label: string; color: string; bars: numb
 }
 
 function timeAgo(isoString: string): string {
+  if (!isoString || isoString.startsWith('1970')) return 'Never';
   const diff = Date.now() - new Date(isoString).getTime();
+  if (diff < 0) return 'Just now';
   const seconds = Math.floor(diff / 1000);
+  if (seconds < 10) return 'Just now';
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
@@ -293,15 +297,15 @@ export function DeviceGrid() {
         Math.random() * 89 + 10
       )}:${Math.floor(Math.random() * 89 + 10)}`,
       firmwareVersion: 'v2.4.1-pro',
-      status: DeviceStatus.ONLINE,
+      status: DeviceStatus.OFFLINE,
       farmId: 'farm-01',
       zoneId,
       ownerId: 'usr-admin-01',
       mqttTopic: `aether/farm-01/${zoneId}/telemetry`,
       authCode: generatedAuthCode,
-      lastSeen: new Date().toISOString(),
-      batteryLevel: 98,
-      signalRssi: -54,
+      lastSeen: new Date(0).toISOString(),
+      batteryLevel: 0,
+      signalRssi: 0,
       otaStatus: 'IDLE',
       location: { lat: 37.7749, lng: -122.4194, elevation: 120 },
       sensorsAttached: attachedSensors,
@@ -676,7 +680,8 @@ export function DeviceGrid() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {devices.map((device) => {
-            const signal = rssiToQuality(device.signalRssi);
+            const isOffline = device.status === DeviceStatus.OFFLINE || device.batteryLevel === 0;
+            const signal = isOffline ? { label: 'No Signal', color: 'text-red-600 dark:text-red-400', bars: 0 } : rssiToQuality(device.signalRssi);
             const isSelected = selectedDeviceId === device.uuid;
             const authCode = device.authCode || 'ATH-8F92-4C10';
             const isEsp8266 = device.uuid.includes('8266') || device.serialNumber.includes('8266');
@@ -707,7 +712,7 @@ export function DeviceGrid() {
                       <p className="text-[9px] font-mono text-slate-500 truncate">{device.serialNumber}</p>
                     </div>
                   </div>
-                  <StatusIndicator status={deviceStatusToUi(device.status)} size="sm" />
+                  <StatusIndicator status={deviceStatusToUi(isOffline ? DeviceStatus.OFFLINE : device.status)} size="sm" />
                 </div>
 
                 {/* Auth Code Bar */}
@@ -731,6 +736,14 @@ export function DeviceGrid() {
                   </button>
                 </div>
 
+                {/* Offline Hardware Alert Banner */}
+                {isOffline && (
+                  <div className="p-2 mb-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-700 dark:text-red-400 text-[10px] font-mono font-bold flex items-center gap-1.5">
+                    <AlertCircle size={12} className="flex-shrink-0 text-red-500" />
+                    <span>⚠️ HARDWARE UNREACHABLE — NO LIVE TELEMETRY RECEIVED. POWER ON BOARD.</span>
+                  </div>
+                )}
+
                 {/* Metrics Row */}
                 <div className="grid grid-cols-4 gap-2 mb-3">
                   {/* Signal */}
@@ -738,7 +751,7 @@ export function DeviceGrid() {
                     <Signal size={10} className={clsx('mx-auto mb-0.5', signal.color)} />
                     <p className="text-[9px] text-slate-500 font-bold">Signal</p>
                     <p className={clsx('text-[10px] font-mono font-bold', signal.color)}>
-                      {device.signalRssi} dBm
+                      {isOffline ? '0 dBm' : `${device.signalRssi} dBm`}
                     </p>
                   </div>
 
@@ -748,16 +761,18 @@ export function DeviceGrid() {
                       size={10}
                       className={clsx(
                         'mx-auto mb-0.5',
-                        device.batteryLevel > 50
-                          ? 'text-cyber-emerald'
-                          : device.batteryLevel > 20
-                            ? 'text-amber-600'
-                            : 'text-red-600'
+                        isOffline
+                          ? 'text-red-600 dark:text-red-400'
+                          : device.batteryLevel > 50
+                            ? 'text-cyber-emerald'
+                            : device.batteryLevel > 20
+                              ? 'text-amber-600'
+                              : 'text-red-600'
                       )}
                     />
                     <p className="text-[9px] text-slate-500 font-bold">Battery</p>
                     <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
-                      {device.batteryLevel}%
+                      {isOffline ? '0%' : `${device.batteryLevel}%`}
                     </p>
                   </div>
 

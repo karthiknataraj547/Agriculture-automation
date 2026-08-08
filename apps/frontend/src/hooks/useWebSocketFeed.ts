@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useSpatialStore } from '../store/useSpatialStore';
-import { TelemetryReading } from '@aether/shared';
+import { TelemetryReading, DeviceStatus } from '@aether/shared';
 
 let socket: Socket | null = null;
 
@@ -20,21 +20,50 @@ export function useWebSocketFeed() {
         const res = await fetch('/api/telemetry');
         const data = await res.json();
         if (data.success) {
-          if (data.hardwareConnected && data.devices && data.devices.length > 0) {
-            // Un-zero data mode when real hardware is sending data
-            useSpatialStore.setState({ isZeroDataMode: false });
+          const liveDevicesMap = new Map((data.devices || []).map((d: any) => [d.uuid, d]));
 
-            // Merge incoming real hardware devices with existing store devices
-            const mergedDevices = [...currentDevices];
-            data.devices.forEach((hwDev: any) => {
-              const idx = mergedDevices.findIndex((d) => d.uuid === hwDev.uuid);
-              if (idx >= 0) {
-                mergedDevices[idx] = { ...mergedDevices[idx], ...hwDev };
-              } else {
-                mergedDevices.push(hwDev);
+          // Evaluate all store devices against live hardware telemetry heartbeats
+          let hasChanged = false;
+          const updatedDevices = currentDevices.map((dev) => {
+            const liveMatch = liveDevicesMap.get(dev.uuid) as any;
+            if (liveMatch && liveMatch.status === 'ONLINE') {
+              const newStatus = DeviceStatus.ONLINE;
+              const newBat = liveMatch.batteryLevel ?? dev.batteryLevel;
+              const newRssi = liveMatch.signalRssi ?? dev.signalRssi;
+
+              if (dev.status !== newStatus || dev.batteryLevel !== newBat || dev.signalRssi !== newRssi) {
+                hasChanged = true;
               }
-            });
-            setDevices(mergedDevices);
+
+              return {
+                ...dev,
+                status: newStatus,
+                batteryLevel: newBat,
+                signalRssi: newRssi,
+                lastSeen: liveMatch.lastSeen || dev.lastSeen,
+              };
+            } else {
+              // Mark device as OFFLINE with 0 battery & signal if no live physical packet received
+              const newStatus = DeviceStatus.OFFLINE;
+              if (dev.status !== newStatus || dev.batteryLevel !== 0 || dev.signalRssi !== 0) {
+                hasChanged = true;
+              }
+
+              return {
+                ...dev,
+                status: newStatus,
+                batteryLevel: 0,
+                signalRssi: 0,
+              };
+            }
+          });
+
+          if (hasChanged && currentDevices.length > 0) {
+            setDevices(updatedDevices);
+          }
+
+          if (data.hardwareConnected && data.devices && data.devices.length > 0) {
+            useSpatialStore.setState({ isZeroDataMode: false });
 
             // Update telemetry streams with real hardware readings
             if (data.telemetry && Array.isArray(data.telemetry)) {
@@ -76,6 +105,9 @@ export function useWebSocketFeed() {
             if (data.stats) {
               setAggregatedStats(data.stats);
             }
+          } else {
+            // Hardware disconnected: set zero data mode
+            useSpatialStore.setState({ isZeroDataMode: true });
           }
         }
       } catch (err) {
