@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   Mail,
@@ -36,6 +36,20 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // System Theme Adaptive Sync
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const saved = localStorage.getItem('aether_theme_mode');
+    const isDark = saved ? saved === 'dark' : mediaQuery.matches;
+    
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
 
   // Password strength meter
   const getPasswordStrength = (pass: string) => {
@@ -93,22 +107,22 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#e6ecf5] dark:bg-[#0b0f19] transition-colors duration-300">
+    <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#e2e8f0] dark:bg-[#0b0f19] transition-colors duration-300">
       <div className="w-full max-w-md space-y-4">
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl neu-button text-cyber-cyan mb-1 shadow-lg">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl neu-button text-sky-600 dark:text-cyber-cyan mb-1 shadow-lg">
             <Radio size={28} className="animate-pulse" />
           </div>
-          <h1 className="text-xl font-mono font-bold tracking-[0.25em] text-slate-800 dark:text-slate-100 uppercase">
+          <h1 className="text-xl font-mono font-bold tracking-[0.25em] text-slate-900 dark:text-slate-100 uppercase">
             AETHERCROP SPATIAL
           </h1>
-          <p className="text-xs text-slate-500 font-mono">
+          <p className="text-xs text-slate-700 dark:text-slate-300 font-mono font-semibold">
             Precision Irrigation & Hardware Automation System
           </p>
 
           {/* Global Access Indicator Badge */}
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full neu-pressed text-[10px] font-mono text-cyber-cyan font-semibold mt-1">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full neu-pressed text-[10px] font-mono text-sky-700 dark:text-cyber-cyan font-bold mt-1">
             <Globe size={12} />
             <span>GLOBAL CLOUD AUTHENTICATION</span>
           </div>
@@ -129,8 +143,8 @@ export function LoginPage() {
               }}
               className={`flex-1 py-2 text-xs font-mono font-bold tracking-wider uppercase rounded-lg transition-all ${
                 mode === 'LOGIN'
-                  ? 'neu-button text-cyber-cyan font-bold shadow-md'
-                  : 'text-slate-500 hover:text-slate-700'
+                  ? 'neu-button text-sky-700 dark:text-cyber-cyan font-bold shadow-md'
+                  : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 font-bold'
               }`}
             >
               Sign In
@@ -146,8 +160,8 @@ export function LoginPage() {
               }}
               className={`flex-1 py-2 text-xs font-mono font-bold tracking-wider uppercase rounded-lg transition-all ${
                 mode === 'CREATE_ACCOUNT'
-                  ? 'neu-button text-cyber-cyan font-bold shadow-md'
-                  : 'text-slate-500 hover:text-slate-700'
+                  ? 'neu-button text-sky-700 dark:text-cyber-cyan font-bold shadow-md'
+                  : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 font-bold'
               }`}
             >
               Set Password
@@ -156,12 +170,12 @@ export function LoginPage() {
 
           {/* Form Banner */}
           <div className="mb-4">
-            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
               {mode === 'LOGIN' && 'Customer Login Portal'}
               {mode === 'CREATE_ACCOUNT' && 'Create Account & Password'}
               {mode === 'FORGOT_PASS' && 'Reset Customer Password'}
             </h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">
+            <p className="text-[11px] text-slate-700 dark:text-slate-300 font-medium mt-0.5">
               {mode === 'LOGIN' && 'Sign in with your registered account credentials from any device.'}
               {mode === 'CREATE_ACCOUNT' && 'Create your customer account & password stored globally in cloud database.'}
               {mode === 'FORGOT_PASS' && 'Specify your new customer password below.'}
@@ -171,7 +185,7 @@ export function LoginPage() {
           {/* Error Alert */}
           {errorMessage && (
             <div
-              className="p-3 mb-4 rounded-xl neu-pressed border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs font-mono flex items-start gap-2 animate-shake"
+              className="p-3 mb-4 rounded-xl neu-pressed border border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400 text-xs font-mono font-bold flex items-start gap-2 animate-shake"
               role="alert"
             >
               <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
@@ -182,7 +196,7 @@ export function LoginPage() {
           {/* Success Alert */}
           {successMessage && (
             <div
-              className="p-3 mb-4 rounded-xl neu-pressed border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-mono flex items-start gap-2"
+              className="p-3 mb-4 rounded-xl neu-pressed border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-mono font-bold flex items-start gap-2"
               role="status"
             >
               <CheckCircle2 size={16} className="flex-shrink-0 mt-0.5" />
@@ -195,165 +209,136 @@ export function LoginPage() {
             {/* Customer Name (Create Account Only) */}
             {mode === 'CREATE_ACCOUNT' && (
               <div>
-                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold mb-1">
                   Full Name / Operator Name
                 </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-slate-400">
-                    <User size={16} />
-                  </span>
+                <div className="relative">
+                  <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 dark:text-slate-400 pointer-events-none" />
                   <input
                     type="text"
-                    required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. John Doe"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl neu-pressed text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                    placeholder="Enter your full name"
+                    className="w-full pl-9 pr-3 py-2 text-xs neu-pressed font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-500 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500 rounded-xl"
                   />
                 </div>
               </div>
             )}
 
-            {/* Email Address */}
-            {mode !== 'FORGOT_PASS' && (
-              <div>
-                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">
-                  Email Address / Username
-                </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-slate-400">
-                    <Mail size={16} />
-                  </span>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="customer@aethercrop.io"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl neu-pressed text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
-                  />
-                </div>
+            {/* Email / Username */}
+            <div>
+              <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold mb-1">
+                Email / User ID
+              </label>
+              <div className="relative">
+                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 dark:text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Enter email or user ID"
+                  required
+                  className="w-full pl-9 pr-3 py-2 text-xs neu-pressed font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-500 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500 rounded-xl"
+                />
               </div>
-            )}
+            </div>
 
-            {/* Old Password (Forgot Mode Only) */}
+            {/* Current Password (Forgot Pass Only) */}
             {mode === 'FORGOT_PASS' && (
               <div>
-                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold mb-1">
                   Current Password
                 </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-slate-400">
-                    <KeyRound size={16} />
-                  </span>
+                <div className="relative">
+                  <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 dark:text-slate-400 pointer-events-none" />
                   <input
                     type="password"
-                    required
                     value={oldPassword}
                     onChange={(e) => setOldPassword(e.target.value)}
                     placeholder="Enter current password"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl neu-pressed text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                    required
+                    className="w-full pl-9 pr-3 py-2 text-xs neu-pressed font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-500 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500 rounded-xl"
                   />
                 </div>
               </div>
             )}
 
-            {/* Customer Password Input */}
+            {/* Password */}
             <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
-                  {mode === 'CREATE_ACCOUNT'
-                    ? 'Create Customer Password'
-                    : mode === 'FORGOT_PASS'
-                    ? 'New Customer Password'
-                    : 'Customer Password'}
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold">
+                  {mode === 'FORGOT_PASS' ? 'New Password' : 'Password'}
                 </label>
                 {mode === 'LOGIN' && (
                   <button
                     type="button"
-                    onClick={() => setMode('FORGOT_PASS')}
-                    className="text-[10px] font-mono text-cyber-cyan hover:underline"
+                    onClick={() => {
+                      setMode('FORGOT_PASS');
+                      setErrorMessage(null);
+                      setSuccessMessage(null);
+                    }}
+                    className="text-[10px] font-mono text-sky-700 dark:text-cyber-cyan hover:underline font-bold"
                   >
                     Reset Password?
                   </button>
                 )}
               </div>
-              <div className="relative flex items-center">
-                <span className="absolute left-3 text-slate-400">
-                  <Lock size={16} />
-                </span>
+              <div className="relative">
+                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 dark:text-slate-400 pointer-events-none" />
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={
-                    mode === 'CREATE_ACCOUNT'
-                      ? 'Type your custom password'
-                      : 'Enter password'
-                  }
-                  className="w-full pl-9 pr-10 py-2.5 rounded-xl neu-pressed text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                  placeholder={mode === 'CREATE_ACCOUNT' ? 'Create customer password' : 'Enter password'}
+                  required
+                  className="w-full pl-9 pr-10 py-2 text-xs neu-pressed font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-500 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500 rounded-xl"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 text-slate-400 hover:text-slate-600"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
 
-              {/* Password Strength Bar (Create or Reset Mode) */}
-              {mode !== 'LOGIN' && password.length > 0 && (
+              {/* Password Strength (Create Account) */}
+              {mode === 'CREATE_ACCOUNT' && password && (
                 <div className="mt-2 space-y-1">
-                  <div className="flex justify-between text-[9px] font-mono text-slate-500">
-                    <span>Password Strength:</span>
-                    <span className="font-bold">{strength.label}</span>
+                  <div className="flex items-center justify-between text-[10px] font-mono">
+                    <span className="text-slate-700 dark:text-slate-300 font-semibold">Security Level:</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">{strength.label}</span>
                   </div>
-                  <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden flex gap-1">
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        strength.score >= 1 ? strength.color : 'bg-transparent'
-                      } ${strength.score >= 1 ? 'w-1/4' : 'w-0'}`}
-                    />
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        strength.score >= 2 ? strength.color : 'bg-transparent'
-                      } ${strength.score >= 2 ? 'w-1/4' : 'w-0'}`}
-                    />
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        strength.score >= 3 ? strength.color : 'bg-transparent'
-                      } ${strength.score >= 3 ? 'w-1/4' : 'w-0'}`}
-                    />
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        strength.score >= 4 ? strength.color : 'bg-transparent'
-                      } ${strength.score >= 4 ? 'w-1/4' : 'w-0'}`}
-                    />
+                  <div className="h-1.5 w-full bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden flex gap-1">
+                    {[1, 2, 3, 4].map((step) => (
+                      <div
+                        key={step}
+                        className={`h-full flex-1 rounded-full transition-colors ${
+                          step <= strength.score ? strength.color : 'bg-transparent'
+                        }`}
+                      />
+                    ))}
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Confirm Password (Create Account Mode Only) */}
+            {/* Confirm Password (Create Account Only) */}
             {mode === 'CREATE_ACCOUNT' && (
               <div>
-                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">
-                  Confirm Customer Password
+                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold mb-1">
+                  Confirm Password
                 </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-slate-400">
-                    <ShieldCheck size={16} />
-                  </span>
+                <div className="relative">
+                  <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 dark:text-slate-400 pointer-events-none" />
                   <input
                     type={showPassword ? 'text' : 'password'}
-                    required
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Re-type your custom password"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-xl neu-pressed text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                    placeholder="Re-enter password"
+                    required
+                    className="w-full pl-9 pr-3 py-2 text-xs neu-pressed font-mono text-slate-900 dark:text-slate-100 placeholder:text-slate-500 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500 rounded-xl"
                   />
                 </div>
               </div>
@@ -361,29 +346,35 @@ export function LoginPage() {
 
             {/* Submit Button */}
             <SpatialButton
-              type="submit"
               variant="primary"
               size="lg"
+              type="submit"
               disabled={isLoading}
-              className="w-full mt-6 neu-convex-glow flex items-center justify-center gap-2"
+              className="w-full mt-2"
+              icon={isLoading ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
             >
               {isLoading ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  <span>Connecting to Cloud DB...</span>
-                </>
+                'Processing...'
+              ) : mode === 'LOGIN' ? (
+                'Sign In'
+              ) : mode === 'CREATE_ACCOUNT' ? (
+                'Create Account & Password'
               ) : (
-                <>
-                  <span>
-                    {mode === 'LOGIN' && 'Sign In to Dashboard'}
-                    {mode === 'CREATE_ACCOUNT' && 'Save Account Globally'}
-                    {mode === 'FORGOT_PASS' && 'Update Password'}
-                  </span>
-                  <ArrowRight size={16} />
-                </>
+                'Update Customer Password'
               )}
             </SpatialButton>
           </form>
+
+          {/* Global Database Security Note */}
+          <div className="mt-6 pt-4 border-t border-slate-300 dark:border-slate-800 text-center space-y-1">
+            <div className="flex items-center justify-center gap-1.5 text-[10px] font-mono text-slate-700 dark:text-slate-300 font-semibold">
+              <ShieldCheck size={13} className="text-sky-600 dark:text-cyber-cyan" />
+              <span>AES-256-GCM + PBKDF2 Military-Grade Security</span>
+            </div>
+            <p className="text-[10px] text-slate-600 dark:text-slate-400 font-mono">
+              Accounts access farm data globally across all authorized devices.
+            </p>
+          </div>
         </GlassCard>
       </div>
     </div>

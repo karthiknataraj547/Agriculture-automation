@@ -67,6 +67,7 @@ export interface SpatialStoreState {
   toggleEmergencyStop: () => void;
   toggleRainOverride: () => void;
   toggleThemeMode: () => void;
+  setThemeMode: (mode: 'light' | 'dark') => void;
   
   // Pump Actions
   togglePumpState: (pumpId: string) => void;
@@ -90,6 +91,7 @@ export interface SpatialStoreState {
 
 const STORAGE_STATE_KEY = 'aether_farm_persisted_state';
 const STORAGE_VIEW_KEY = 'aether_active_view_device';
+const STORAGE_THEME_KEY = 'aether_theme_mode';
 
 const ZERO_PUMPS: PumpState[] = [
   { id: 'pump-1', name: 'Pump Main Alpha', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
@@ -151,6 +153,17 @@ const getInitialView = (): SpatialStoreState['activeView'] => {
   }
 };
 
+const getInitialThemeMode = (): 'light' | 'dark' => {
+  if (typeof window === 'undefined') return 'light';
+  try {
+    const saved = localStorage.getItem(STORAGE_THEME_KEY);
+    if (saved === 'dark' || saved === 'light') return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+};
+
 const getLocalPersistedState = () => {
   if (typeof window === 'undefined') return null;
   try {
@@ -181,7 +194,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   pumps: initialLocal?.pumps || ZERO_PUMPS,
   schedules: initialLocal?.schedules || ZERO_SCHEDULES,
   motionAlert: null,
-  themeMode: 'light',
+  themeMode: getInitialThemeMode(),
   emergencyStop: initialLocal?.emergencyStop || false,
   rainOverride: initialLocal?.rainOverride || false,
   isZeroDataMode: true,
@@ -230,7 +243,31 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   },
 
   toggleThemeMode: () =>
-    set((state) => ({ themeMode: state.themeMode === 'light' ? 'dark' : 'light' })),
+    set((state) => {
+      const nextTheme = state.themeMode === 'light' ? 'dark' : 'light';
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_THEME_KEY, nextTheme);
+        if (nextTheme === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }
+      return { themeMode: nextTheme };
+    }),
+
+  setThemeMode: (mode) =>
+    set(() => {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_THEME_KEY, mode);
+        if (mode === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }
+      return { themeMode: mode };
+    }),
 
   togglePumpState: (pumpId: string) => {
     set((state) => {
@@ -303,7 +340,6 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     });
   },
 
-  // Sync ONLY DOMAIN DATA across devices (Pumps, Schedules, Rules, Overrides). Does NOT force view/path switching!
   syncStateToCloud: (userEmail?: string) => {
     const state = get();
     const domainDataPayload = {
@@ -329,7 +365,6 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     }
   },
 
-  // Fetch live DOMAIN DATA (Pump status ON/OFF, Schedules, Rules, Overrides). Keeps local activeView intact!
   loadGlobalStateForUser: async (email: string) => {
     try {
       const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
@@ -346,7 +381,6 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
           const newRulesStr = JSON.stringify(s.rules || []);
           const currentRulesStr = JSON.stringify(current.rules);
 
-          // Update domain data ONLY if values changed across devices
           if (
             newPumpsStr !== currentPumpsStr ||
             newSchedulesStr !== currentSchedulesStr ||

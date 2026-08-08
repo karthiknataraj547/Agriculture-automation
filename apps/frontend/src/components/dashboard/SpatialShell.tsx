@@ -93,6 +93,34 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
     return () => clearInterval(interval);
   }, []);
 
+  // Adaptive System Theme Listener & Root HTML Class Sync
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncTheme = (isDark: boolean) => {
+      const saved = localStorage.getItem('aether_theme_mode');
+      const isDarkActive = saved ? saved === 'dark' : isDark;
+      if (isDarkActive) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    };
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    syncTheme(mediaQuery.matches);
+
+    const listener = (e: MediaQueryListEvent) => {
+      if (!localStorage.getItem('aether_theme_mode')) {
+        syncTheme(e.matches);
+        useSpatialStore.setState({ themeMode: e.matches ? 'dark' : 'light' });
+      }
+    };
+
+    mediaQuery.addEventListener('change', listener);
+    return () => mediaQuery.removeEventListener('change', listener);
+  }, [themeMode]);
+
   // Keyboard escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
