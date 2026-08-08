@@ -62,16 +62,16 @@ export default function DashboardPage() {
     setIsMounted(true);
   }, []);
 
-  // 1-second auto-sync interval for cross-device real-time sync (Mobile <-> Laptop)
+  // 500ms ultra-fast auto-sync interval for real-time cross-device sync (Mobile <-> Laptop)
   useEffect(() => {
     if (isAuthenticated && user?.email) {
-      // Immediate initial load
-      loadGlobalStateForUser(user.email);
+      // Immediate initial cloud state force sync on mount
+      useSpatialStore.getState().forceCloudSync(user.email);
 
-      // 1-second auto-polling interval
+      // 500ms auto-polling interval
       const interval = setInterval(() => {
         loadGlobalStateForUser(user.email);
-      }, 1000);
+      }, 500);
 
       return () => clearInterval(interval);
     }

@@ -55,6 +55,7 @@ export interface SpatialStoreState {
   rainOverride: boolean;
   isZeroDataMode: boolean;
   lastUserActionTime: number;
+  isCloudHydrated: boolean;
 
   // Actions
   setActiveView: (view: SpatialStoreState['activeView']) => void;
@@ -89,6 +90,7 @@ export interface SpatialStoreState {
   // Global State Sync
   syncStateToCloud: (email?: string) => void;
   loadGlobalStateForUser: (email: string) => Promise<void>;
+  forceCloudSync: (email: string) => Promise<void>;
 }
 
 const STORAGE_STATE_KEY = 'aether_farm_persisted_state';
@@ -203,6 +205,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   rainOverride: initialLocal?.rainOverride || false,
   isZeroDataMode: true,
   lastUserActionTime: 0,
+  isCloudHydrated: false,
 
   setActiveView: (view) => {
     set({ activeView: view });
@@ -401,9 +404,9 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     let email = emailArg;
     if (!email) {
       try {
-        const storedUser = localStorage.getItem('aether_auth_user');
-        if (storedUser) {
-          const parsed = JSON.parse(storedUser);
+        const storedSession = sessionStorage.getItem('aether_active_session_user') || localStorage.getItem('aether_active_session_user');
+        if (storedSession) {
+          const parsed = JSON.parse(storedSession);
           email = parsed.email;
         }
       } catch {}
@@ -426,8 +429,8 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     if (!email || typeof window === 'undefined') return;
     const currentState = get();
     
-    // Protection: If user performed an action within the last 3.5 seconds, defer GET polling overwrite
-    if (Date.now() - currentState.lastUserActionTime < 3500) {
+    // Protection: If user performed an action within the last 2.5 seconds, defer GET polling overwrite
+    if (Date.now() - currentState.lastUserActionTime < 2500) {
       return;
     }
 
@@ -438,7 +441,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         const cloudState = data.state;
 
         // Double check user action timestamp before setting state
-        if (Date.now() - get().lastUserActionTime < 3500) {
+        if (Date.now() - get().lastUserActionTime < 2500) {
           return;
         }
 
@@ -449,11 +452,36 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
           devices: Array.isArray(cloudState.devices) ? cloudState.devices : state.devices,
           emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : state.emergencyStop,
           rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : state.rainOverride,
+          isCloudHydrated: true,
         }));
         localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(cloudState));
       }
     } catch (err) {
       console.warn('Load global state failed:', err);
+    }
+  },
+
+  forceCloudSync: async (email) => {
+    if (!email || typeof window === 'undefined') return;
+    try {
+      const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (data.success && data.state) {
+        const cloudState = data.state;
+        set({
+          pumps: cloudState.pumps || ZERO_PUMPS,
+          schedules: cloudState.schedules || ZERO_SCHEDULES,
+          rules: cloudState.rules || [],
+          devices: Array.isArray(cloudState.devices) ? cloudState.devices : [],
+          emergencyStop: cloudState.emergencyStop || false,
+          rainOverride: cloudState.rainOverride || false,
+          isCloudHydrated: true,
+          lastUserActionTime: 0,
+        });
+        localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(cloudState));
+      }
+    } catch (err) {
+      console.warn('Force cloud sync failed:', err);
     }
   },
 }));

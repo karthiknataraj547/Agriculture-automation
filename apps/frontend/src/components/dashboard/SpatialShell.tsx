@@ -1,59 +1,35 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import {
   Box,
-  Activity,
   Cpu,
   Zap,
-  BrainCircuit,
-  ShieldCheck,
-  Search,
-  AlertOctagon,
-  CloudRain,
   Radio,
-  Power,
-  Calendar,
-  Sun,
-  Moon,
+  Sliders,
+  FileText,
   Menu,
   X,
+  AlertOctagon,
+  CloudRain,
+  Sun,
+  Moon,
+  Clock,
   User,
   LogOut,
   KeyRound,
   CheckCircle2,
   AlertCircle,
   Globe,
+  RefreshCw,
+  Power,
+  Calendar,
 } from 'lucide-react';
-import { useSpatialStore, SpatialStoreState } from '../../store/useSpatialStore';
-import { useAuthStore } from '../../store/useAuthStore';
-import { StatusIndicator } from '../ui/StatusIndicator';
 import { SpatialButton } from '../ui/SpatialButton';
 import { GlassCard } from '../ui/GlassCard';
-
-type ViewKey = SpatialStoreState['activeView'];
-
-interface NavItem {
-  key: ViewKey;
-  label: string;
-  shortLabel: string;
-  icon: React.ReactNode;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  { key: 'SPATIAL_3D', label: 'Dashboard', shortLabel: 'Dash', icon: <Box size={18} /> },
-  { key: 'PUMPS', label: 'Pumps', shortLabel: 'Pumps', icon: <Power size={18} /> },
-  { key: 'SCHEDULES', label: 'Schedules', shortLabel: 'Sched', icon: <Calendar size={18} /> },
-  { key: 'TELEMETRY', label: 'Telemetry', shortLabel: 'Telem', icon: <Activity size={18} /> },
-  { key: 'DEVICES', label: 'Devices', shortLabel: 'Devs', icon: <Cpu size={18} /> },
-  { key: 'AUTOMATION', label: 'Rules', shortLabel: 'Rules', icon: <Zap size={18} /> },
-  { key: 'AI_INSIGHTS', label: 'AI Insights', shortLabel: 'AI', icon: <BrainCircuit size={18} /> },
-  { key: 'AUDIT_LOGS', label: 'Audit', shortLabel: 'Audit', icon: <ShieldCheck size={18} /> },
-];
-
-const BOTTOM_TAB_ITEMS = NAV_ITEMS.slice(0, 4);
-const DRAWER_EXTRA_ITEMS = NAV_ITEMS.slice(4);
+import { useSpatialStore } from '../../store/useSpatialStore';
+import { useAuthStore } from '../../store/useAuthStore';
 
 interface SpatialShellProps {
   children: React.ReactNode;
@@ -70,6 +46,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
     toggleRainOverride,
     themeMode,
     toggleThemeMode,
+    forceCloudSync,
   } = useSpatialStore();
 
   const { user, logout, updatePassword } = useAuthStore();
@@ -77,6 +54,8 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
   const [timeString, setTimeString] = useState<string>('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [userModalOpen, setUserModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState(false);
 
   // Password change state
   const [changePassOpen, setChangePassOpen] = useState(false);
@@ -119,132 +98,154 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
     mediaQuery.addEventListener('change', listener);
     return () => mediaQuery.removeEventListener('change', listener);
-  }, [themeMode]);
+  }, []);
 
-  // Keyboard escape
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (drawerOpen) setDrawerOpen(false);
-        if (userModalOpen) setUserModalOpen(false);
-        if (changePassOpen) setChangePassOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [drawerOpen, userModalOpen, changePassOpen]);
+  const NAV_ITEMS = [
+    { key: 'SPATIAL_3D' as const, label: '3D Spatial Twin', icon: <Box size={16} /> },
+    { key: 'DEVICES' as const, label: 'IoT Devices', icon: <Cpu size={16} /> },
+    { key: 'PUMPS' as const, label: 'Pump Console', icon: <Power size={16} /> },
+    { key: 'SCHEDULES' as const, label: 'Schedules', icon: <Calendar size={16} /> },
+    { key: 'TELEMETRY' as const, label: 'Telemetry Stream', icon: <Zap size={16} /> },
+    { key: 'AUTOMATION' as const, label: 'Automation Rules', icon: <Sliders size={16} /> },
+    { key: 'AI_INSIGHTS' as const, label: 'AI Crop Insights', icon: <Radio size={16} /> },
+    { key: 'AUDIT_LOGS' as const, label: 'System Audit', icon: <FileText size={16} /> },
+  ];
 
-  const handleNavClick = useCallback((key: ViewKey) => {
-    setActiveView(key);
+  const handleNavClick = (viewKey: (typeof NAV_ITEMS)[number]['key']) => {
+    setActiveView(viewKey);
     setDrawerOpen(false);
-  }, [setActiveView]);
+  };
+
+  const handleForceSync = async () => {
+    if (!user?.email) return;
+    setIsSyncing(true);
+    await forceCloudSync(user.email);
+    setIsSyncing(false);
+    setSyncSuccessMsg(true);
+    setTimeout(() => setSyncSuccessMsg(false), 2000);
+  };
 
   const handleChangePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassMessage(null);
-    const result = await updatePassword(oldPass, newPass);
-    if (!result.success) {
-      setPassMessage({ type: 'error', text: result.message || 'Password update failed.' });
-    } else {
-      setPassMessage({ type: 'success', text: 'Customer password updated globally!' });
+
+    if (!oldPass || !newPass) {
+      setPassMessage({ type: 'error', text: 'Please fill in all password fields.' });
+      return;
+    }
+
+    const res = await updatePassword(oldPass, newPass);
+    if (res.success) {
+      setPassMessage({ type: 'success', text: 'Password updated successfully!' });
       setOldPass('');
       setNewPass('');
       setTimeout(() => {
         setChangePassOpen(false);
         setPassMessage(null);
-      }, 2000);
+      }, 1500);
+    } else {
+      setPassMessage({ type: 'error', text: res.message || 'Password change failed.' });
     }
   };
 
   return (
-    <div className={clsx('flex flex-col md:flex-row h-[100dvh] max-h-[100dvh] w-full overflow-hidden transition-colors duration-300', themeMode === 'dark' ? 'dark bg-[#090d16]' : 'bg-[#f1f5f9]')}>
-      {/* Skip to Content */}
-      <a href="#main-content" className="skip-to-content">
-        Skip to main content
-      </a>
-
-      {/* ─── Desktop Left Sidebar ─── */}
-      <aside
-        className="hidden md:flex flex-col items-center w-[68px] flex-shrink-0 py-4 gap-1 bg-white dark:bg-[#0b0f19] border-r border-slate-200 dark:border-slate-800 shadow-sm z-20"
-        role="navigation"
-        aria-label="Main navigation"
-      >
-        {/* Brand Icon */}
-        <div className="flex flex-col items-center mb-4">
-          <div className="w-10 h-10 rounded-xl neu-button flex items-center justify-center text-sky-600 dark:text-cyber-cyan font-bold">
-            <Radio size={20} className="animate-pulse" />
+    <div className="flex h-screen w-screen overflow-hidden bg-[#e6ecf5] dark:bg-[#0b0f19] text-slate-800 dark:text-slate-100 transition-colors duration-300 font-sans">
+      {/* ─── DESKTOP SIDEBAR ─── */}
+      <aside className="hidden lg:flex flex-col w-[240px] h-full bg-white/70 dark:bg-[#0b0f19]/80 backdrop-blur-md border-r border-slate-200 dark:border-slate-800 flex-shrink-0 z-20 transition-colors duration-300">
+        {/* Brand */}
+        <div className="flex items-center justify-between h-16 px-5 border-b border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl neu-pressed flex items-center justify-center text-sky-600 dark:text-cyber-cyan">
+              <Radio size={16} className="animate-pulse" />
+            </div>
+            <div>
+              <h1 className="text-xs font-mono font-extrabold tracking-[0.2em] text-slate-900 dark:text-slate-100 uppercase">
+                AETHERCROP
+              </h1>
+              <span className="text-[9px] font-mono text-emerald-600 dark:text-emerald-400 font-bold block">
+                SPATIAL IOT V2.5
+              </span>
+            </div>
           </div>
-          <span className="text-[8px] font-mono font-bold tracking-widest text-slate-800 dark:text-slate-400 uppercase mt-1">
-            AETHER
-          </span>
         </div>
 
-        {/* Navigation Items */}
-        <nav className="flex flex-col gap-2.5 flex-1 w-full px-2" aria-label="Dashboard views">
+        {/* Navigation items */}
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1.5" aria-label="Main navigation">
           {NAV_ITEMS.map((item) => {
             const isActive = activeView === item.key;
             return (
               <button
                 key={item.key}
-                onClick={() => setActiveView(item.key)}
-                title={item.label}
+                onClick={() => handleNavClick(item.key)}
                 aria-current={isActive ? 'page' : undefined}
-                aria-label={`Navigate to ${item.label}`}
                 className={clsx(
-                  'w-11 h-11 rounded-xl flex flex-col items-center justify-center transition-all duration-200 group mx-auto',
+                  'w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-mono uppercase font-bold transition-all min-h-[44px]',
                   isActive
-                    ? 'neu-button-active text-sky-700 dark:text-cyber-cyan font-bold'
-                    : 'neu-button text-slate-800 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
+                    ? 'neu-button-active text-sky-700 dark:text-cyber-cyan font-extrabold'
+                    : 'neu-button text-slate-800 dark:text-slate-200 hover:text-slate-900 dark:hover:text-slate-100'
                 )}
               >
-                <span>{item.icon}</span>
-                <span className="text-[7px] font-mono tracking-tighter uppercase mt-0.5 truncate max-w-[40px]">
-                  {item.label}
-                </span>
+                {item.icon}
+                <span className="text-xs font-mono uppercase tracking-wider">{item.label}</span>
               </button>
             );
           })}
         </nav>
 
-        {/* Search Button */}
-        <button
-          onClick={onOpenCommandPalette}
-          title="Command Palette (Ctrl+K)"
-          aria-label="Open command palette"
-          className="w-11 h-11 rounded-xl flex items-center justify-center neu-button text-slate-800 dark:text-slate-300 hover:text-sky-600 dark:hover:text-cyber-cyan transition-all duration-200"
-        >
-          <Search size={18} />
-        </button>
+        {/* Footer info */}
+        <div className="p-3 border-t border-slate-200 dark:border-slate-800">
+          <div className="p-2.5 rounded-xl neu-pressed text-[10px] font-mono text-slate-600 dark:text-slate-400 space-y-1">
+            <div className="flex items-center justify-between font-bold">
+              <span>SYNC STATUS</span>
+              <span className="text-emerald-700 dark:text-emerald-400">ONLINE</span>
+            </div>
+            <p className="truncate text-slate-800 dark:text-slate-200 font-bold">{user?.email}</p>
+          </div>
+        </div>
       </aside>
 
-      {/* ─── Main Area ─── */}
-      <div className="flex flex-col flex-1 min-w-0 min-h-0 h-full overflow-hidden">
-        {/* ─── Top Bar ─── */}
-        <header className="flex items-center justify-between h-12 md:h-12 px-3 md:px-5 flex-shrink-0 bg-white dark:bg-[#0b0f19] border-b border-slate-200 dark:border-slate-800 shadow-xs z-10">
-          {/* Left Section */}
-          <div className="flex items-center gap-2 md:gap-4 min-w-0">
+      {/* ─── MAIN CONTENT AREA ─── */}
+      <div className="flex flex-col flex-1 h-full min-w-0 overflow-hidden">
+        {/* Top Header */}
+        <header className="flex items-center justify-between h-14 md:h-16 px-4 md:px-6 bg-white/80 dark:bg-[#0b0f19]/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex-shrink-0 z-10 transition-colors duration-300">
+          {/* Mobile hamburger + Title */}
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setDrawerOpen(true)}
-              className="md:hidden w-9 h-9 rounded-lg neu-button flex items-center justify-center text-slate-900 dark:text-slate-100 font-bold"
+              className="lg:hidden p-2 rounded-xl neu-button text-slate-800 dark:text-slate-200 min-h-[44px] min-w-[44px] flex items-center justify-center font-bold"
               aria-label="Open navigation menu"
-              aria-expanded={drawerOpen}
-              aria-controls="mobile-drawer"
             >
-              <Menu size={18} />
+              <Menu size={20} />
             </button>
 
-            <h1 className="text-xs font-mono font-extrabold tracking-[0.2em] text-slate-900 dark:text-slate-100 uppercase truncate">
-              {NAV_ITEMS.find((n) => n.key === activeView)?.label ?? 'Dashboard'}
-            </h1>
-            <div className="hidden sm:block h-4 w-px bg-slate-200 dark:bg-slate-700" />
-            <div className="hidden sm:block">
-              <StatusIndicator status="online" label="GATEWAY LIVE" size="sm" />
+            <div className="min-w-0">
+              <h2 className="text-xs md:text-sm font-mono font-extrabold uppercase tracking-widest text-slate-900 dark:text-slate-100 truncate">
+                {NAV_ITEMS.find((i) => i.key === activeView)?.label || 'Dashboard'}
+              </h2>
+              <span className="hidden sm:inline text-[9px] font-mono text-slate-600 dark:text-slate-400 font-bold">
+                LOGGED IN AS: <strong className="text-sky-600 dark:text-cyber-cyan">{user?.email}</strong>
+              </span>
             </div>
           </div>
 
-          {/* Right Section */}
-          <div className="flex items-center gap-1.5 md:gap-2.5">
-            {/* Theme Switcher Toggle */}
+          {/* Controls */}
+          <div className="flex items-center gap-2">
+            {/* Force Cloud Sync Button */}
+            <button
+              onClick={handleForceSync}
+              disabled={isSyncing}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl neu-button text-xs font-mono font-bold transition-all min-h-[40px] ${
+                syncSuccessMsg ? 'text-emerald-600 border border-emerald-500' : 'text-sky-600 dark:text-cyber-cyan hover:text-sky-700'
+              }`}
+              title="Force Instant Cross-Device Cloud Sync"
+            >
+              <RefreshCw size={14} className={isSyncing ? 'animate-spin text-sky-600' : ''} />
+              <span className="hidden sm:inline">
+                {isSyncing ? 'SYNCING...' : syncSuccessMsg ? 'SYNCED!' : 'CLOUD SYNC'}
+              </span>
+            </button>
+
+            {/* Theme Toggle Button */}
             <SpatialButton
               variant="ghost"
               size="sm"
@@ -311,7 +312,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               SYSTEM OPERATIONAL
             </span>
-            <span>NODES: 4/4 ACTIVE</span>
+            <span>ACCOUNT: {user?.email}</span>
             <span>LATENCY: 12ms</span>
           </div>
 
@@ -322,61 +323,9 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
         </footer>
       </div>
 
-      {/* ─── Mobile Bottom Navigation Bar ─── */}
-      <nav
-        className="md:hidden flex-shrink-0 bg-white dark:bg-[#0f172a] border-t border-slate-200 dark:border-slate-800 px-2 py-1 z-30 mobile-bottom-nav shadow-lg"
-        aria-label="Mobile primary navigation"
-      >
-        <div className="flex items-center justify-around">
-          {BOTTOM_TAB_ITEMS.map((item) => {
-            const isActive = activeView === item.key;
-            return (
-              <button
-                key={item.key}
-                onClick={() => handleNavClick(item.key)}
-                aria-current={isActive ? 'page' : undefined}
-                aria-label={item.label}
-                className={clsx(
-                  'flex flex-col items-center justify-center min-w-[56px] h-[52px] rounded-xl transition-all duration-200',
-                  isActive
-                    ? 'text-sky-600 dark:text-cyber-cyan font-extrabold scale-105'
-                    : 'text-slate-600 dark:text-slate-400 font-extrabold hover:text-slate-900 dark:hover:text-slate-100'
-                )}
-              >
-                <span className={clsx(isActive && 'scale-110 transition-transform')}>{item.icon}</span>
-                <span className="text-[9px] font-mono font-bold uppercase mt-0.5 tracking-tight">
-                  {item.shortLabel}
-                </span>
-              </button>
-            );
-          })}
-
-          <button
-            onClick={() => setDrawerOpen(true)}
-            aria-label="More navigation options"
-            aria-expanded={drawerOpen}
-            className={clsx(
-              'flex flex-col items-center justify-center min-w-[56px] h-[52px] rounded-xl transition-all',
-              DRAWER_EXTRA_ITEMS.some(i => i.key === activeView)
-                ? 'text-sky-600 dark:text-cyber-cyan font-extrabold'
-                : 'text-slate-600 dark:text-slate-400 font-extrabold hover:text-slate-900 dark:hover:text-slate-100'
-            )}
-          >
-            <Menu size={18} />
-            <span className="text-[9px] font-mono font-bold uppercase mt-0.5 tracking-tight">More</span>
-          </button>
-        </div>
-      </nav>
-
-      {/* ─── Mobile Drawer Overlay ─── */}
+      {/* ─── MOBILE DRAWER OVERLAY ─── */}
       {drawerOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-40 flex"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Navigation menu"
-          id="mobile-drawer"
-        >
+        <div className="fixed inset-0 z-50 lg:hidden">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setDrawerOpen(false)}
@@ -461,19 +410,29 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
                   <p className="text-xs font-extrabold text-slate-900 dark:text-slate-100">{user?.name || 'Customer'}</p>
                 </div>
                 <div className="p-3 rounded-xl neu-pressed space-y-1">
-                  <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Email Address</p>
-                  <p className="text-xs font-mono font-extrabold text-slate-900 dark:text-slate-100">{user?.email || 'customer@aethercrop.io'}</p>
+                  <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Logged-in Email Account</p>
+                  <p className="text-xs font-mono font-extrabold text-sky-600 dark:text-cyber-cyan">{user?.email || 'customer@aethercrop.io'}</p>
                 </div>
                 <div className="p-3 rounded-xl neu-pressed space-y-1 flex items-center justify-between">
                   <div>
-                    <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Global Account Status</p>
-                    <p className="text-xs font-mono text-sky-700 dark:text-cyber-cyan font-bold">Active & Synced</p>
+                    <p className="text-[9px] font-mono text-slate-600 dark:text-slate-400 uppercase tracking-wider font-bold">Cloud Account Sync</p>
+                    <p className="text-xs font-mono text-emerald-700 dark:text-emerald-400 font-bold">AES-256 Cloud Encrypted</p>
                   </div>
                   <Globe size={16} className="text-sky-600 dark:text-cyber-cyan" />
                 </div>
               </div>
 
               <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleForceSync}
+                  disabled={isSyncing}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl neu-button text-xs font-mono font-bold text-sky-600 dark:text-cyber-cyan"
+                >
+                  <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                  <span>RESTART & RE-SYNC ALL DEVICES</span>
+                </button>
+
                 <SpatialButton
                   variant="primary"
                   size="md"
@@ -553,36 +512,33 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
                 <div>
                   <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-800 dark:text-slate-200 font-bold mb-1">
-                    New Customer Password
+                    New Password
                   </label>
                   <input
                     type="password"
                     required
+                    minLength={6}
                     value={newPass}
                     onChange={(e) => setNewPass(e.target.value)}
-                    placeholder="Enter new password"
+                    placeholder="At least 6 characters"
                     className="w-full px-3 py-2 rounded-xl neu-pressed text-xs text-slate-900 dark:text-slate-100 font-bold focus:outline-none focus:ring-1 focus:ring-sky-500"
                   />
                 </div>
 
-                <div className="flex gap-2 pt-2">
-                  <SpatialButton
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="md"
-                    onClick={() => setChangePassOpen(false)}
-                    className="flex-1 justify-center"
+                    onClick={() => { setChangePassOpen(false); setPassMessage(null); }}
+                    className="px-4 py-2 rounded-xl neu-button text-xs font-mono font-bold text-slate-600 dark:text-slate-400"
                   >
                     Cancel
-                  </SpatialButton>
-                  <SpatialButton
+                  </button>
+                  <button
                     type="submit"
-                    variant="primary"
-                    size="md"
-                    className="flex-1 justify-center"
+                    className="px-4 py-2 rounded-xl neu-button text-xs font-mono font-bold text-sky-600 dark:text-cyber-cyan"
                   >
                     Update Password
-                  </SpatialButton>
+                  </button>
                 </div>
               </form>
             </GlassCard>
