@@ -255,6 +255,7 @@ export function DeviceGrid() {
   const [deviceName, setDeviceName] = useState('');
   const [serialNumber, setSerialNumber] = useState('');
   const [zoneId, setZoneId] = useState('zone-1');
+  const [selectedBoardOption, setSelectedBoardOption] = useState<string>('esp32-dev-module');
   const [attachedSensors, setAttachedSensors] = useState<string[]>([
     'SOIL_MOISTURE',
     'WATER_FLOW',
@@ -307,6 +308,8 @@ export function DeviceGrid() {
       lastSeen: new Date(0).toISOString(),
       batteryLevel: 0,
       signalRssi: 0,
+      boardId: selectedBoardOption,
+      boardFamily: selectedBoardOption.includes('esp8266') || selectedBoardOption.includes('nodemcu') || selectedBoardOption.includes('wemos') || selectedBoardOption.includes('esp-01') ? 'ESP8266' : 'ESP32',
       otaStatus: 'IDLE',
       location: { lat: 37.7749, lng: -122.4194, elevation: 120 },
       sensorsAttached: attachedSensors,
@@ -496,6 +499,29 @@ export function DeviceGrid() {
                   placeholder="e.g. SN-ESP8266-8801-B"
                   className="w-full px-3 py-2 text-xs font-mono text-slate-800 dark:text-slate-100 neu-pressed rounded-xl focus:outline-none"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono uppercase font-bold text-cyber-cyan mb-1">
+                  Microcontroller Board Option
+                </label>
+                <select
+                  value={selectedBoardOption}
+                  onChange={(e) => setSelectedBoardOption(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-mono font-bold text-slate-800 dark:text-slate-100 neu-pressed rounded-xl focus:outline-none bg-white dark:bg-[#0f172a]"
+                >
+                  <optgroup label="ESP32 Family (Dual-Core 240MHz)">
+                    <option value="esp32-dev-module">ESP32 Dev Module (Recommended, 34 GPIO)</option>
+                    <option value="esp32-wroom-32">ESP32-WROOM-32 (Xtensa LX6, 32 GPIO)</option>
+                    <option value="esp32-s3-dev">ESP32-S3 Dev Module (Vector LX7, 45 GPIO)</option>
+                    <option value="esp32-c3-dev">ESP32-C3 RISC-V Dev (160MHz Single-Core)</option>
+                  </optgroup>
+                  <optgroup label="ESP8266 Family (80MHz WiFi)">
+                    <option value="nodemcu-1.0-esp12e">NodeMCU 1.0 ESP-12E (11 GPIO, A0 ADC)</option>
+                    <option value="wemos-d1-mini">Wemos D1 Mini (Compact ESP8266)</option>
+                    <option value="esp-01s">ESP-01S Ultra-Compact Module</option>
+                  </optgroup>
+                </select>
               </div>
 
               <div>
