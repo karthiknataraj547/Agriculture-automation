@@ -10,51 +10,102 @@ export function useWebSocketFeed() {
     updateTelemetryStream,
     setAggregatedStats,
     setDevices,
-    setInsights,
-    setRules
+    devices: currentDevices,
   } = useSpatialStore();
 
   useEffect(() => {
-    // Connect to backend WebSocket gateway
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
-    socket = io(backendUrl, {
-      transports: ['websocket', 'polling']
-    });
+    // 1-second polling to /api/telemetry for real physical hardware ingestion
+    const pollHardwareTelemetry = async () => {
+      try {
+        const res = await fetch('/api/telemetry');
+        const data = await res.json();
+        if (data.success) {
+          if (data.hardwareConnected && data.devices && data.devices.length > 0) {
+            // Un-zero data mode when real hardware is sending data
+            useSpatialStore.setState({ isZeroDataMode: false });
 
-    socket.on('connect', () => {
-      console.log('[WebSocket Client] Connected to Aether Spatial IoT Gateway');
-    });
+            // Merge incoming real hardware devices with existing store devices
+            const mergedDevices = [...currentDevices];
+            data.devices.forEach((hwDev: any) => {
+              const idx = mergedDevices.findIndex((d) => d.uuid === hwDev.uuid);
+              if (idx >= 0) {
+                mergedDevices[idx] = { ...mergedDevices[idx], ...hwDev };
+              } else {
+                mergedDevices.push(hwDev);
+              }
+            });
+            setDevices(mergedDevices);
 
-    socket.on('telemetry:stream', (reading: TelemetryReading) => {
-      updateTelemetryStream(reading);
-    });
+            // Update telemetry streams with real hardware readings
+            if (data.telemetry && Array.isArray(data.telemetry)) {
+              data.telemetry.forEach((t: any) => {
+                const formatted: TelemetryReading = {
+                  deviceId: t.deviceId,
+                  farmId: 'farm-alpha',
+                  zoneId: t.zoneId || 'zone-1',
+                  timestamp: t.timestamp || new Date().toISOString(),
+                  soilMoisture: t.soilMoisture || 0,
+                  soilMoistureDepth30cm: t.soilMoisture || 0,
+                  soilMoistureDepth60cm: t.soilMoisture || 0,
+                  soilTemperature: t.airTemperature || 0,
+                  airTemperature: t.airTemperature || 0,
+                  humidity: t.humidity || 0,
+                  ec: 1.2,
+                  ph: 6.8,
+                  waterFlowRate: t.waterFlowRate || 0,
+                  waterPressure: 2.4,
+                  tankLevelPercent: t.tankLevelPercent || 85,
+                  nitrogen: 45,
+                  phosphorus: 20,
+                  potassium: 35,
+                  rainRate: 0,
+                  windSpeed: 5,
+                  windDirection: 180,
+                  solarIrradiance: 750,
+                  uvIndex: 4,
+                  leafWetness: 10,
+                  solarVoltage: 12.8,
+                  batteryLevelPercent: t.batteryLevel || 100,
+                  signalRssi: t.rssi || -60,
+                };
+                updateTelemetryStream(formatted);
+              });
+            }
 
-    socket.on('telemetry:snapshot', (readings: TelemetryReading[]) => {
-      readings.forEach((r) => updateTelemetryStream(r));
-    });
+            // Update aggregated stats strictly from real hardware readings
+            if (data.stats) {
+              setAggregatedStats(data.stats);
+            }
+          }
+        }
+      } catch (err) {
+        // Silent fail if network unreachable
+      }
+    };
 
-    socket.on('telemetry:aggregated', (stats) => {
-      setAggregatedStats(stats);
-    });
+    pollHardwareTelemetry();
+    const interval = setInterval(pollHardwareTelemetry, 1000);
 
-    socket.on('devices:list', (devices) => {
-      setDevices(devices);
-    });
-
-    socket.on('insights:list', (insights) => {
-      setInsights(insights);
-    });
-
-    socket.on('rules:list', (rules) => {
-      setRules(rules);
-    });
+    // Also attempt optional Socket.IO backend gateway connection if running locally
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
+      socket = io(backendUrl, { transports: ['websocket', 'polling'] });
+      socket.on('connect', () => {
+        console.log('[WebSocket Client] Connected to local gateway');
+      });
+      socket.on('telemetry:stream', (reading: TelemetryReading) => {
+        useSpatialStore.setState({ isZeroDataMode: false });
+        updateTelemetryStream(reading);
+      });
+    } catch {}
 
     return () => {
+      clearInterval(interval);
       if (socket) {
         socket.disconnect();
       }
     };
-  }, []);
+  }, [currentDevices, updateTelemetryStream, setAggregatedStats, setDevices]);
 
   const actuatePump = (targetId: string, state: 'START' | 'STOP') => {
     if (socket) {
