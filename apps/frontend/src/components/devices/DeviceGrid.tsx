@@ -80,8 +80,8 @@ const int   mqtt_port = 1883;
 
 const char* deviceSerialNumber = "ESP32-FARM-NODE-01";
 const char* deviceAuthCode     = "ATH-8F92-4C10-99E4"; // From Web Dashboard
-const char* telemetryTopic     = "aether/farm-01/zone-1/telemetry";
-const char* pumpCmdTopic       = "aether/farm-01/zone-1/pump/command";
+const char* telemetryTopic     = "aether/farm-alpha/zone-1/telemetry";
+const char* pumpCmdTopic       = "aether/farm-alpha/zone-1/commands";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -91,7 +91,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 void callback(char* topic, byte* payload, unsigned int length) {
   StaticJsonDocument<256> doc;
   deserializeJson(doc, payload, length);
-  const char* status = doc["status"]; // "RUNNING" or "STOPPED"
+  const char* status = doc["pumpState"]; // "RUNNING" or "OFF"
   if (strcmp(status, "RUNNING") == 0) {
     digitalWrite(RELAY_PIN, HIGH); // Turn ON Water Pump
     Serial.println("-> PUMP ACTIVATED VIA WEB TOOL [RELAY HIGH]");
@@ -135,9 +135,9 @@ void loop() {
   doc["deviceId"] = deviceSerialNumber;
   doc["authCode"] = deviceAuthCode;
   doc["soilMoisture"] = soilMoisture;
-  doc["soilTemperature"] = isnan(temp) ? 25.0 : temp;
+  doc["airTemperature"] = isnan(temp) ? 28.0 : temp;
   doc["humidity"] = isnan(humidity) ? 60.0 : humidity;
-  doc["relayStatus"] = digitalRead(RELAY_PIN) == HIGH ? "RUNNING" : "STOPPED";
+  doc["pumpRunning"] = digitalRead(RELAY_PIN) == HIGH;
 
   char buffer[384];
   serializeJson(doc, buffer);
@@ -146,9 +146,93 @@ void loop() {
   delay(2000); // Stream telemetry every 2 seconds
 }`;
 
+const SAMPLE_ESP8266_CODE = `// ESP8266 (NodeMCU / D1 Mini) Farm Smart Node Firmware
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+
+// ─── Pin Configuration (ESP8266 NodeMCU) ───
+#define SOIL_PIN    A0  // Capacitive Soil Moisture Sensor (Analog A0 0-1V)
+#define DHT_PIN     D4  // GPIO 2 for DHT Temp & Humidity Sensor
+#define RELAY_PIN   D1  // GPIO 5 Signal Pin for Water Pump Relay
+#define DHT_TYPE DHT11
+
+// ─── Network & Authentication ───
+const char* ssid = "YOUR_FARM_WIFI";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* mqtt_server = "192.168.1.100";
+const int   mqtt_port = 1883;
+
+const char* deviceSerialNumber = "ESP8266-FARM-NODE-01";
+const char* deviceAuthCode     = "ATH-7A12-98F1-44B2"; // From Web Dashboard
+const char* telemetryTopic     = "aether/farm-alpha/zone-1/telemetry";
+const char* pumpCmdTopic       = "aether/farm-alpha/zone-1/commands";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+DHT dht(DHT_PIN, DHT_TYPE);
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  StaticJsonDocument<256> doc;
+  deserializeJson(doc, payload, length);
+  const char* status = doc["pumpState"]; // "RUNNING" or "OFF"
+  if (strcmp(status, "RUNNING") == 0) {
+    digitalWrite(RELAY_PIN, HIGH); // Turn ON Water Pump
+    Serial.println("-> PUMP ACTIVATED VIA WEB TOOL [RELAY HIGH]");
+  } else {
+    digitalWrite(RELAY_PIN, LOW);  // Turn OFF Water Pump
+    Serial.println("-> PUMP DEACTIVATED VIA WEB TOOL [RELAY LOW]");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);
+  dht.begin();
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    while (!client.connected()) {
+      if (client.connect(deviceSerialNumber)) {
+        client.subscribe(pumpCmdTopic);
+      } else { delay(2000); }
+    }
+  }
+  client.loop();
+
+  int rawSoil = analogRead(SOIL_PIN);
+  float soilMoisture = map(rawSoil, 850, 350, 0, 100);
+  float temp = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  StaticJsonDocument<384> doc;
+  doc["deviceId"] = deviceSerialNumber;
+  doc["authCode"] = deviceAuthCode;
+  doc["soilMoisture"] = soilMoisture;
+  doc["airTemperature"] = isnan(temp) ? 28.0 : temp;
+  doc["humidity"] = isnan(humidity) ? 60.0 : humidity;
+  doc["pumpRunning"] = digitalRead(RELAY_PIN) == HIGH;
+
+  char buffer[384];
+  serializeJson(doc, buffer);
+  client.publish(telemetryTopic, buffer);
+
+  delay(2000);
+}`;
+
 export function DeviceGrid() {
   const { devices, setDevices, selectedDeviceId, setSelectedDeviceId } = useSpatialStore();
   const [modalMode, setModalMode] = useState<'NONE' | 'ADD_DEVICE' | 'HARDWARE_GUIDE' | 'SHOW_AUTH_KEY'>('NONE');
+  const [activeSketchTab, setActiveSketchTab] = useState<'ESP32' | 'ESP8266'>('ESP32');
   const [newDeviceAuth, setNewDeviceAuth] = useState<{ serial: string; authCode: string; name: string } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedAuthKey, setCopiedAuthKey] = useState(false);
@@ -232,7 +316,8 @@ export function DeviceGrid() {
   };
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(SAMPLE_ESP32_CODE);
+    const codeToCopy = activeSketchTab === 'ESP32' ? SAMPLE_ESP32_CODE : SAMPLE_ESP8266_CODE;
+    navigator.clipboard.writeText(codeToCopy);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
   };
@@ -249,8 +334,8 @@ export function DeviceGrid() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <Cpu size={16} className="text-cyber-cyan flex-shrink-0" />
-          <span className="text-xs font-mono uppercase tracking-[0.15em] text-slate-800 font-bold truncate">
-            IoT Node Manager
+          <span className="text-xs font-mono uppercase tracking-[0.15em] text-slate-800 dark:text-slate-200 font-bold truncate">
+            IoT Node Manager (ESP32 & ESP8266)
           </span>
           <span className="text-xs font-mono text-cyber-emerald font-semibold ml-2">
             {devices.filter((d) => d.status === DeviceStatus.ONLINE).length}/{devices.length} ONLINE
@@ -260,7 +345,7 @@ export function DeviceGrid() {
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setModalMode('HARDWARE_GUIDE')}
-            className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-slate-700 hover:text-cyber-cyan"
+            className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-slate-700 dark:text-slate-200 hover:text-cyber-cyan"
             aria-label="Open hardware setup guide"
           >
             <BookOpen size={14} />
@@ -285,7 +370,7 @@ export function DeviceGrid() {
           <div className="flex items-center justify-between pb-3 border-b border-slate-300/40 mb-4">
             <div className="flex items-center gap-2">
               <ShieldCheck size={18} className="text-cyber-emerald" />
-              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800">
+              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-100">
                 🔑 HARDWARE AUTHENTICATION KEY GENERATED
               </h3>
             </div>
@@ -298,8 +383,8 @@ export function DeviceGrid() {
           </div>
 
           <div className="space-y-4">
-            <p className="text-xs text-slate-700 font-medium">
-              Device <strong className="text-slate-900">{newDeviceAuth.name}</strong> ({newDeviceAuth.serial}) has been provisioned! Copy the unique authentication code below and enter it in your ESP32/Arduino code so your hardware can pair and connect securely.
+            <p className="text-xs text-slate-700 dark:text-slate-200 font-medium">
+              Device <strong className="text-slate-900 dark:text-slate-100">{newDeviceAuth.name}</strong> ({newDeviceAuth.serial}) has been provisioned! Copy the unique authentication code below and enter it in your ESP32 or ESP8266 code so your hardware can pair and connect securely.
             </p>
 
             <div className="p-4 rounded-xl neu-pressed flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -322,7 +407,7 @@ export function DeviceGrid() {
                 onClick={() => setModalMode('HARDWARE_GUIDE')}
                 className="px-4 py-2 text-xs font-mono font-bold rounded-xl neu-button text-cyber-cyan"
               >
-                VIEW ESP32 CODE TEMPLATE
+                VIEW HARDWARE CODE SKETCHES
               </button>
             </div>
           </div>
@@ -335,8 +420,8 @@ export function DeviceGrid() {
           <div className="flex items-center justify-between pb-3 border-b border-slate-300/40 mb-4">
             <div className="flex items-center gap-2">
               <Plus size={16} className="text-cyber-cyan" />
-              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800">
-                PROVISION NEW IOT SENSOR NODE
+              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                PROVISION NEW ESP32 / ESP8266 SENSOR NODE
               </h3>
             </div>
             <button
@@ -358,8 +443,8 @@ export function DeviceGrid() {
                   required
                   value={deviceName}
                   onChange={(e) => setDeviceName(e.target.value)}
-                  placeholder="e.g. Zone 1 Master Field Node"
-                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 neu-pressed rounded-xl focus:outline-none"
+                  placeholder="e.g. ESP8266 Field Sensor Node"
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 dark:text-slate-100 neu-pressed rounded-xl focus:outline-none"
                 />
               </div>
 
@@ -372,8 +457,8 @@ export function DeviceGrid() {
                   required
                   value={serialNumber}
                   onChange={(e) => setSerialNumber(e.target.value)}
-                  placeholder="e.g. ESP32-AGRI-04A92B"
-                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 neu-pressed rounded-xl focus:outline-none"
+                  placeholder="e.g. SN-ESP8266-8801-B"
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 dark:text-slate-100 neu-pressed rounded-xl focus:outline-none"
                 />
               </div>
 
@@ -384,7 +469,7 @@ export function DeviceGrid() {
                 <select
                   value={zoneId}
                   onChange={(e) => setZoneId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 neu-pressed rounded-xl focus:outline-none"
+                  className="w-full px-3 py-2 text-xs font-mono text-slate-800 dark:text-slate-100 neu-pressed rounded-xl focus:outline-none bg-white dark:bg-[#0f172a]"
                 >
                   <option value="zone-1">Zone 1: Corn Field</option>
                   <option value="zone-2">Zone 2: Soybean Sector</option>
@@ -422,7 +507,7 @@ export function DeviceGrid() {
                       className={`flex items-center gap-2 p-2 rounded-xl text-xs font-mono text-left transition-all ${
                         selected
                           ? 'neu-button-active text-cyber-cyan font-semibold'
-                          : 'neu-button text-slate-600'
+                          : 'neu-button text-slate-600 dark:text-slate-300'
                       }`}
                     >
                       <div
@@ -459,14 +544,14 @@ export function DeviceGrid() {
         </GlassCard>
       )}
 
-      {/* Hardware Connection Guide Modal */}
+      {/* Hardware Connection Guide Modal (ESP32 & ESP8266 Tabs) */}
       {modalMode === 'HARDWARE_GUIDE' && (
         <GlassCard variant="glow" padding="lg" className="border-cyber-cyan/40">
           <div className="flex items-center justify-between pb-3 border-b border-slate-300/40 mb-4">
             <div className="flex items-center gap-2">
               <BookOpen size={16} className="text-cyber-cyan" />
-              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800">
-                HOW TO CONNECT YOUR HARDWARE USING AUTH CODE (ESP32 / ARDUINO)
+              <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                HARDWARE CONNECTIVITY GUIDE (ESP32 & ESP8266)
               </h3>
             </div>
             <button
@@ -481,43 +566,61 @@ export function DeviceGrid() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="p-3 rounded-xl neu-pressed">
                 <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">1. PROVISION & GET AUTH CODE</span>
-                <p className="text-xs font-mono font-bold text-slate-800 mt-1">Click '+ PROVISION DEVICE'</p>
+                <p className="text-xs font-mono font-bold text-slate-800 dark:text-slate-100 mt-1">Click '+ PROVISION DEVICE'</p>
                 <p className="text-[10px] text-slate-500">System generates 16-char Auth Key</p>
               </div>
 
               <div className="p-3 rounded-xl neu-pressed">
                 <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">2. ENTER IN DEVICE FIRMWARE</span>
                 <p className="text-xs font-mono font-bold text-cyber-cyan mt-1">const char* deviceAuthCode = ...</p>
-                <p className="text-[10px] text-slate-500">Paste key into Arduino code below</p>
+                <p className="text-[10px] text-slate-500">Paste key into Arduino sketch below</p>
               </div>
 
               <div className="p-3 rounded-xl neu-pressed">
                 <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">3. SECURE PAIRING</span>
-                <p className="text-xs font-mono font-bold text-emerald-700 mt-1">Authenticates on Connect</p>
+                <p className="text-xs font-mono font-bold text-emerald-700 dark:text-emerald-400 mt-1">Authenticates on Connect</p>
                 <p className="text-[10px] text-slate-500">Verifies hardware identity & registers</p>
               </div>
             </div>
 
-            {/* Arduino Code Snippet */}
+            {/* Arduino Code Snippet with ESP32 vs ESP8266 Tab Toggles */}
             <div className="rounded-xl neu-pressed p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5">
-                  <Terminal size={14} className="text-cyber-cyan" />
-                  <span className="text-[10px] font-mono font-bold uppercase text-slate-700">
-                    ESP32 Arduino C++ Code Template with Auth Code
-                  </span>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-3">
+                {/* Sketch Target Selector */}
+                <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-200 dark:bg-slate-800">
+                  <button
+                    onClick={() => setActiveSketchTab('ESP32')}
+                    className={`px-3 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                      activeSketchTab === 'ESP32'
+                        ? 'bg-sky-600 dark:bg-cyan-500 text-white shadow-xs'
+                        : 'text-slate-700 dark:text-slate-300 hover:text-sky-600'
+                    }`}
+                  >
+                    ESP32 DevKit Sketch
+                  </button>
+                  <button
+                    onClick={() => setActiveSketchTab('ESP8266')}
+                    className={`px-3 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                      activeSketchTab === 'ESP8266'
+                        ? 'bg-sky-600 dark:bg-cyan-500 text-white shadow-xs'
+                        : 'text-slate-700 dark:text-slate-300 hover:text-sky-600'
+                    }`}
+                  >
+                    ESP8266 (NodeMCU) Sketch
+                  </button>
                 </div>
+
                 <button
                   onClick={handleCopyCode}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg neu-button text-[10px] font-mono text-cyber-cyan"
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg neu-button text-[10px] font-mono text-cyber-cyan font-bold"
                 >
-                  {copiedCode ? <Check size={10} className="text-emerald-600" /> : <Copy size={10} />}
-                  {copiedCode ? 'COPIED!' : 'COPY CODE'}
+                  {copiedCode ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                  {copiedCode ? 'COPIED!' : `COPY ${activeSketchTab} SKETCH`}
                 </button>
               </div>
 
-              <pre className="p-3 rounded-xl bg-slate-900 text-sky-300 font-mono text-[10px] sm:text-[11px] overflow-x-auto max-h-[220px] max-w-full">
-                {SAMPLE_ESP32_CODE}
+              <pre className="p-3 rounded-xl bg-slate-900 text-sky-300 font-mono text-[10px] sm:text-[11px] overflow-x-auto max-h-[240px] max-w-full">
+                {activeSketchTab === 'ESP32' ? SAMPLE_ESP32_CODE : SAMPLE_ESP8266_CODE}
               </pre>
             </div>
           </div>
@@ -530,6 +633,7 @@ export function DeviceGrid() {
           const signal = rssiToQuality(device.signalRssi);
           const isSelected = selectedDeviceId === device.uuid;
           const authCode = device.authCode || 'ATH-8F92-4C10';
+          const isEsp8266 = device.uuid.includes('8266') || device.serialNumber.includes('8266');
 
           return (
             <GlassCard
@@ -543,10 +647,17 @@ export function DeviceGrid() {
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-lg neu-pressed flex items-center justify-center flex-shrink-0">
-                    <Cpu size={14} className="text-cyber-cyan" />
+                    <Cpu size={14} className={isEsp8266 ? 'text-amber-500' : 'text-cyber-cyan'} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold text-slate-800 truncate">{device.name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{device.name}</p>
+                      <span className={`px-1.5 py-0.5 rounded text-[8px] font-mono font-bold ${
+                        isEsp8266 ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-400' : 'bg-sky-100 dark:bg-sky-950/80 text-sky-700 dark:text-cyan-400'
+                      }`}>
+                        {isEsp8266 ? 'ESP8266' : 'ESP32'}
+                      </span>
+                    </div>
                     <p className="text-[9px] font-mono text-slate-500 truncate">{device.serialNumber}</p>
                   </div>
                 </div>
@@ -558,7 +669,7 @@ export function DeviceGrid() {
                 <div className="flex items-center gap-1.5">
                   <Key size={12} className="text-cyber-cyan" />
                   <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Auth Code:</span>
-                  <span className="text-[10px] font-mono font-bold text-slate-800">{authCode}</span>
+                  <span className="text-[10px] font-mono font-bold text-slate-800 dark:text-slate-100">{authCode}</span>
                 </div>
 
                 <button
@@ -567,7 +678,7 @@ export function DeviceGrid() {
                     navigator.clipboard.writeText(authCode);
                   }}
                   title="Copy Auth Code for Hardware"
-                  className="text-[9px] font-mono text-cyber-cyan hover:text-sky-700 flex items-center gap-1"
+                  className="text-[9px] font-mono text-cyber-cyan hover:text-sky-700 flex items-center gap-1 font-bold"
                 >
                   <Copy size={9} />
                   COPY
@@ -579,8 +690,8 @@ export function DeviceGrid() {
                 {/* Signal */}
                 <div className="text-center p-1.5 rounded-lg neu-pressed">
                   <Signal size={10} className={clsx('mx-auto mb-0.5', signal.color)} />
-                  <p className="text-[9px] text-slate-500">Signal</p>
-                  <p className={clsx('text-[10px] font-mono font-medium', signal.color)}>
+                  <p className="text-[9px] text-slate-500 font-bold">Signal</p>
+                  <p className={clsx('text-[10px] font-mono font-bold', signal.color)}>
                     {device.signalRssi} dBm
                   </p>
                 </div>
@@ -598,8 +709,8 @@ export function DeviceGrid() {
                           : 'text-red-600'
                     )}
                   />
-                  <p className="text-[9px] text-slate-500">Battery</p>
-                  <p className="text-[10px] font-mono font-medium text-slate-700">
+                  <p className="text-[9px] text-slate-500 font-bold">Battery</p>
+                  <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
                     {device.batteryLevel}%
                   </p>
                 </div>
@@ -607,8 +718,8 @@ export function DeviceGrid() {
                 {/* Zone */}
                 <div className="text-center p-1.5 rounded-lg neu-pressed">
                   <MapPin size={10} className="mx-auto mb-0.5 text-slate-500" />
-                  <p className="text-[9px] text-slate-500">Zone</p>
-                  <p className="text-[10px] font-mono font-medium text-slate-700 uppercase">
+                  <p className="text-[9px] text-slate-500 font-bold">Zone</p>
+                  <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200 uppercase">
                     {device.zoneId}
                   </p>
                 </div>
@@ -616,20 +727,20 @@ export function DeviceGrid() {
                 {/* Last Seen */}
                 <div className="text-center p-1.5 rounded-lg neu-pressed">
                   <Clock size={10} className="mx-auto mb-0.5 text-slate-500" />
-                  <p className="text-[9px] text-slate-500">Seen</p>
-                  <p className="text-[10px] font-mono font-medium text-slate-700">
+                  <p className="text-[9px] text-slate-500 font-bold">Seen</p>
+                  <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
                     {timeAgo(device.lastSeen)}
                   </p>
                 </div>
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between pt-2 border-t border-slate-300/40">
-                <span className="text-[9px] font-mono text-slate-500">
+              <div className="flex items-center justify-between pt-2 border-t border-slate-300/40 dark:border-slate-700/40">
+                <span className="text-[9px] font-mono text-slate-500 font-bold">
                   FW {device.firmwareVersion}
                 </span>
                 <div className="flex items-center gap-1">
-                  <span className="text-[9px] font-mono text-slate-600 font-medium">
+                  <span className="text-[9px] font-mono text-slate-600 dark:text-slate-300 font-bold">
                     {device.sensorsAttached.length} sensors
                   </span>
                   <ChevronRight size={10} className="text-slate-500" />

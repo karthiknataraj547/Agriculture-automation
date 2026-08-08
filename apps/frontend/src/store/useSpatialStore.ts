@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { TelemetryReading, IoTDevice, AIInsight, AutomationRule, IrrigationSchedule } from '@aether/shared';
+import { TelemetryReading, IoTDevice, DeviceStatus, AIInsight, AutomationRule, IrrigationSchedule } from '@aether/shared';
 
 export interface PumpState {
   id: string;
@@ -106,6 +106,104 @@ const ZERO_SCHEDULES: IrrigationSchedule[] = [
   { id: 'sch-3', name: 'Vineyard Midday Moisture Boost', enabled: false, farmId: 'farm-01', zoneId: 'zone-3', zoneName: 'Zone 3: Vineyard East', pumpId: 'pump-3', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
 ];
 
+const DEFAULT_DEVICES: IoTDevice[] = [
+  {
+    uuid: 'esp32-node-alpha-01',
+    serialNumber: 'SN-ESP32-9901-A',
+    name: 'Zone 1 Spatial ESP32 Node (Soil Depth & Flow)',
+    macAddress: '24:0A:C4:00:11:01',
+    firmwareVersion: 'v2.4.1-pro',
+    status: DeviceStatus.ONLINE,
+    farmId: 'farm-alpha',
+    zoneId: 'zone-1',
+    ownerId: 'usr-admin-01',
+    mqttTopic: 'farms/farm-alpha/devices/esp32-node-alpha-01/telemetry',
+    lastSeen: new Date().toISOString(),
+    batteryLevel: 94,
+    signalRssi: -62,
+    otaStatus: 'IDLE',
+    location: { lat: 37.7749, lng: -122.4194, elevation: 42 },
+    sensorsAttached: ['SOIL_MOISTURE', 'SOIL_TEMP', 'AIR_TEMP', 'HUMIDITY', 'EC', 'PH', 'WATER_PRESSURE', 'FLOW_RATE'],
+    authCode: 'ATH-8F92-4C10-99E4'
+  },
+  {
+    uuid: 'esp8266-node-beta-01',
+    serialNumber: 'SN-ESP8266-8801-B',
+    name: 'Zone 1 Secondary ESP8266 Sensor Node (NodeMCU)',
+    macAddress: '84:F3:EB:00:22:01',
+    firmwareVersion: 'v2.4.1-pro',
+    status: DeviceStatus.ONLINE,
+    farmId: 'farm-alpha',
+    zoneId: 'zone-1',
+    ownerId: 'usr-admin-01',
+    mqttTopic: 'farms/farm-alpha/devices/esp8266-node-beta-01/telemetry',
+    lastSeen: new Date().toISOString(),
+    batteryLevel: 91,
+    signalRssi: -65,
+    otaStatus: 'IDLE',
+    location: { lat: 37.7750, lng: -122.4192, elevation: 42 },
+    sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'FLOW_RATE'],
+    authCode: 'ATH-7A12-98F1-44B2'
+  },
+  {
+    uuid: 'esp32-node-alpha-02',
+    serialNumber: 'SN-ESP32-9902-B',
+    name: 'Zone 2 ESP32 Crop Canopy Node',
+    macAddress: '24:0A:C4:00:11:02',
+    firmwareVersion: 'v2.4.1-pro',
+    status: DeviceStatus.ONLINE,
+    farmId: 'farm-alpha',
+    zoneId: 'zone-2',
+    ownerId: 'usr-admin-01',
+    mqttTopic: 'farms/farm-alpha/devices/esp32-node-alpha-02/telemetry',
+    lastSeen: new Date().toISOString(),
+    batteryLevel: 88,
+    signalRssi: -68,
+    otaStatus: 'IDLE',
+    location: { lat: 37.7752, lng: -122.4198, elevation: 44 },
+    sensorsAttached: ['SOIL_MOISTURE', 'LEAF_WETNESS', 'AIR_TEMP', 'HUMIDITY', 'NPK'],
+    authCode: 'ATH-7A12-98F1-55C3'
+  },
+  {
+    uuid: 'esp32-node-alpha-03',
+    serialNumber: 'SN-ESP32-9903-C',
+    name: 'Main Pumping Station ESP32 Controller',
+    macAddress: '24:0A:C4:00:11:03',
+    firmwareVersion: 'v2.5.0-pro',
+    status: DeviceStatus.ONLINE,
+    farmId: 'farm-alpha',
+    zoneId: 'zone-3',
+    ownerId: 'usr-admin-01',
+    mqttTopic: 'farms/farm-alpha/devices/esp32-node-alpha-03/telemetry',
+    lastSeen: new Date().toISOString(),
+    batteryLevel: 100,
+    signalRssi: -55,
+    otaStatus: 'IDLE',
+    location: { lat: 37.7745, lng: -122.4190, elevation: 40 },
+    sensorsAttached: ['TANK_LEVEL', 'WATER_PRESSURE', 'FLOW_RATE', 'SOLAR_VOLT', 'VALVE_ACTUATOR'],
+    authCode: 'ATH-4C99-31E2-88D1'
+  },
+  {
+    uuid: 'esp32-weather-01',
+    serialNumber: 'SN-ESP32-9904-W',
+    name: 'Hyper-Local ESP32 Weather Station',
+    macAddress: '24:0A:C4:00:11:04',
+    firmwareVersion: 'v2.4.1-pro',
+    status: DeviceStatus.ONLINE,
+    farmId: 'farm-alpha',
+    zoneId: 'zone-4',
+    ownerId: 'usr-admin-01',
+    mqttTopic: 'farms/farm-alpha/devices/esp32-weather-01/telemetry',
+    lastSeen: new Date().toISOString(),
+    batteryLevel: 98,
+    signalRssi: -58,
+    otaStatus: 'IDLE',
+    location: { lat: 37.7755, lng: -122.4185, elevation: 50 },
+    sensorsAttached: ['WIND_SPEED', 'WIND_DIR', 'RAIN_RATE', 'SOLAR_IRRADIANCE', 'UV_INDEX'],
+    authCode: 'ATH-19B4-78AA-33E9'
+  }
+];
+
 const createZeroReading = (zoneId: string): TelemetryReading => ({
   deviceId: `esp32-node-${zoneId}`,
   farmId: 'farm-alpha',
@@ -188,7 +286,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     totalWaterFlow: 0,
     totalSensorsOnline: 0,
   },
-  devices: [],
+  devices: initialLocal?.devices && initialLocal.devices.length > 0 ? initialLocal.devices : DEFAULT_DEVICES,
   insights: [],
   rules: initialLocal?.rules || [],
   pumps: initialLocal?.pumps || ZERO_PUMPS,
@@ -202,6 +300,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   setActiveView: (view) => {
     set({ activeView: view });
     if (typeof window !== 'undefined') {
+      sessionStorage.getItem(STORAGE_VIEW_KEY);
       sessionStorage.setItem(STORAGE_VIEW_KEY, view);
       localStorage.setItem(STORAGE_VIEW_KEY, view);
     }
@@ -242,34 +341,34 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     get().syncStateToCloud();
   },
 
-  toggleThemeMode: () =>
+  toggleThemeMode: () => {
     set((state) => {
-      const nextTheme = state.themeMode === 'light' ? 'dark' : 'light';
+      const nextMode = state.themeMode === 'light' ? 'dark' : 'light';
       if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_THEME_KEY, nextTheme);
-        if (nextTheme === 'dark') {
+        localStorage.setItem(STORAGE_THEME_KEY, nextMode);
+        if (nextMode === 'dark') {
           document.documentElement.classList.add('dark');
         } else {
           document.documentElement.classList.remove('dark');
         }
       }
-      return { themeMode: nextTheme };
-    }),
+      return { themeMode: nextMode };
+    });
+  },
 
-  setThemeMode: (mode) =>
-    set(() => {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_THEME_KEY, mode);
-        if (mode === 'dark') {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
+  setThemeMode: (mode) => {
+    set({ themeMode: mode });
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_THEME_KEY, mode);
+      if (mode === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
       }
-      return { themeMode: mode };
-    }),
+    }
+  },
 
-  togglePumpState: (pumpId: string) => {
+  togglePumpState: (pumpId) => {
     set((state) => {
       const updatedPumps = state.pumps.map((p) => {
         if (p.id === pumpId) {
@@ -278,12 +377,12 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
             ...p,
             status: nextStatus,
             manualOverride: true,
-            flowRateLmin: nextStatus === 'RUNNING' ? (p.flowRateLmin > 0 ? p.flowRateLmin : 25.0) : 0,
+            flowRateLmin: nextStatus === 'RUNNING' ? 14.5 : 0,
           };
         }
         return p;
       });
-      return { pumps: updatedPumps, isZeroDataMode: false };
+      return { pumps: updatedPumps };
     });
     get().syncStateToCloud();
   },
@@ -297,11 +396,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     set((state) => ({
       schedules: state.schedules.map((s) =>
         s.id === scheduleId
-          ? {
-              ...s,
-              enabled: !s.enabled,
-              status: !s.enabled ? ('SCHEDULED' as const) : ('PAUSED' as const),
-            }
+          ? { ...s, enabled: !s.enabled, status: !s.enabled ? ('SCHEDULED' as const) : ('PAUSED' as const) }
           : s
       ),
     }));
@@ -309,100 +404,106 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   },
 
   deleteSchedule: (scheduleId) => {
-    set((state) => ({
-      schedules: state.schedules.filter((s) => s.id !== scheduleId),
-    }));
+    set((state) => ({ schedules: state.schedules.filter((s) => s.id !== scheduleId) }));
     get().syncStateToCloud();
   },
 
-  triggerMotionAlert: (zoneId, zoneName, message) =>
+  triggerMotionAlert: (zoneId, zoneName, message) => {
     set({
       motionAlert: {
         active: true,
         zoneId,
         zoneName,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        message: message || `Intrusion detected in ${zoneName}!`,
+        timestamp: new Date().toISOString(),
+        message: message || 'Wild animal detected in crop field area! System auto-triggering deterrent sirens.',
       },
-    }),
+    });
+  },
+
   dismissMotionAlert: () => set({ motionAlert: null }),
 
   resetAllDataToZero: () => {
     set({
-      isZeroDataMode: true,
       latestReadings: ZERO_TELEMETRY_MAP,
-      aggregatedStats: { avgSoilMoisture: 0, avgTemperature: 0, avgTankLevel: 0, totalWaterFlow: 0, totalSensorsOnline: 0 },
+      aggregatedStats: {
+        avgSoilMoisture: 0,
+        avgTemperature: 0,
+        avgTankLevel: 0,
+        totalWaterFlow: 0,
+        totalSensorsOnline: 0,
+      },
       pumps: ZERO_PUMPS,
       schedules: ZERO_SCHEDULES,
-      motionAlert: null,
       emergencyStop: false,
       rainOverride: false,
+      isZeroDataMode: true,
     });
+    get().syncStateToCloud();
   },
 
-  syncStateToCloud: (userEmail?: string) => {
+  syncStateToCloud: async (emailArg) => {
+    if (typeof window === 'undefined') return;
+
     const state = get();
-    const domainDataPayload = {
+
+    // Persist domain state locally
+    const toSave = {
       pumps: state.pumps,
       schedules: state.schedules,
       rules: state.rules,
+      devices: state.devices,
       emergencyStop: state.emergencyStop,
       rainOverride: state.rainOverride,
     };
+    try {
+      localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(toSave));
+    } catch (e) {
+      console.error('Local state saving error', e);
+    }
 
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(domainDataPayload));
-      const sessionUser = sessionStorage.getItem('aether_active_session_user') || localStorage.getItem('aether_active_session_user');
-      const email = userEmail || (sessionUser ? JSON.parse(sessionUser).email : null);
+    let email = emailArg;
+    if (!email) {
+      try {
+        const storedUser = localStorage.getItem('aether_auth_user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          email = parsed.email;
+        }
+      } catch {}
+    }
 
-      if (email) {
-        fetch('/api/state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, state: domainDataPayload }),
-        }).catch(() => {});
-      }
+    if (!email) return;
+
+    try {
+      await fetch('/api/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, state: toSave }),
+      });
+    } catch (err) {
+      console.warn('Sync to backend failed:', err);
     }
   },
 
-  loadGlobalStateForUser: async (email: string) => {
+  loadGlobalStateForUser: async (email) => {
+    if (!email || typeof window === 'undefined') return;
     try {
       const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.state) {
-          const s = json.state;
-          const current = get();
-
-          const newPumpsStr = JSON.stringify(s.pumps || ZERO_PUMPS);
-          const currentPumpsStr = JSON.stringify(current.pumps);
-          const newSchedulesStr = JSON.stringify(s.schedules || ZERO_SCHEDULES);
-          const currentSchedulesStr = JSON.stringify(current.schedules);
-          const newRulesStr = JSON.stringify(s.rules || []);
-          const currentRulesStr = JSON.stringify(current.rules);
-
-          if (
-            newPumpsStr !== currentPumpsStr ||
-            newSchedulesStr !== currentSchedulesStr ||
-            newRulesStr !== currentRulesStr ||
-            Boolean(s.emergencyStop) !== current.emergencyStop ||
-            Boolean(s.rainOverride) !== current.rainOverride
-          ) {
-            set({
-              pumps: s.pumps || ZERO_PUMPS,
-              schedules: s.schedules || ZERO_SCHEDULES,
-              rules: s.rules || [],
-              emergencyStop: Boolean(s.emergencyStop),
-              rainOverride: Boolean(s.rainOverride),
-            });
-            if (typeof window !== 'undefined') {
-              localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(s));
-            }
-          }
-        }
+      const data = await res.json();
+      if (data.success && data.state) {
+        const cloudState = data.state;
+        set((state) => ({
+          pumps: cloudState.pumps || state.pumps,
+          schedules: cloudState.schedules || state.schedules,
+          rules: cloudState.rules || state.rules,
+          devices: cloudState.devices || state.devices,
+          emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : state.emergencyStop,
+          rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : state.rainOverride,
+        }));
+        localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(cloudState));
       }
-    } catch {
-      // Silently handle polling delay
+    } catch (err) {
+      console.warn('Load global state failed:', err);
     }
   },
 }));
