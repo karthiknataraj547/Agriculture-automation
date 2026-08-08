@@ -106,103 +106,7 @@ const ZERO_SCHEDULES: IrrigationSchedule[] = [
   { id: 'sch-3', name: 'Vineyard Midday Moisture Boost', enabled: false, farmId: 'farm-01', zoneId: 'zone-3', zoneName: 'Zone 3: Vineyard East', pumpId: 'pump-3', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
 ];
 
-const DEFAULT_DEVICES: IoTDevice[] = [
-  {
-    uuid: 'esp32-node-alpha-01',
-    serialNumber: 'SN-ESP32-9901-A',
-    name: 'Zone 1 Spatial ESP32 Node (Soil Depth & Flow)',
-    macAddress: '24:0A:C4:00:11:01',
-    firmwareVersion: 'v2.4.1-pro',
-    status: DeviceStatus.ONLINE,
-    farmId: 'farm-alpha',
-    zoneId: 'zone-1',
-    ownerId: 'usr-admin-01',
-    mqttTopic: 'farms/farm-alpha/devices/esp32-node-alpha-01/telemetry',
-    lastSeen: new Date().toISOString(),
-    batteryLevel: 94,
-    signalRssi: -62,
-    otaStatus: 'IDLE',
-    location: { lat: 37.7749, lng: -122.4194, elevation: 42 },
-    sensorsAttached: ['SOIL_MOISTURE', 'SOIL_TEMP', 'AIR_TEMP', 'HUMIDITY', 'EC', 'PH', 'WATER_PRESSURE', 'FLOW_RATE'],
-    authCode: 'ATH-8F92-4C10-99E4'
-  },
-  {
-    uuid: 'esp8266-node-beta-01',
-    serialNumber: 'SN-ESP8266-8801-B',
-    name: 'Zone 1 Secondary ESP8266 Sensor Node (NodeMCU)',
-    macAddress: '84:F3:EB:00:22:01',
-    firmwareVersion: 'v2.4.1-pro',
-    status: DeviceStatus.ONLINE,
-    farmId: 'farm-alpha',
-    zoneId: 'zone-1',
-    ownerId: 'usr-admin-01',
-    mqttTopic: 'farms/farm-alpha/devices/esp8266-node-beta-01/telemetry',
-    lastSeen: new Date().toISOString(),
-    batteryLevel: 91,
-    signalRssi: -65,
-    otaStatus: 'IDLE',
-    location: { lat: 37.7750, lng: -122.4192, elevation: 42 },
-    sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'FLOW_RATE'],
-    authCode: 'ATH-7A12-98F1-44B2'
-  },
-  {
-    uuid: 'esp32-node-alpha-02',
-    serialNumber: 'SN-ESP32-9902-B',
-    name: 'Zone 2 ESP32 Crop Canopy Node',
-    macAddress: '24:0A:C4:00:11:02',
-    firmwareVersion: 'v2.4.1-pro',
-    status: DeviceStatus.ONLINE,
-    farmId: 'farm-alpha',
-    zoneId: 'zone-2',
-    ownerId: 'usr-admin-01',
-    mqttTopic: 'farms/farm-alpha/devices/esp32-node-alpha-02/telemetry',
-    lastSeen: new Date().toISOString(),
-    batteryLevel: 88,
-    signalRssi: -68,
-    otaStatus: 'IDLE',
-    location: { lat: 37.7752, lng: -122.4198, elevation: 44 },
-    sensorsAttached: ['SOIL_MOISTURE', 'LEAF_WETNESS', 'AIR_TEMP', 'HUMIDITY', 'NPK'],
-    authCode: 'ATH-7A12-98F1-55C3'
-  },
-  {
-    uuid: 'esp32-node-alpha-03',
-    serialNumber: 'SN-ESP32-9903-C',
-    name: 'Main Pumping Station ESP32 Controller',
-    macAddress: '24:0A:C4:00:11:03',
-    firmwareVersion: 'v2.5.0-pro',
-    status: DeviceStatus.ONLINE,
-    farmId: 'farm-alpha',
-    zoneId: 'zone-3',
-    ownerId: 'usr-admin-01',
-    mqttTopic: 'farms/farm-alpha/devices/esp32-node-alpha-03/telemetry',
-    lastSeen: new Date().toISOString(),
-    batteryLevel: 100,
-    signalRssi: -55,
-    otaStatus: 'IDLE',
-    location: { lat: 37.7745, lng: -122.4190, elevation: 40 },
-    sensorsAttached: ['TANK_LEVEL', 'WATER_PRESSURE', 'FLOW_RATE', 'SOLAR_VOLT', 'VALVE_ACTUATOR'],
-    authCode: 'ATH-4C99-31E2-88D1'
-  },
-  {
-    uuid: 'esp32-weather-01',
-    serialNumber: 'SN-ESP32-9904-W',
-    name: 'Hyper-Local ESP32 Weather Station',
-    macAddress: '24:0A:C4:00:11:04',
-    firmwareVersion: 'v2.4.1-pro',
-    status: DeviceStatus.ONLINE,
-    farmId: 'farm-alpha',
-    zoneId: 'zone-4',
-    ownerId: 'usr-admin-01',
-    mqttTopic: 'farms/farm-alpha/devices/esp32-weather-01/telemetry',
-    lastSeen: new Date().toISOString(),
-    batteryLevel: 98,
-    signalRssi: -58,
-    otaStatus: 'IDLE',
-    location: { lat: 37.7755, lng: -122.4185, elevation: 50 },
-    sensorsAttached: ['WIND_SPEED', 'WIND_DIR', 'RAIN_RATE', 'SOLAR_IRRADIANCE', 'UV_INDEX'],
-    authCode: 'ATH-19B4-78AA-33E9'
-  }
-];
+const DEFAULT_DEVICES: IoTDevice[] = [];
 
 const createZeroReading = (zoneId: string): TelemetryReading => ({
   deviceId: `esp32-node-${zoneId}`,
@@ -286,7 +190,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     totalWaterFlow: 0,
     totalSensorsOnline: 0,
   },
-  devices: initialLocal?.devices && initialLocal.devices.length > 0 ? initialLocal.devices : DEFAULT_DEVICES,
+  devices: initialLocal?.devices && Array.isArray(initialLocal.devices) ? initialLocal.devices : DEFAULT_DEVICES,
   insights: [],
   rules: initialLocal?.rules || [],
   pumps: initialLocal?.pumps || ZERO_PUMPS,
@@ -318,7 +222,10 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     }),
 
   setAggregatedStats: (stats) => set((state) => (state.isZeroDataMode ? state : { aggregatedStats: stats })),
-  setDevices: (devices) => set({ devices }),
+  setDevices: (devices) => {
+    set({ devices });
+    get().syncStateToCloud();
+  },
   setInsights: (insights) => set({ insights }),
   setRules: (rules) => {
     set({ rules });
@@ -432,6 +339,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         totalWaterFlow: 0,
         totalSensorsOnline: 0,
       },
+      devices: [],
       pumps: ZERO_PUMPS,
       schedules: ZERO_SCHEDULES,
       emergencyStop: false,
@@ -496,7 +404,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
           pumps: cloudState.pumps || state.pumps,
           schedules: cloudState.schedules || state.schedules,
           rules: cloudState.rules || state.rules,
-          devices: cloudState.devices || state.devices,
+          devices: cloudState.devices !== undefined ? cloudState.devices : state.devices,
           emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : state.emergencyStop,
           rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : state.rainOverride,
         }));

@@ -19,6 +19,7 @@ import {
   Key,
   ShieldCheck,
   Radio,
+  Trash2,
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
@@ -272,6 +273,11 @@ export function DeviceGrid() {
     }
   };
 
+  const handleRemoveAllDevices = () => {
+    setDevices([]);
+    setSelectedDeviceId(null);
+  };
+
   const handleProvisionDevice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!deviceName.trim() || !serialNumber.trim()) return;
@@ -351,6 +357,19 @@ export function DeviceGrid() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {devices.length > 0 && (
+            <button
+              onClick={handleRemoveAllDevices}
+              className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-rose-600 hover:text-rose-700"
+              aria-label="Remove all devices"
+              title="Clear all devices from inventory"
+            >
+              <Trash2 size={14} />
+              <span className="hidden sm:inline">CLEAR INVENTORY</span>
+              <span className="sm:hidden">CLEAR</span>
+            </button>
+          )}
+
           <button
             onClick={() => setModalMode('HARDWARE_GUIDE')}
             className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-slate-700 dark:text-slate-200 hover:text-cyber-cyan"
@@ -360,6 +379,7 @@ export function DeviceGrid() {
             <span className="hidden sm:inline">HARDWARE SETUP GUIDE</span>
             <span className="sm:hidden">GUIDE</span>
           </button>
+          
           <button
             onClick={() => setModalMode('ADD_DEVICE')}
             className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-cyber-cyan hover:text-sky-700"
@@ -635,129 +655,148 @@ export function DeviceGrid() {
         </GlassCard>
       )}
 
-      {/* Grid of Devices */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {devices.map((device) => {
-          const signal = rssiToQuality(device.signalRssi);
-          const isSelected = selectedDeviceId === device.uuid;
-          const authCode = device.authCode || 'ATH-8F92-4C10';
-          const isEsp8266 = device.uuid.includes('8266') || device.serialNumber.includes('8266');
+      {/* Devices View Container */}
+      {devices.length === 0 ? (
+        <GlassCard variant="default" padding="lg" className="text-center py-10">
+          <Cpu size={36} className="mx-auto mb-3 text-slate-400 dark:text-slate-500" />
+          <h3 className="text-sm font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 mb-1">
+            No IoT Hardware Devices Connected
+          </h3>
+          <p className="text-xs text-slate-600 dark:text-slate-400 max-w-md mx-auto mb-4 font-medium">
+            Your farm device inventory is currently empty. Click below to provision your ESP32 or ESP8266 node and receive a 16-character hardware authentication key.
+          </p>
+          <button
+            onClick={() => setModalMode('ADD_DEVICE')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl neu-button text-xs font-mono font-extrabold text-cyber-cyan hover:text-sky-700"
+          >
+            <Plus size={16} />
+            <span>PROVISION NEW DEVICE</span>
+          </button>
+        </GlassCard>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {devices.map((device) => {
+            const signal = rssiToQuality(device.signalRssi);
+            const isSelected = selectedDeviceId === device.uuid;
+            const authCode = device.authCode || 'ATH-8F92-4C10';
+            const isEsp8266 = device.uuid.includes('8266') || device.serialNumber.includes('8266');
 
-          return (
-            <GlassCard
-              key={device.uuid}
-              variant={isSelected ? 'glow' : 'default'}
-              padding="md"
-              hover
-              onClick={() => setSelectedDeviceId(isSelected ? null : device.uuid)}
-            >
-              {/* Top Row */}
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-lg neu-pressed flex items-center justify-center flex-shrink-0">
-                    <Cpu size={14} className={isEsp8266 ? 'text-amber-500' : 'text-cyber-cyan'} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{device.name}</p>
-                      <span className={`px-1.5 py-0.5 rounded text-[8px] font-mono font-bold ${
-                        isEsp8266 ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-400' : 'bg-sky-100 dark:bg-sky-950/80 text-sky-700 dark:text-cyan-400'
-                      }`}>
-                        {isEsp8266 ? 'ESP8266' : 'ESP32'}
-                      </span>
+            return (
+              <GlassCard
+                key={device.uuid}
+                variant={isSelected ? 'glow' : 'default'}
+                padding="md"
+                hover
+                onClick={() => setSelectedDeviceId(isSelected ? null : device.uuid)}
+              >
+                {/* Top Row */}
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg neu-pressed flex items-center justify-center flex-shrink-0">
+                      <Cpu size={14} className={isEsp8266 ? 'text-amber-500' : 'text-cyber-cyan'} />
                     </div>
-                    <p className="text-[9px] font-mono text-slate-500 truncate">{device.serialNumber}</p>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{device.name}</p>
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-mono font-bold ${
+                          isEsp8266 ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-400' : 'bg-sky-100 dark:bg-sky-950/80 text-sky-700 dark:text-cyan-400'
+                        }`}>
+                          {isEsp8266 ? 'ESP8266' : 'ESP32'}
+                        </span>
+                      </div>
+                      <p className="text-[9px] font-mono text-slate-500 truncate">{device.serialNumber}</p>
+                    </div>
+                  </div>
+                  <StatusIndicator status={deviceStatusToUi(device.status)} size="sm" />
+                </div>
+
+                {/* Auth Code Bar */}
+                <div className="flex items-center justify-between px-2.5 py-1.5 mb-3 rounded-lg neu-pressed">
+                  <div className="flex items-center gap-1.5">
+                    <Key size={12} className="text-cyber-cyan" />
+                    <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Auth Code:</span>
+                    <span className="text-[10px] font-mono font-bold text-slate-800 dark:text-slate-100">{authCode}</span>
+                  </div>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(authCode);
+                    }}
+                    title="Copy Auth Code for Hardware"
+                    className="text-[9px] font-mono text-cyber-cyan hover:text-sky-700 flex items-center gap-1 font-bold"
+                  >
+                    <Copy size={9} />
+                    COPY
+                  </button>
+                </div>
+
+                {/* Metrics Row */}
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  {/* Signal */}
+                  <div className="text-center p-1.5 rounded-lg neu-pressed">
+                    <Signal size={10} className={clsx('mx-auto mb-0.5', signal.color)} />
+                    <p className="text-[9px] text-slate-500 font-bold">Signal</p>
+                    <p className={clsx('text-[10px] font-mono font-bold', signal.color)}>
+                      {device.signalRssi} dBm
+                    </p>
+                  </div>
+
+                  {/* Battery */}
+                  <div className="text-center p-1.5 rounded-lg neu-pressed">
+                    <BatteryMedium
+                      size={10}
+                      className={clsx(
+                        'mx-auto mb-0.5',
+                        device.batteryLevel > 50
+                          ? 'text-cyber-emerald'
+                          : device.batteryLevel > 20
+                            ? 'text-amber-600'
+                            : 'text-red-600'
+                      )}
+                    />
+                    <p className="text-[9px] text-slate-500 font-bold">Battery</p>
+                    <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
+                      {device.batteryLevel}%
+                    </p>
+                  </div>
+
+                  {/* Zone */}
+                  <div className="text-center p-1.5 rounded-lg neu-pressed">
+                    <MapPin size={10} className="mx-auto mb-0.5 text-slate-500" />
+                    <p className="text-[9px] text-slate-500 font-bold">Zone</p>
+                    <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200 uppercase">
+                      {device.zoneId}
+                    </p>
+                  </div>
+
+                  {/* Last Seen */}
+                  <div className="text-center p-1.5 rounded-lg neu-pressed">
+                    <Clock size={10} className="mx-auto mb-0.5 text-slate-500" />
+                    <p className="text-[9px] text-slate-500 font-bold">Seen</p>
+                    <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
+                      {timeAgo(device.lastSeen)}
+                    </p>
                   </div>
                 </div>
-                <StatusIndicator status={deviceStatusToUi(device.status)} size="sm" />
-              </div>
 
-              {/* Auth Code Bar */}
-              <div className="flex items-center justify-between px-2.5 py-1.5 mb-3 rounded-lg neu-pressed">
-                <div className="flex items-center gap-1.5">
-                  <Key size={12} className="text-cyber-cyan" />
-                  <span className="text-[9px] font-mono text-slate-500 uppercase font-bold">Auth Code:</span>
-                  <span className="text-[10px] font-mono font-bold text-slate-800 dark:text-slate-100">{authCode}</span>
-                </div>
-
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(authCode);
-                  }}
-                  title="Copy Auth Code for Hardware"
-                  className="text-[9px] font-mono text-cyber-cyan hover:text-sky-700 flex items-center gap-1 font-bold"
-                >
-                  <Copy size={9} />
-                  COPY
-                </button>
-              </div>
-
-              {/* Metrics Row */}
-              <div className="grid grid-cols-4 gap-2 mb-3">
-                {/* Signal */}
-                <div className="text-center p-1.5 rounded-lg neu-pressed">
-                  <Signal size={10} className={clsx('mx-auto mb-0.5', signal.color)} />
-                  <p className="text-[9px] text-slate-500 font-bold">Signal</p>
-                  <p className={clsx('text-[10px] font-mono font-bold', signal.color)}>
-                    {device.signalRssi} dBm
-                  </p>
-                </div>
-
-                {/* Battery */}
-                <div className="text-center p-1.5 rounded-lg neu-pressed">
-                  <BatteryMedium
-                    size={10}
-                    className={clsx(
-                      'mx-auto mb-0.5',
-                      device.batteryLevel > 50
-                        ? 'text-cyber-emerald'
-                        : device.batteryLevel > 20
-                          ? 'text-amber-600'
-                          : 'text-red-600'
-                    )}
-                  />
-                  <p className="text-[9px] text-slate-500 font-bold">Battery</p>
-                  <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
-                    {device.batteryLevel}%
-                  </p>
-                </div>
-
-                {/* Zone */}
-                <div className="text-center p-1.5 rounded-lg neu-pressed">
-                  <MapPin size={10} className="mx-auto mb-0.5 text-slate-500" />
-                  <p className="text-[9px] text-slate-500 font-bold">Zone</p>
-                  <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200 uppercase">
-                    {device.zoneId}
-                  </p>
-                </div>
-
-                {/* Last Seen */}
-                <div className="text-center p-1.5 rounded-lg neu-pressed">
-                  <Clock size={10} className="mx-auto mb-0.5 text-slate-500" />
-                  <p className="text-[9px] text-slate-500 font-bold">Seen</p>
-                  <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
-                    {timeAgo(device.lastSeen)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="flex items-center justify-between pt-2 border-t border-slate-300/40 dark:border-slate-700/40">
-                <span className="text-[9px] font-mono text-slate-500 font-bold">
-                  FW {device.firmwareVersion}
-                </span>
-                <div className="flex items-center gap-1">
-                  <span className="text-[9px] font-mono text-slate-600 dark:text-slate-300 font-bold">
-                    {device.sensorsAttached.length} sensors
+                {/* Footer */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-300/40 dark:border-slate-700/40">
+                  <span className="text-[9px] font-mono text-slate-500 font-bold">
+                    FW {device.firmwareVersion}
                   </span>
-                  <ChevronRight size={10} className="text-slate-500" />
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] font-mono text-slate-600 dark:text-slate-300 font-bold">
+                      {device.sensorsAttached.length} sensors
+                    </span>
+                    <ChevronRight size={10} className="text-slate-500" />
+                  </div>
                 </div>
-              </div>
-            </GlassCard>
-          );
-        })}
-      </div>
+              </GlassCard>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
