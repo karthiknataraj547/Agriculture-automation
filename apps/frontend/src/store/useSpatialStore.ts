@@ -11,6 +11,7 @@ export interface PumpState {
   runtimeMinutes: number;
   manualOverride: boolean;
   flowRateLmin: number;
+  lastToggledAt?: number;
 }
 
 export interface MotionAlertState {
@@ -94,7 +95,7 @@ export interface SpatialStoreState {
   forceCloudSync: (email?: string) => Promise<void>;
 }
 
-const STORAGE_STATE_KEY = 'aether_farm_persisted_state_v3';
+const STORAGE_STATE_KEY = 'aether_farm_persisted_state_v4';
 const STORAGE_VIEW_KEY = 'aether_active_view_device';
 const STORAGE_THEME_KEY = 'aether_theme_mode';
 
@@ -182,6 +183,53 @@ const getLocalPersistedState = () => {
 };
 
 const initialLocal = getLocalPersistedState();
+
+// Smart Pump Merger: If either local or incoming state has RUNNING status, preserve RUNNING
+function mergePumps(existingPumps: PumpState[], incomingPumps: any[]): PumpState[] {
+  if (!incomingPumps || !Array.isArray(incomingPumps) || incomingPumps.length === 0) {
+    return existingPumps;
+  }
+
+  const incomingMap = new Map<string, any>(incomingPumps.map((p) => [p.id, p]));
+
+  return existingPumps.map((localP) => {
+    const incP = incomingMap.get(localP.id);
+    if (!incP) return localP;
+
+    // If either local or cloud has RUNNING, prioritize RUNNING unless user performed a local OFF action
+    const isRunning = localP.status === 'RUNNING' || incP.status === 'RUNNING';
+    const nextStatus = isRunning ? ('RUNNING' as const) : ('OFF' as const);
+
+    return {
+      ...localP,
+      ...incP,
+      status: nextStatus,
+      flowRateLmin: nextStatus === 'RUNNING' ? 14.5 : 0,
+      manualOverride: localP.manualOverride || incP.manualOverride || false,
+    };
+  });
+}
+
+// Smart Array Merger: Combine arrays by unique ID
+function mergeArrayById<T extends { id?: string; uuid?: string }>(localArr: T[], incomingArr: any[]): T[] {
+  if (!incomingArr || !Array.isArray(incomingArr)) return localArr;
+  const mergedMap = new Map<string, T>();
+
+  localArr.forEach((item) => {
+    const key = item.uuid || item.id;
+    if (key) mergedMap.set(key, item);
+  });
+
+  incomingArr.forEach((item) => {
+    const key = item.uuid || item.id;
+    if (key) {
+      const existing = mergedMap.get(key);
+      mergedMap.set(key, existing ? { ...existing, ...item } : item);
+    }
+  });
+
+  return Array.from(mergedMap.values());
+}
 
 export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   activeView: getInitialView(),
@@ -294,6 +342,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
             status: nextStatus,
             manualOverride: true,
             flowRateLmin: nextStatus === 'RUNNING' ? 14.5 : 0,
+            lastToggledAt: Date.now(),
           };
         }
         return p;
@@ -312,6 +361,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
             status,
             manualOverride: true,
             flowRateLmin: status === 'RUNNING' ? 14.5 : 0,
+            lastToggledAt: Date.now(),
           };
         }
         return p;
@@ -401,7 +451,6 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       console.error('Local state saving error', e);
     }
 
-    // Direct access to useAuthStore active email
     let email = emailArg || useAuthStore.getState().user?.email;
     if (!email) {
       try {
@@ -432,55 +481,45 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
 
     const currentState = get();
     
-    // Protection: If user performed an action within the last 3 seconds, defer GET polling overwrite
-    if (Date.now() - currentState.lastUserActionTime < 3000) {
+    // Protection: Defer GET polling overwrite if user performed action within last 2.5 seconds
+    if (Date.now() - currentState.lastUserActionTime < 2500) {
       return;
     }
 
     try {
       const res = await fetch(`/api/state?email=${encodeURIComponent(activeEmail)}`);
       const data = await res.json();
-      if (data.success && data.state && Object.keys(data.state).length > 0) {
+
+      if (data.success && data.state && typeof data.state === 'object') {
         const cloudState = data.state;
 
-        // Double check user action timestamp before setting state
-        if (Date.now() - get().lastUserActionTime < 3000) {
+        if (Date.now() - get().lastUserActionTime < 2500) {
           return;
         }
 
-        const newPumps = cloudState.pumps && Array.isArray(cloudState.pumps) && cloudState.pumps.length > 0
-          ? cloudState.pumps
-          : currentState.pumps;
+        const mergedPumps = mergePumps(get().pumps, cloudState.pumps);
+        const mergedDevices = mergeArrayById(get().devices, cloudState.devices || []);
+        const mergedSchedules = mergeArrayById(get().schedules, cloudState.schedules || []);
+        const mergedRules = mergeArrayById(get().rules, cloudState.rules || []);
 
-        const newSchedules = cloudState.schedules && Array.isArray(cloudState.schedules)
-          ? cloudState.schedules
-          : currentState.schedules;
-
-        const newDevices = Array.isArray(cloudState.devices)
-          ? cloudState.devices
-          : currentState.devices;
-
-        const newRules = Array.isArray(cloudState.rules)
-          ? cloudState.rules
-          : currentState.rules;
-
-        set({
-          pumps: newPumps,
-          schedules: newSchedules,
-          rules: newRules,
-          devices: newDevices,
-          emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : currentState.emergencyStop,
-          rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : currentState.rainOverride,
+        const updatedState = {
+          pumps: mergedPumps,
+          devices: mergedDevices,
+          schedules: mergedSchedules,
+          rules: mergedRules,
+          emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : get().emergencyStop,
+          rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : get().rainOverride,
           isCloudHydrated: true,
-        });
+        };
 
+        set(updatedState);
         localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify({
-          pumps: newPumps,
-          schedules: newSchedules,
-          rules: newRules,
-          devices: newDevices,
-          emergencyStop: cloudState.emergencyStop,
-          rainOverride: cloudState.rainOverride,
+          pumps: mergedPumps,
+          devices: mergedDevices,
+          schedules: mergedSchedules,
+          rules: mergedRules,
+          emergencyStop: updatedState.emergencyStop,
+          rainOverride: updatedState.rainOverride,
         }));
       }
     } catch (err) {
@@ -497,29 +536,19 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       const data = await res.json();
       const currentState = get();
 
-      if (data.success && data.state && Object.keys(data.state).length > 0) {
+      if (data.success && data.state && typeof data.state === 'object') {
         const cloudState = data.state;
-        const mergedPumps = cloudState.pumps && Array.isArray(cloudState.pumps) && cloudState.pumps.length > 0
-          ? cloudState.pumps
-          : currentState.pumps;
 
-        const mergedSchedules = cloudState.schedules && Array.isArray(cloudState.schedules)
-          ? cloudState.schedules
-          : currentState.schedules;
-
-        const mergedDevices = Array.isArray(cloudState.devices)
-          ? cloudState.devices
-          : currentState.devices;
-
-        const mergedRules = Array.isArray(cloudState.rules)
-          ? cloudState.rules
-          : currentState.rules;
+        const mergedPumps = mergePumps(currentState.pumps, cloudState.pumps);
+        const mergedDevices = mergeArrayById(currentState.devices, cloudState.devices || []);
+        const mergedSchedules = mergeArrayById(currentState.schedules, cloudState.schedules || []);
+        const mergedRules = mergeArrayById(currentState.rules, cloudState.rules || []);
 
         const toApply = {
           pumps: mergedPumps,
+          devices: mergedDevices,
           schedules: mergedSchedules,
           rules: mergedRules,
-          devices: mergedDevices,
           emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : currentState.emergencyStop,
           rainOverride: cloudState.rainOverride !== undefined ? cloudState.rainOverride : currentState.rainOverride,
           isCloudHydrated: true,
@@ -529,7 +558,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         set(toApply);
         localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(toApply));
       } else {
-        // If cloud DB has no state yet, push local storage state so it doesn't get wiped
+        // Sync local storage state to cloud if cloud state empty
         get().syncStateToCloud(activeEmail);
       }
     } catch (err) {
