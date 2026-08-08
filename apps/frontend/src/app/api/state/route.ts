@@ -3,7 +3,7 @@ import { encryptPayload, decryptPayload } from '../auth/crypto';
 
 const STATE_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
-// Ultra-fast in-memory state store
+// In-memory state store
 let stateStoreCache: Record<string, string> = {};
 let isSyncingState = false;
 
@@ -12,7 +12,7 @@ async function fetchStateFromCloud(): Promise<Record<string, string>> {
   isSyncingState = true;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 600);
+    const timeout = setTimeout(() => controller.abort(), 3500); // 3.5s timeout for mobile connection stability
     const res = await fetch(STATE_DB_URL, {
       signal: controller.signal,
       headers: { 'Cache-Control': 'no-cache' },
@@ -24,8 +24,8 @@ async function fetchStateFromCloud(): Promise<Record<string, string>> {
         stateStoreCache = json.data.farmStates;
       }
     }
-  } catch {
-    // Return cache on delay
+  } catch (e) {
+    // Return cached state on network delay
   } finally {
     isSyncingState = false;
   }
@@ -53,7 +53,7 @@ function saveStateToCloudAsync(states: Record<string, string>) {
     .catch(() => {});
 }
 
-// GET /api/state?email=... (Ultra-fast response)
+// GET /api/state?email=... (Reliable multi-device sync)
 export async function GET(req: Request) {
   try {
     const email = new URL(req.url).searchParams.get('email');
@@ -63,7 +63,7 @@ export async function GET(req: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
     
-    // Non-blocking background fetch if empty, otherwise use memory cache
+    // Always sync cloud state if not in memory cache
     if (!stateStoreCache[normalizedEmail]) {
       await fetchStateFromCloud();
     } else {
@@ -82,7 +82,7 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/state (Save state globally for account)
+// POST /api/state (Save state globally for account across laptop & mobile)
 export async function POST(req: Request) {
   try {
     const { email, state } = await req.json();
