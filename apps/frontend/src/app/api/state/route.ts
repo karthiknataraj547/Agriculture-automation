@@ -3,20 +3,15 @@ import { encryptPayload, decryptPayload } from '../auth/crypto';
 
 const STATE_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
-// In-memory state store
+// In-memory state store cache
 let stateStoreCache: Record<string, string> = {};
-let isSyncingState = false;
 
 async function fetchStateFromCloud(): Promise<Record<string, string>> {
-  if (isSyncingState) return stateStoreCache;
-  isSyncingState = true;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500); // 3.5s timeout for mobile connection stability
     const res = await fetch(STATE_DB_URL, {
-      signal: controller.signal,
       headers: { 'Cache-Control': 'no-cache' },
-    }).finally(() => clearTimeout(timeout));
+      cache: 'no-store',
+    });
 
     if (res.ok) {
       const json = await res.json();
@@ -25,35 +20,38 @@ async function fetchStateFromCloud(): Promise<Record<string, string>> {
       }
     }
   } catch (e) {
-    // Return cached state on network delay
-  } finally {
-    isSyncingState = false;
+    console.error('[Cloud DB] fetchStateFromCloud error:', e);
   }
   return stateStoreCache;
 }
 
-function saveStateToCloudAsync(states: Record<string, string>) {
-  stateStoreCache = states;
-  fetch(STATE_DB_URL, { cache: 'no-store' })
-    .then((r) => (r.ok ? r.json() : {}))
-    .then((json: any) => {
-      const existingData = json?.data || {};
-      return fetch(STATE_DB_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'Aether Users DB',
-          data: {
-            ...existingData,
-            farmStates: states,
-          },
-        }),
-      });
-    })
-    .catch(() => {});
+async function saveStateToCloud(states: Record<string, string>): Promise<boolean> {
+  try {
+    stateStoreCache = states;
+    const getRes = await fetch(STATE_DB_URL, { cache: 'no-store' });
+    const existingJson = getRes.ok ? await getRes.json() : {};
+    const existingData = existingJson?.data || {};
+
+    const putRes = await fetch(STATE_DB_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Aether Users DB',
+        data: {
+          ...existingData,
+          farmStates: states,
+        },
+      }),
+    });
+
+    return putRes.ok;
+  } catch (err) {
+    console.error('[Cloud DB] saveStateToCloud error:', err);
+    return false;
+  }
 }
 
-// GET /api/state?email=... (Reliable multi-device sync)
+// GET /api/state?email=... (Reliable cross-device state fetch)
 export async function GET(req: Request) {
   try {
     const email = new URL(req.url).searchParams.get('email');
@@ -63,14 +61,10 @@ export async function GET(req: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
     
-    // Always sync cloud state if not in memory cache
-    if (!stateStoreCache[normalizedEmail]) {
-      await fetchStateFromCloud();
-    } else {
-      fetchStateFromCloud().catch(() => {});
-    }
+    // Always fetch fresh state from cloud DB to guarantee cross-device sync
+    const currentStates = await fetchStateFromCloud();
 
-    const encryptedData = stateStoreCache[normalizedEmail];
+    const encryptedData = currentStates[normalizedEmail];
     if (!encryptedData) {
       return NextResponse.json({ success: true, state: null });
     }
@@ -96,8 +90,8 @@ export async function POST(req: Request) {
     // Encrypt state payload using AES-256-GCM before saving
     stateStoreCache[normalizedEmail] = encryptPayload(state);
 
-    // Save encrypted state to cloud DB asynchronously
-    saveStateToCloudAsync(stateStoreCache);
+    // MUST AWAIT on Vercel Serverless so execution context is not frozen before network PUT completes
+    await saveStateToCloud(stateStoreCache);
 
     return NextResponse.json({ success: true, message: 'State saved globally' });
   } catch (err: any) {
