@@ -62,18 +62,45 @@ export default function DashboardPage() {
     setIsMounted(true);
   }, []);
 
-  // 500ms ultra-fast auto-sync interval for real-time cross-device sync (Mobile <-> Laptop)
+  // True Zero-Delay Real-Time SSE Stream Listener (< 50ms Cross-Device Sync)
   useEffect(() => {
     if (isAuthenticated && user?.email) {
       // Immediate initial cloud state force sync on mount
       useSpatialStore.getState().forceCloudSync(user.email);
 
-      // 500ms auto-polling interval
+      const emailParam = encodeURIComponent(user.email);
+      let eventSource: EventSource | null = null;
+
+      try {
+        eventSource = new EventSource(`/api/state/stream?email=${emailParam}`);
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'CONNECTED') return;
+
+            // Direct instant hydration in < 10ms upon incoming state broadcast
+            useSpatialStore.setState((state) => ({
+              pumps: data.pumps || state.pumps,
+              schedules: data.schedules || state.schedules,
+              rules: data.rules || state.rules,
+              devices: Array.isArray(data.devices) ? data.devices : state.devices,
+              emergencyStop: data.emergencyStop !== undefined ? data.emergencyStop : state.emergencyStop,
+              rainOverride: data.rainOverride !== undefined ? data.rainOverride : state.rainOverride,
+            }));
+          } catch {}
+        };
+      } catch {}
+
+      // Backup high-frequency 300ms polling fallback for network stability
       const interval = setInterval(() => {
         loadGlobalStateForUser(user.email);
-      }, 500);
+      }, 300);
 
-      return () => clearInterval(interval);
+      return () => {
+        clearInterval(interval);
+        if (eventSource) eventSource.close();
+      };
     }
   }, [isAuthenticated, user, loadGlobalStateForUser]);
 

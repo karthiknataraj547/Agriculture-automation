@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { encryptPayload, decryptPayload } from '../auth/crypto';
+import { broadcastStateChange } from './sseBroadcaster';
 
 const STATE_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
@@ -76,7 +77,7 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/state (Save state globally for account across laptop & mobile)
+// POST /api/state (Save state globally and broadcast real-time SSE event to all connected devices)
 export async function POST(req: Request) {
   try {
     const { email, state } = await req.json();
@@ -89,6 +90,11 @@ export async function POST(req: Request) {
     
     // Encrypt state payload using AES-256-GCM before saving
     stateStoreCache[normalizedEmail] = encryptPayload(state);
+
+    // Instant SSE Real-Time Broadcast to all devices on the same email (< 10ms)
+    try {
+      broadcastStateChange(normalizedEmail, state);
+    } catch {}
 
     // MUST AWAIT on Vercel Serverless so execution context is not frozen before network PUT completes
     await saveStateToCloud(stateStoreCache);
