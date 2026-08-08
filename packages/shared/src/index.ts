@@ -44,11 +44,40 @@ export enum AlertSeverity {
   CRITICAL = 'CRITICAL'
 }
 
+export enum CommandStatus {
+  COMMAND_REQUESTED = 'COMMAND_REQUESTED',
+  COMMAND_SENT = 'COMMAND_SENT',
+  COMMAND_ACKNOWLEDGED = 'COMMAND_ACKNOWLEDGED',
+  STATE_UPDATED = 'STATE_UPDATED',
+  STATE_CONFIRMED = 'STATE_CONFIRMED',
+  FAILED = 'FAILED'
+}
+
+export interface DeviceCommand {
+  commandId: string;
+  deviceId: string;
+  userId: string;
+  userEmail: string;
+  farmId: string;
+  zoneId: string;
+  commandType: 'START_PUMP' | 'STOP_PUMP' | 'OPEN_VALVE' | 'CLOSE_VALVE' | 'SET_DURATION' | 'REBOOT_NODE';
+  requestedValue?: any;
+  status: CommandStatus;
+  version: number;
+  createdAt: string;
+  sentAt?: string;
+  acknowledgedAt?: string;
+  completedAt?: string;
+  error?: string;
+}
+
 export interface TelemetryReading {
   deviceId: string;
   farmId: string;
   zoneId: string;
   timestamp: string; // ISO 8601
+  messageId?: string;
+  sequenceNumber?: number;
   
   // Soil & Environmental Metrics
   soilMoisture: number; // Percentage (%)
@@ -108,6 +137,49 @@ export interface IoTDevice {
     elevation: number;
   };
   sensorsAttached: string[];
+}
+
+export interface DeviceCapabilities {
+  deviceId: string;
+  deviceSerialNumber: string;
+  firmwareVersion: string;
+  sensors: {
+    id: string;
+    type: 'SOIL_MOISTURE' | 'TEMPERATURE' | 'HUMIDITY' | 'WATER_FLOW' | 'PIR_MOTION' | 'TANK_LEVEL';
+    name: string;
+    unit: string;
+    dataType: 'number' | 'boolean';
+  }[];
+  actuators: {
+    id: string;
+    type: 'PUMP' | 'VALVE' | 'SIREN';
+    name: string;
+    currentStatus: string;
+  }[];
+}
+
+export interface IoTConnectionDiagnostics {
+  internet: 'CONNECTED' | 'DISCONNECTED';
+  mqttBroker: 'CONNECTED' | 'DISCONNECTED' | 'RECONNECTING';
+  mqttAuth: 'VALID' | 'INVALID';
+  deviceConnection: 'ONLINE' | 'OFFLINE' | 'PARTIAL';
+  lastTelemetrySeen: string;
+  lastCommandAck: string;
+  websocketStatus: 'CONNECTED' | 'DISCONNECTED';
+  databaseHealth: 'HEALTHY' | 'DEGRADED';
+  redisHealth: 'HEALTHY' | 'DEGRADED';
+  deviceUptimeSeconds: number;
+  rssi: number;
+  ipAddress: string;
+  details?: string;
+}
+
+export interface CommandTraceStep {
+  step: string;
+  label: string;
+  timestamp: string;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  payload?: any;
 }
 
 export interface IrrigationZone {

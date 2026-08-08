@@ -23,7 +23,7 @@ export interface MotionAlertState {
 }
 
 export interface SpatialStoreState {
-  activeView: 'SPATIAL_3D' | 'TELEMETRY' | 'AUTOMATION' | 'DEVICES' | 'AI_INSIGHTS' | 'AUDIT_LOGS' | 'PUMPS' | 'SCHEDULES';
+  activeView: 'SPATIAL_3D' | 'TELEMETRY' | 'AUTOMATION' | 'DEVICES' | 'AI_INSIGHTS' | 'AUDIT_LOGS' | 'PUMPS' | 'SCHEDULES' | 'DIAGNOSTICS';
   selectedZoneId: string;
   selectedDeviceId: string | null;
   

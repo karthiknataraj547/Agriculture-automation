@@ -23,6 +23,7 @@ import {
   Globe,
   Power,
   Calendar,
+  Activity,
 } from 'lucide-react';
 import { SpatialButton } from '../ui/SpatialButton';
 import { GlassCard } from '../ui/GlassCard';
@@ -103,6 +104,7 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
     { key: 'TELEMETRY' as const, label: 'Telemetry Stream', icon: <Zap size={16} /> },
     { key: 'AUTOMATION' as const, label: 'Automation Rules', icon: <Sliders size={16} /> },
     { key: 'AI_INSIGHTS' as const, label: 'AI Crop Insights', icon: <Radio size={16} /> },
+    { key: 'DIAGNOSTICS' as const, label: 'IoT Diagnostics', icon: <Activity size={16} /> },
     { key: 'AUDIT_LOGS' as const, label: 'System Audit', icon: <FileText size={16} /> },
   ];
 

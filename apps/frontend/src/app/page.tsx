@@ -26,6 +26,10 @@ import { PumpControlPanel } from '../components/pumps/PumpControlPanel';
 import { SchedulePanel } from '../components/schedules/SchedulePanel';
 import { MotionAlertBanner } from '../components/alerts/MotionAlertBanner';
 
+// Diagnostics Panels
+import { IoTDiagnosticsPanel } from '../components/diagnostics/IoTDiagnosticsPanel';
+import { EventTraceViewer } from '../components/diagnostics/EventTraceViewer';
+
 // Real-time Data Hook
 import { useWebSocketFeed } from '../hooks/useWebSocketFeed';
 
@@ -181,6 +185,14 @@ export default function DashboardPage() {
         {activeView === 'AI_INSIGHTS' && (
           <div className="space-y-4">
             <InsightsPanel />
+          </div>
+        )}
+
+        {/* ─── IOT DIAGNOSTICS VIEW ─── */}
+        {activeView === 'DIAGNOSTICS' && (
+          <div className="space-y-4">
+            <IoTDiagnosticsPanel />
+            <EventTraceViewer />
           </div>
         )}
 
