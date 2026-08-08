@@ -6,11 +6,11 @@ export async function POST(req: Request) {
     const body = await req.json();
     const {
       boardId = 'esp32-dev-module',
-      deviceId = 'aether-node-01',
+      deviceId = 'esp32-node-zone-1',
       wifiSsid = 'YOUR_WIFI_SSID',
       wifiPass = 'YOUR_WIFI_PASSWORD',
-      mqttBrokerHost = 'mqtt.aethercrop.io',
-      mqttPort = 8883,
+      mqttBrokerHost = 'test.mosquitto.org',
+      mqttPort = 1883,
       soilMoisturePin,
       dhtPin,
       relayPumpPin,
@@ -23,12 +23,16 @@ export async function POST(req: Request) {
 
     const isEsp8266 = board.family === 'ESP8266';
     const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>' : '#include <WiFi.h>';
-    
+    const isTls = Number(mqttPort) === 8883;
+
     const assignedSoilPin = soilMoisturePin || (isEsp8266 ? 'A0' : '34');
     const assignedDhtPin = dhtPin || (isEsp8266 ? '4' : '4');
     const assignedRelayPin = relayPumpPin || (isEsp8266 ? '5' : '26');
     const assignedFlowPin = flowRatePin || (isEsp8266 ? '14' : '27');
     const assignedPirPin = pirMotionPin || (isEsp8266 ? '12' : '14');
+
+    const clientInclude = isTls ? '#include <WiFiClientSecure.h>' : '';
+    const clientType = isTls ? 'WiFiClientSecure' : 'WiFiClient';
 
     const cppCode = `/*
  * AetherCrop Commercial Smart Agriculture IoT Node Firmware
@@ -39,7 +43,7 @@ export async function POST(req: Request) {
  */
 
 ${wifiHeader}
-#include <WiFiClientSecure.h>
+${clientInclude}
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
@@ -56,7 +60,7 @@ ${wifiHeader}
 // ─── NETWORK CONFIGURATION ───
 const char* WIFI_SSID = "${wifiSsid}";
 const char* WIFI_PASS = "${wifiPass}";
-const char* MQTT_HOST = "${mqttBrokerHost}";
+const char* MQTT_HOST = "${mqttBrokerHost}"; // Public test broker or your laptop IP (e.g. 192.168.1.X)
 const int   MQTT_PORT = ${mqttPort};
 const char* DEVICE_ID = "${deviceId}";
 
@@ -65,14 +69,15 @@ const char* TOPIC_COMMAND   = "agri/prod/farm-alpha/zone-1/${deviceId}/command";
 const char* TOPIC_ACK       = "agri/prod/farm-alpha/zone-1/${deviceId}/ack";
 
 DHT dht(PIN_DHT_DATA, DHTTYPE);
-WiFiClientSecure wifiClient;
-PubSubClient mqttClient(wifiClient);
+${clientType} netClient;
+PubSubClient mqttClient(netClient);
 
 unsigned long lastTelemetryMillis = 0;
 const unsigned long TELEMETRY_INTERVAL = 3000; // Send telemetry every 3 seconds
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
   Serial.println("\\n[AetherCrop] Initializing ${board.name} Firmware...");
 
   pinMode(PIN_RELAY_PUMP, OUTPUT);
@@ -81,7 +86,7 @@ void setup() {
   pinMode(PIN_PIR_MOTION, INPUT);
   dht.begin();
 
-  wifiClient.setInsecure(); // Skip certificate verification for prototype MQTTS
+  ${isTls ? 'netClient.setInsecure(); // Skip certificate verification for prototype TLS' : ''}
   connectWiFi();
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
   mqttClient.setCallback(onMqttCommandReceived);
@@ -97,21 +102,33 @@ void connectWiFi() {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\\n[WiFi] Connected! IP Address: " + WiFi.localIP().toString());
+  Serial.println("\\n[WiFi] Connected! Local IP: " + WiFi.localIP().toString());
 }
 
 void connectMQTT() {
   while (!mqttClient.connected()) {
-    Serial.print("[MQTT] Connecting to broker as ");
+    Serial.print("[MQTT] Connecting to broker ");
+    Serial.print(MQTT_HOST);
+    Serial.print(":");
+    Serial.print(MQTT_PORT);
+    Serial.print(" as ");
     Serial.println(DEVICE_ID);
     
     if (mqttClient.connect(DEVICE_ID)) {
-      Serial.println("[MQTT] Connected successfully!");
+      Serial.println("[MQTT] SUCCESS! Connected to broker.");
       mqttClient.subscribe(TOPIC_COMMAND);
     } else {
+      int state = mqttClient.state();
       Serial.print("[MQTT] Failed, rc=");
-      Serial.print(mqttClient.state());
+      Serial.print(state);
       Serial.println(" retrying in 5 seconds...");
+
+      if (state == -2) {
+        Serial.println("[MQTT ERROR -2 RESOLUTION]");
+        Serial.println(" -> Host unreachable or network connection failed.");
+        Serial.println(" -> Fix 1: Make sure MQTT_HOST is 'test.mosquitto.org' or your Laptop IP.");
+        Serial.println(" -> Fix 2: Check Wi-Fi router permits outbound TCP port 1883.");
+      }
       delay(5000);
     }
   }

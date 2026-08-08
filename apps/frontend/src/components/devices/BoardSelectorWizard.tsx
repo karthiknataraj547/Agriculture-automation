@@ -31,7 +31,8 @@ export function BoardSelectorWizard() {
   const [deviceId, setDeviceId] = useState('esp32-node-zone-1');
   const [wifiSsid, setWifiSsid] = useState('Farm_WiFi_5G');
   const [wifiPass, setWifiPass] = useState('SecurePass123');
-  const [mqttHost, setMqttHost] = useState('mqtt.aethercrop.io');
+  const [mqttHost, setMqttHost] = useState('test.mosquitto.org');
+  const [mqttPort, setMqttPort] = useState<number>(1883);
 
   // Custom Pin Configurations
   const [soilPin, setSoilPin] = useState('');
@@ -84,6 +85,7 @@ export function BoardSelectorWizard() {
           wifiSsid,
           wifiPass,
           mqttBrokerHost: mqttHost,
+          mqttPort,
           soilMoisturePin: soilPin,
           dhtPin,
           relayPumpPin: relayPin,
