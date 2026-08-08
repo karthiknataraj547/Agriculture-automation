@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { TelemetryReading, IoTDevice, DeviceStatus, AIInsight, AutomationRule, IrrigationSchedule } from '@aether/shared';
+import { useAuthStore } from './useAuthStore';
 
 export interface PumpState {
   id: string;
@@ -89,8 +90,8 @@ export interface SpatialStoreState {
 
   // Global State Sync
   syncStateToCloud: (email?: string) => void;
-  loadGlobalStateForUser: (email: string) => Promise<void>;
-  forceCloudSync: (email: string) => Promise<void>;
+  loadGlobalStateForUser: (email?: string) => Promise<void>;
+  forceCloudSync: (email?: string) => Promise<void>;
 }
 
 const STORAGE_STATE_KEY = 'aether_farm_persisted_state';
@@ -401,10 +402,11 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       console.error('Local state saving error', e);
     }
 
-    let email = emailArg;
+    // Direct access to useAuthStore active email
+    let email = emailArg || useAuthStore.getState().user?.email;
     if (!email) {
       try {
-        const storedSession = sessionStorage.getItem('aether_active_session_user') || localStorage.getItem('aether_active_session_user');
+        const storedSession = localStorage.getItem('aether_active_session_user') || sessionStorage.getItem('aether_active_session_user');
         if (storedSession) {
           const parsed = JSON.parse(storedSession);
           email = parsed.email;
@@ -425,23 +427,25 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     }
   },
 
-  loadGlobalStateForUser: async (email) => {
-    if (!email || typeof window === 'undefined') return;
+  loadGlobalStateForUser: async (emailArg) => {
+    const activeEmail = emailArg || useAuthStore.getState().user?.email;
+    if (!activeEmail || typeof window === 'undefined') return;
+
     const currentState = get();
     
-    // Protection: If user performed an action within the last 2.5 seconds, defer GET polling overwrite
-    if (Date.now() - currentState.lastUserActionTime < 2500) {
+    // Protection: If user performed an action within the last 3.5 seconds, defer GET polling overwrite
+    if (Date.now() - currentState.lastUserActionTime < 3500) {
       return;
     }
 
     try {
-      const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
+      const res = await fetch(`/api/state?email=${encodeURIComponent(activeEmail)}`);
       const data = await res.json();
       if (data.success && data.state) {
         const cloudState = data.state;
 
         // Double check user action timestamp before setting state
-        if (Date.now() - get().lastUserActionTime < 2500) {
+        if (Date.now() - get().lastUserActionTime < 3500) {
           return;
         }
 
@@ -461,10 +465,11 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     }
   },
 
-  forceCloudSync: async (email) => {
-    if (!email || typeof window === 'undefined') return;
+  forceCloudSync: async (emailArg) => {
+    const activeEmail = emailArg || useAuthStore.getState().user?.email;
+    if (!activeEmail || typeof window === 'undefined') return;
     try {
-      const res = await fetch(`/api/state?email=${encodeURIComponent(email)}`);
+      const res = await fetch(`/api/state?email=${encodeURIComponent(activeEmail)}`);
       const data = await res.json();
       if (data.success && data.state) {
         const cloudState = data.state;
