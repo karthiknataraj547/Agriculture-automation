@@ -18,7 +18,7 @@ html, body {
 /* Light Mode Body */
 body {
   background-color: #f1f5f9;
-  color: #0f172a;
+  color: #334155;
   font-family: var(--font-inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif);
   background-image: 
     radial-gradient(circle at 50% 0%, rgba(2, 132, 199, 0.04) 0%, transparent 60%),
@@ -32,12 +32,54 @@ body {
 /* Dark Mode Body */
 html.dark body, body.dark {
   background-color: #090d16 !important;
-  color: #f8fafc !important;
+  color: #e2e8f0 !important;
   background-image: 
     radial-gradient(circle at 50% 0%, rgba(0, 243, 255, 0.06) 0%, transparent 65%),
     linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px) !important;
 }
+
+/* ──────────────────────────────────────────
+   UNIVERSAL SLATE GRAY TYPOGRAPHY (Anti-Glare & Forced Dark Mode Proof)
+   ────────────────────────────────────────── */
+
+/* Light Mode — Medium Dark Charcoal Slate Gray Text */
+.text-slate-900, .text-slate-800, .text-slate-700, .text-slate-600,
+.text-gray-900, .text-gray-800, .text-gray-700, .text-gray-600 {
+  color: #334155 !important; /* Slate 700 Charcoal Gray */
+}
+
+/* Dark Mode — Bright Silver Slate Gray Text */
+html.dark .text-slate-900, html.dark .text-slate-800, html.dark .text-slate-700, html.dark .text-slate-600,
+html.dark .text-slate-500, html.dark .text-slate-400, html.dark .text-slate-300, html.dark .text-slate-200, html.dark .text-slate-100,
+.dark .text-slate-900, .dark .text-slate-800, .dark .text-slate-700, .dark .text-slate-600,
+.dark .text-slate-500, .dark .text-slate-400, .dark .text-slate-300, .dark .text-slate-200, .dark .text-slate-100 {
+  color: #cbd5e1 !important; /* Slate 300 Silver Gray */
+}
+
+/* Accent status text colors in Light Mode */
+.text-emerald-400, .text-emerald-500, .text-emerald-600, .text-emerald-700 {
+  color: #15803d !important;
+}
+.text-sky-400, .text-sky-500, .text-sky-600, .text-sky-700,
+.text-cyan-400, .text-cyan-500, .text-cyan-600, .text-cyan-700 {
+  color: #0369a1 !important;
+}
+.text-amber-400, .text-amber-500, .text-amber-600, .text-amber-700 {
+  color: #b45309 !important;
+}
+.text-rose-400, .text-rose-500, .text-rose-600, .text-rose-700,
+.text-red-500, .text-red-600, .text-red-700 {
+  color: #b91c1c !important;
+}
+
+/* Re-restore accent colors in dark mode */
+html.dark .text-emerald-400, .dark .text-emerald-400 { color: #4ade80 !important; }
+html.dark .text-emerald-500, .dark .text-emerald-500 { color: #22c55e !important; }
+html.dark .text-sky-400, .dark .text-sky-400 { color: #38bdf8 !important; }
+html.dark .text-cyan-400, .dark .text-cyan-400 { color: #22d3ee !important; }
+html.dark .text-amber-400, .dark .text-amber-400 { color: #fbbf24 !important; }
+html.dark .text-rose-400, .dark .text-rose-400 { color: #fb7185 !important; }
 
 /* ──────────────────────────────────────────
    GLARE-FREE CARDS & PANELS (Light Mode)
@@ -49,7 +91,7 @@ html.dark body, body.dark {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
   border: 1px solid #e2e8f0;
   border-radius: 1rem;
-  color: #0f172a;
+  color: #334155;
 }
 
 .skeuo-panel-glow, .neu-convex-glow {
@@ -58,7 +100,7 @@ html.dark body, body.dark {
   box-shadow: 0 2px 8px rgba(2, 132, 199, 0.12);
   border: 1.5px solid #0284c7;
   border-radius: 1rem;
-  color: #0f172a;
+  color: #334155;
 }
 
 .skeuo-pressed, .neu-pressed {
@@ -66,7 +108,7 @@ html.dark body, body.dark {
   box-shadow: none;
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
-  color: #0f172a;
+  color: #334155;
 }
 
 /* Glare-Free Buttons */
@@ -76,7 +118,7 @@ html.dark body, body.dark {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   border: 1px solid #cbd5e1;
   border-radius: 0.75rem;
-  color: #0f172a !important;
+  color: #334155 !important;
   font-weight: 800 !important;
   transition: all 0.15s ease-in-out;
   cursor: pointer;
@@ -107,7 +149,7 @@ html.dark .skeuo-panel, html.dark .skeuo-card, html.dark .neu-flat, html.dark .n
   background: #0f172a !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35) !important;
   border: 1px solid #334155 !important;
-  color: #f8fafc !important;
+  color: #cbd5e1 !important;
 }
 
 html.dark .skeuo-pressed, html.dark .neu-pressed,
@@ -115,7 +157,7 @@ html.dark .skeuo-pressed, html.dark .neu-pressed,
   background: #090d16 !important;
   box-shadow: none !important;
   border: 1px solid #1e293b !important;
-  color: #f8fafc !important;
+  color: #cbd5e1 !important;
 }
 
 html.dark .skeuo-button, html.dark .neu-button,
@@ -123,7 +165,7 @@ html.dark .skeuo-button, html.dark .neu-button,
   background: #1e293b !important;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
   border: 1px solid #334155 !important;
-  color: #f8fafc !important;
+  color: #cbd5e1 !important;
 }
 
 html.dark .skeuo-button:hover, html.dark .neu-button:hover,
