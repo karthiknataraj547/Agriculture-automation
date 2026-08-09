@@ -67,10 +67,9 @@ export const AdminUsersView: React.FC = () => {
 
   const [suspendReason, setSuspendReason] = useState('');
 
-  // Filter out system admin accounts from Customer User Management
+  // Filter out system admin account (admin@agritech.com) from Customer User Management
   const customerUsersList = usersList.filter(
     (u) =>
-      u.role !== 'SUPER_ADMIN' &&
       u.email?.toLowerCase() !== 'admin@agritech.com' &&
       u.id !== 'admin'
   );

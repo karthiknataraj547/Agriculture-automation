@@ -34,7 +34,7 @@ async function fetchUsers() {
       id: 'usr-admin-01',
       name: 'Karthik Nataraj',
       email: 'karthiknataraj547@gmail.com',
-      role: 'SUPER_ADMIN',
+      role: 'FARM_OWNER',
       accountId: 'account-farm-alpha',
       status: 'ACTIVE',
       createdAt: new Date().toISOString(),

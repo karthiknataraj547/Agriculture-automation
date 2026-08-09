@@ -46,7 +46,7 @@ const seedDefaultUsers = (): GlobalUserRecord[] => {
       email: 'karthiknataraj547@gmail.com',
       passwordHash: karthikCreds.hash,
       salt: karthikCreds.salt,
-      role: 'SUPER_ADMIN',
+      role: 'FARM_OWNER',
       accountId: 'account-farm-alpha',
       status: 'ACTIVE',
       createdAt: new Date().toISOString(),
