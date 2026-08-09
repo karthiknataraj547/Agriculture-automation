@@ -1,14 +1,15 @@
 'use client';
 
-import React from 'react';
-import { Power, Clock, Droplet, ShieldAlert, Play, Square } from 'lucide-react';
+import React, { useState } from 'react';
+import { Power, Clock, Droplet, ShieldAlert, Play, Square, Trash2, Plus, Cpu } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
 import { useSpatialStore } from '../../store/useSpatialStore';
 import { MotionAlertBanner } from '../alerts/MotionAlertBanner';
 
 export function PumpControlPanel() {
-  const { pumps, togglePumpState, setPumpState, emergencyStop } = useSpatialStore();
+  const { pumps, togglePumpState, setPumpState, deletePump, emergencyStop, setActiveView } = useSpatialStore();
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const runningCount = pumps.filter((p) => p.status === 'RUNNING').length;
 
@@ -26,11 +27,20 @@ export function PumpControlPanel() {
             MASTER PUMP ACTUATOR CONSOLE
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="skeuo-led skeuo-led-cyan" />
-          <span className="text-xs font-mono font-extrabold text-emerald-700 dark:text-emerald-400 tracking-wider">
-            {runningCount} / {pumps.length} PUMPS ONLINE
-          </span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="skeuo-led skeuo-led-cyan" />
+            <span className="text-xs font-mono font-extrabold text-emerald-700 dark:text-emerald-400 tracking-wider">
+              {runningCount} / {pumps.length} PUMPS ONLINE
+            </span>
+          </div>
+          <button
+            onClick={() => setActiveView('DEVICES')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl neu-button text-xs font-mono font-extrabold text-cyber-cyan hover:text-sky-700"
+          >
+            <Plus size={14} />
+            <span>ADD PUMP NODE</span>
+          </button>
         </div>
       </div>
 
@@ -46,10 +56,33 @@ export function PumpControlPanel() {
         </div>
       )}
 
+      {/* Empty State Banner if no pumps exist */}
+      {pumps.length === 0 && (
+        <GlassCard variant="glow" padding="lg" className="border-cyber-cyan/30 text-center py-10">
+          <div className="w-14 h-14 rounded-2xl neu-pressed flex items-center justify-center text-cyber-cyan mx-auto mb-3">
+            <Power size={28} />
+          </div>
+          <h3 className="text-sm font-mono font-extrabold uppercase tracking-wider text-slate-900 dark:text-slate-100 mb-1">
+            NO WATER PUMP ACTUATORS CONFIGURED
+          </h3>
+          <p className="text-xs font-mono text-slate-500 max-w-md mx-auto mb-4">
+            Water pumps are attached per device node. Click below to provision an ESP32 or NodeMCU board with a Water Pump Relay enabled.
+          </p>
+          <button
+            onClick={() => setActiveView('DEVICES')}
+            className="px-5 py-2.5 rounded-xl bg-sky-600 dark:bg-cyan-500 text-white font-mono text-xs font-extrabold uppercase tracking-wider shadow-md hover:bg-sky-700 transition-all inline-flex items-center gap-2"
+          >
+            <Cpu size={16} />
+            <span>PROVISION PUMP DEVICE NODE</span>
+          </button>
+        </GlassCard>
+      )}
+
       {/* Pumps Console Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {pumps.map((pump) => {
           const isRunning = pump.status === 'RUNNING';
+          const isConfirmingDelete = confirmDeleteId === pump.id;
 
           return (
             <GlassCard
@@ -78,11 +111,32 @@ export function PumpControlPanel() {
                   </div>
                 </div>
 
-                <StatusIndicator
-                  status={isRunning ? 'online' : 'offline'}
-                  label={isRunning ? 'ACTIVE' : 'STANDBY'}
-                  size="sm"
-                />
+                <div className="flex items-center gap-2">
+                  <StatusIndicator
+                    status={isRunning ? 'online' : 'offline'}
+                    label={isRunning ? 'ACTIVE' : 'STANDBY'}
+                    size="sm"
+                  />
+
+                  {/* Delete Pump Button */}
+                  {isConfirmingDelete ? (
+                    <button
+                      onClick={() => deletePump(pump.id)}
+                      className="px-2 py-1 rounded bg-rose-600 text-white text-[10px] font-mono font-bold hover:bg-rose-700 shadow-sm"
+                      title="Confirm delete"
+                    >
+                      CONFIRM DELETE
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteId(pump.id)}
+                      className="p-1.5 rounded-lg neu-button text-slate-400 hover:text-rose-600 transition-all"
+                      title="Delete pump console card"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Physical Glass Viewport LCD Displays */}

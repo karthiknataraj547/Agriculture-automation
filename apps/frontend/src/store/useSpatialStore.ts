@@ -79,6 +79,7 @@ export interface SpatialStoreState {
   // Pump Actions
   togglePumpState: (pumpId: string) => void;
   setPumpState: (pumpId: string, status: 'RUNNING' | 'OFF') => void;
+  deletePump: (pumpId: string) => void;
   
   // Schedule Actions
   addSchedule: (schedule: IrrigationSchedule) => void;
@@ -102,12 +103,7 @@ const STORAGE_STATE_KEY = 'aether_farm_persisted_state_v4';
 const STORAGE_VIEW_KEY = 'aether_active_view_device';
 const STORAGE_THEME_KEY = 'aether_theme_mode';
 
-const ZERO_PUMPS: PumpState[] = [
-  { id: 'pump-1', name: 'Pump Main Alpha', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
-  { id: 'pump-2', name: 'Pump Sector Beta', zoneId: 'zone-2', zoneName: 'Zone 2: Soybean Sector', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
-  { id: 'pump-3', name: 'Pump East Gamma', zoneId: 'zone-3', zoneName: 'Zone 3: Vineyard East', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
-  { id: 'pump-4', name: 'Pump North Delta', zoneId: 'zone-4', zoneName: 'Zone 4: Orchard North', status: 'OFF', runtimeMinutes: 0, manualOverride: false, flowRateLmin: 0 },
-];
+const ZERO_PUMPS: PumpState[] = [];
 
 const ZERO_SCHEDULES: IrrigationSchedule[] = [
   { id: 'sch-1', name: 'Early Morning Deep Soak', enabled: false, farmId: 'farm-01', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', pumpId: 'pump-1', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
@@ -474,10 +470,17 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
         zoneId: targetZone,
         pumpRunning: status === 'RUNNING',
         waterFlowRate: status === 'RUNNING' ? 14.5 : 0,
-        soilMoisture: status === 'RUNNING' ? 75 : 45,
       }),
     }).catch(() => {});
 
+    get().syncStateToCloud();
+  },
+
+  deletePump: (pumpId) => {
+    set((state) => ({
+      pumps: state.pumps.filter((p) => p.id !== pumpId),
+      lastUserActionTime: Date.now(),
+    }));
     get().syncStateToCloud();
   },
 
