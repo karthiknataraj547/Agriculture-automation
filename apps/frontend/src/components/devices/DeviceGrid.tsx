@@ -206,7 +206,7 @@ void loop() {
 }`;
 
 export function DeviceGrid() {
-  const { devices, setDevices, deleteDevice, selectedDeviceId, setSelectedDeviceId } = useSpatialStore();
+  const { devices, setDevices, deleteDevice, purgeUnreachableDevices, selectedDeviceId, setSelectedDeviceId } = useSpatialStore();
   const [modalMode, setModalMode] = useState<'NONE' | 'ADD_DEVICE' | 'HARDWARE_GUIDE' | 'SHOW_AUTH_KEY' | 'EDIT_NODE'>('NONE');
   const [activeSketchTab, setActiveSketchTab] = useState<'ESP32' | 'ESP8266'>('ESP32');
   const [newDeviceAuth, setNewDeviceAuth] = useState<{ serial: string; authCode: string; name: string } | null>(null);
@@ -277,9 +277,10 @@ export function DeviceGrid() {
     e.preventDefault();
     if (!editingDevice) return;
 
+    const family: 'ESP32' | 'ESP8266' = editBoardOption.includes('esp8266') || editBoardOption.includes('nodemcu') || editBoardOption.includes('wemos') || editBoardOption.includes('esp-01') ? 'ESP8266' : 'ESP32';
+
     const updated: IoTDevice[] = devices.map((d) => {
       if (d.uuid === editingDevice.uuid) {
-        const family: 'ESP32' | 'ESP8266' = editBoardOption.includes('esp8266') || editBoardOption.includes('nodemcu') || editBoardOption.includes('wemos') || editBoardOption.includes('esp-01') ? 'ESP8266' : 'ESP32';
         return {
           ...d,
           name: editName.trim() || d.name,
@@ -294,6 +295,20 @@ export function DeviceGrid() {
     });
 
     setDevices(updated);
+
+    // Push Remote OTA Wi-Fi Configuration (SSID & Password) to Hardware Node over MQTT
+    fetch('/api/devices/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: editingDevice.uuid,
+        pumpId: `pump-${editingDevice.uuid}`,
+        commandType: 'UPDATE_WIFI_CONFIG',
+        requestedValue: 'CONFIG_OTA_PUSH',
+        wifiSsid: editWifiSsid,
+        wifiPass: editWifiPass,
+      }),
+    }).catch(() => {});
 
     // Sync water pump presence based on attached sensors selection
     const zoneNames: Record<string, string> = {
@@ -332,6 +347,9 @@ export function DeviceGrid() {
 
   const handleDeleteSingleDevice = (deviceUuid: string) => {
     deleteDevice(deviceUuid);
+    deleteDevice(deviceUuid.toLowerCase());
+    deleteDevice(deviceUuid.toUpperCase());
+    deleteDevice(`SN-${deviceUuid.toUpperCase()}`);
     if (editingDevice?.serialNumber) {
       deleteDevice(editingDevice.serialNumber);
     }
@@ -447,6 +465,18 @@ export function DeviceGrid() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {devices.some((d) => d.status === DeviceStatus.OFFLINE || d.uuid.includes('zone-2') || d.uuid.includes('zone-3') || d.uuid.includes('zone-4')) && (
+            <button
+              onClick={() => purgeUnreachableDevices()}
+              className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-rose-600 hover:text-rose-700"
+              aria-label="Clean up unreachable demo nodes"
+            >
+              <Trash2 size={14} />
+              <span className="hidden sm:inline">PURGE OFF-LINE DEMO NODES</span>
+              <span className="sm:hidden">PURGE NODES</span>
+            </button>
+          )}
+
           <button
             onClick={() => setModalMode('HARDWARE_GUIDE')}
             className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-xl neu-button text-xs font-mono font-bold text-slate-700 dark:text-slate-200 hover:text-cyber-cyan"

@@ -90,8 +90,9 @@ export interface SpatialStoreState {
   triggerMotionAlert: (zoneId: string, zoneName: string, message?: string) => void;
   dismissMotionAlert: () => void;
 
-  // Zero Data Reset Action
+  // Zero Data Reset & Device Purge Actions
   resetAllDataToZero: () => void;
+  purgeUnreachableDevices: () => void;
 
   // Global State Sync
   syncStateToCloud: (email?: string) => void;
@@ -297,19 +298,46 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   },
 
   deleteDevice: (deviceId) => {
+    const cleanId = deviceId.trim();
+    const lowerId = cleanId.toLowerCase();
+    const upperId = cleanId.toUpperCase();
+    const snUpper = `SN-${upperId}`;
+    const snLower = `sn-${lowerId}`;
+
     set((state) => {
       const updatedDevices = state.devices.filter(
-        (d) => d.uuid !== deviceId && d.serialNumber !== deviceId
+        (d) =>
+          d.uuid !== cleanId &&
+          d.uuid !== lowerId &&
+          d.uuid !== upperId &&
+          d.serialNumber !== cleanId &&
+          d.serialNumber !== upperId &&
+          d.serialNumber !== snUpper &&
+          !d.uuid.includes(lowerId)
       );
       const updatedPumps = state.pumps.filter(
-        (p) => p.deviceId !== deviceId && p.id !== `pump-${deviceId}`
+        (p) =>
+          p.deviceId !== cleanId &&
+          p.deviceId !== lowerId &&
+          p.id !== `pump-${cleanId}` &&
+          p.id !== `pump-${lowerId}`
       );
-      const updatedDeletedIds = Array.from(new Set([...(state.deletedDeviceIds || []), deviceId]));
+      const updatedDeletedIds = Array.from(
+        new Set([
+          ...(state.deletedDeviceIds || []),
+          cleanId,
+          lowerId,
+          upperId,
+          snUpper,
+          snLower,
+          `esp32-node-${lowerId}`,
+        ])
+      );
       return {
         devices: updatedDevices,
         pumps: updatedPumps,
         deletedDeviceIds: updatedDeletedIds,
-        selectedDeviceId: state.selectedDeviceId === deviceId ? null : state.selectedDeviceId,
+        selectedDeviceId: state.selectedDeviceId === cleanId ? null : state.selectedDeviceId,
         lastUserActionTime: Date.now(),
       };
     });
@@ -318,7 +346,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       fetch('/api/telemetry', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId }),
+        body: JSON.stringify({ deviceId: cleanId }),
       }).catch(() => {});
     } catch {}
 
@@ -536,6 +564,38 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       rainOverride: false,
       isZeroDataMode: true,
       lastUserActionTime: Date.now(),
+    });
+    get().syncStateToCloud();
+  },
+
+  purgeUnreachableDevices: () => {
+    set((state) => {
+      const unreachableUuids = state.devices
+        .filter(
+          (d) =>
+            d.status === DeviceStatus.OFFLINE ||
+            d.uuid.includes('zone-2') ||
+            d.uuid.includes('zone-3') ||
+            d.uuid.includes('zone-4')
+        )
+        .map((d) => d.uuid);
+
+      const remainingDevices = state.devices.filter(
+        (d) => !unreachableUuids.includes(d.uuid)
+      );
+      const remainingPumps = state.pumps.filter(
+        (p) => !p.deviceId || !unreachableUuids.includes(p.deviceId)
+      );
+      const updatedDeletedIds = Array.from(
+        new Set([...(state.deletedDeviceIds || []), ...unreachableUuids, 'esp32-node-zone-2', 'esp32-node-zone-3', 'esp32-node-zone-4', 'SN-ESP32-NODE-ZONE-2', 'SN-ESP32-NODE-ZONE-3', 'SN-ESP32-NODE-ZONE-4'])
+      );
+
+      return {
+        devices: remainingDevices,
+        pumps: remainingPumps,
+        deletedDeviceIds: updatedDeletedIds,
+        lastUserActionTime: Date.now(),
+      };
     });
     get().syncStateToCloud();
   },
