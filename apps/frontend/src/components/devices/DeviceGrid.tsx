@@ -299,6 +299,9 @@ export function DeviceGrid() {
 
   const handleDeleteSingleDevice = (deviceUuid: string) => {
     deleteDevice(deviceUuid);
+    if (editingDevice?.serialNumber) {
+      deleteDevice(editingDevice.serialNumber);
+    }
     setModalMode('NONE');
     setEditingDevice(null);
     setConfirmDeleteUuid(null);
@@ -841,6 +844,18 @@ export function DeviceGrid() {
 
                   <div className="flex items-center gap-2">
                     <StatusIndicator status={deviceStatusToUi(isOffline ? DeviceStatus.OFFLINE : device.status)} size="sm" />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Are you sure you want to delete ${device.name}?`)) {
+                          handleDeleteSingleDevice(device.uuid);
+                        }
+                      }}
+                      title="Delete Device Node"
+                      className="p-1 rounded-lg neu-button text-slate-400 hover:text-rose-600 transition-colors"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
                 </div>
 

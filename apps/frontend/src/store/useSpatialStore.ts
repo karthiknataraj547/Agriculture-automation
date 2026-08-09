@@ -39,6 +39,7 @@ export interface SpatialStoreState {
   
   // Inventory, AI & Rules
   devices: IoTDevice[];
+  deletedDeviceIds: string[];
   insights: AIInsight[];
   rules: AutomationRule[];
   
@@ -211,23 +212,34 @@ function mergePumps(existingPumps: PumpState[], incomingPumps: any[]): PumpState
   });
 }
 
-// Smart Array Merger: Combine arrays by unique ID
-function mergeArrayById<T extends { id?: string; uuid?: string }>(localArr: T[], incomingArr: any[]): T[] {
-  if (!incomingArr || !Array.isArray(incomingArr)) return localArr;
+// Smart Array Merger: Combine arrays by unique ID (excludes deleted items)
+function mergeArrayById<T extends { id?: string; uuid?: string; serialNumber?: string }>(
+  localArr: T[],
+  incomingArr: any[],
+  deletedIds: Set<string> = new Set()
+): T[] {
   const mergedMap = new Map<string, T>();
 
-  localArr.forEach((item) => {
-    const key = item.uuid || item.id;
-    if (key) mergedMap.set(key, item);
-  });
-
-  incomingArr.forEach((item) => {
-    const key = item.uuid || item.id;
-    if (key) {
-      const existing = mergedMap.get(key);
-      mergedMap.set(key, existing ? { ...existing, ...item } : item);
+  // 1. Add local items excluding deleted ones
+  (localArr || []).forEach((item) => {
+    const key = item.uuid || item.id || item.serialNumber;
+    if (key && !deletedIds.has(key)) {
+      mergedMap.set(key, item);
     }
   });
+
+  // 2. Merge incoming props into existing local items ONLY (do NOT re-add deleted items)
+  if (incomingArr && Array.isArray(incomingArr)) {
+    incomingArr.forEach((item) => {
+      const key = item.uuid || item.id || item.serialNumber;
+      if (key && !deletedIds.has(key)) {
+        const existing = mergedMap.get(key);
+        if (existing) {
+          mergedMap.set(key, { ...existing, ...item });
+        }
+      }
+    });
+  }
 
   return Array.from(mergedMap.values());
 }
@@ -244,7 +256,10 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     totalWaterFlow: 0,
     totalSensorsOnline: 0,
   },
-  devices: initialLocal?.devices && Array.isArray(initialLocal.devices) ? initialLocal.devices : DEFAULT_DEVICES,
+  devices: initialLocal?.devices && Array.isArray(initialLocal.devices)
+    ? initialLocal.devices.filter((d: any) => !(initialLocal?.deletedDeviceIds || []).includes(d.uuid) && !(initialLocal?.deletedDeviceIds || []).includes(d.serialNumber))
+    : DEFAULT_DEVICES,
+  deletedDeviceIds: initialLocal?.deletedDeviceIds || [],
   insights: [],
   rules: initialLocal?.rules || [],
   pumps: initialLocal?.pumps || ZERO_PUMPS,
@@ -288,12 +303,23 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       const updatedDevices = state.devices.filter(
         (d) => d.uuid !== deviceId && d.serialNumber !== deviceId
       );
+      const updatedDeletedIds = Array.from(new Set([...(state.deletedDeviceIds || []), deviceId]));
       return {
         devices: updatedDevices,
+        deletedDeviceIds: updatedDeletedIds,
         selectedDeviceId: state.selectedDeviceId === deviceId ? null : state.selectedDeviceId,
         lastUserActionTime: Date.now(),
       };
     });
+
+    try {
+      fetch('/api/telemetry', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId }),
+      }).catch(() => {});
+    } catch {}
+
     get().syncStateToCloud();
   },
 
@@ -484,6 +510,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       schedules: state.schedules,
       rules: state.rules,
       devices: state.devices,
+      deletedDeviceIds: state.deletedDeviceIds,
       emergencyStop: state.emergencyStop,
       rainOverride: state.rainOverride,
     };
@@ -539,14 +566,16 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
           return;
         }
 
+        const deletedSet = new Set([...(get().deletedDeviceIds || []), ...(cloudState.deletedDeviceIds || [])]);
         const mergedPumps = mergePumps(get().pumps, cloudState.pumps);
-        const mergedDevices = mergeArrayById(get().devices, cloudState.devices || []);
+        const mergedDevices = mergeArrayById(get().devices, cloudState.devices || [], deletedSet);
         const mergedSchedules = mergeArrayById(get().schedules, cloudState.schedules || []);
         const mergedRules = mergeArrayById(get().rules, cloudState.rules || []);
 
         const updatedState = {
           pumps: mergedPumps,
           devices: mergedDevices,
+          deletedDeviceIds: Array.from(deletedSet),
           schedules: mergedSchedules,
           rules: mergedRules,
           emergencyStop: cloudState.emergencyStop !== undefined ? cloudState.emergencyStop : get().emergencyStop,

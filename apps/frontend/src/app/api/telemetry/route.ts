@@ -111,6 +111,27 @@ export async function POST(req: Request) {
   }
 }
 
+// ─── DELETE /api/telemetry (Remove Hardware Node) ───
+export async function DELETE(req: Request) {
+  try {
+    const { deviceId } = await req.json();
+    if (deviceId) {
+      liveDevices.delete(deviceId);
+      liveTelemetry.delete(deviceId);
+      // Also check by lowercase or serial match
+      for (const key of Array.from(liveDevices.keys())) {
+        if (key === deviceId || key.includes(deviceId) || deviceId.includes(key)) {
+          liveDevices.delete(key);
+          liveTelemetry.delete(key);
+        }
+      }
+    }
+    return NextResponse.json({ success: true, message: `Device ${deviceId} deleted cleanly` });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message || 'Deletion failed' }, { status: 400 });
+  }
+}
+
 // ─── GET /api/telemetry (Web App Hardware State Reader) ───
 export async function GET() {
   const now = Date.now();
@@ -119,7 +140,6 @@ export async function GET() {
   const telemetryArray: TelemetryPacket[] = [];
   const devicesArray: HardwareDeviceRecord[] = [];
 
-  // Evaluate heartbeat & collect live hardware readings
   for (const [id, dev] of liveDevices.entries()) {
     const lastSeenMs = new Date(dev.lastSeen).getTime();
     if (now - lastSeenMs > HEARTBEAT_TIMEOUT_MS) {
@@ -134,7 +154,6 @@ export async function GET() {
     telemetryArray.push(packet);
   }
 
-  // Calculate stats strictly from real hardware telemetry
   const onlineDevices = devicesArray.filter((d) => d.status === 'ONLINE');
   const validSoilReadings = telemetryArray.map((t) => t.soilMoisture || 0);
   const validTempReadings = telemetryArray.map((t) => t.airTemperature || 0);
