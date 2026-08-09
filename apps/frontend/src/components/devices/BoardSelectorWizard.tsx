@@ -17,19 +17,26 @@ import {
   Sparkles,
   HelpCircle,
   FileCode,
+  X,
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { IoTBoardDefinition, DeviceStatus } from '@aether/shared';
 import { useSpatialStore } from '../../store/useSpatialStore';
 
-export function BoardSelectorWizard() {
+interface BoardSelectorWizardProps {
+  onClose?: () => void;
+}
+
+export function BoardSelectorWizard({ onClose }: BoardSelectorWizardProps) {
   const [familyTab, setFamilyTab] = useState<'ESP32' | 'ESP8266'>('ESP32');
   const [boards, setBoards] = useState<IoTBoardDefinition[]>([]);
   const [selectedBoard, setSelectedBoard] = useState<IoTBoardDefinition | null>(null);
 
   // Form State for Wizard
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [nodeName, setNodeName] = useState('ESP Node Zone 1');
   const [deviceId, setDeviceId] = useState('esp32-node-zone-1');
+  const [selectedZoneId, setSelectedZoneId] = useState('zone-1');
   const [wifiSsid, setWifiSsid] = useState('Farm_WiFi_5G');
   const [wifiPass, setWifiPass] = useState('SecurePass123');
   const [mqttHost, setMqttHost] = useState('test.mosquitto.org');
@@ -44,6 +51,7 @@ export function BoardSelectorWizard() {
   const [generatedCode, setGeneratedCode] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [provisionedAuthCode, setProvisionedAuthCode] = useState('');
 
   const fetchBoards = async () => {
     try {
@@ -77,12 +85,16 @@ export function BoardSelectorWizard() {
     if (!selectedBoard) return;
     setIsGenerating(true);
     try {
+      const cleanId = deviceId.trim().toLowerCase().replace(/\s+/g, '-');
+      const authKey = `ATH-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      setProvisionedAuthCode(authKey);
+
       const res = await fetch('/api/iot/devices/firmware/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           boardId: selectedBoard.boardId,
-          deviceId,
+          deviceId: cleanId,
           wifiSsid,
           wifiPass,
           mqttBrokerHost: mqttHost,
@@ -97,31 +109,36 @@ export function BoardSelectorWizard() {
         setGeneratedCode(data.cppCode);
         setStep(4);
 
+        // Remove from deleted ids list if previously deleted
+        const currentDeleted = useSpatialStore.getState().deletedDeviceIds || [];
+        const updatedDeleted = currentDeleted.filter((id) => id !== cleanId && id !== `SN-${cleanId.toUpperCase()}`);
+        useSpatialStore.setState({ deletedDeviceIds: updatedDeleted });
+
         // Auto-register provisioned device into store & backend inventory
         const newDevice: any = {
-          uuid: deviceId,
-          serialNumber: `SN-${deviceId.toUpperCase()}`,
-          name: `${selectedBoard.name} (${deviceId})`,
+          uuid: cleanId,
+          serialNumber: `SN-${cleanId.toUpperCase()}`,
+          name: nodeName.trim() || `${selectedBoard.name} (${cleanId})`,
           status: DeviceStatus.ONLINE,
-          zoneId: 'zone-1',
+          zoneId: selectedZoneId,
           farmId: 'farm-alpha',
           ownerId: 'user-001',
           macAddress: 'AA:BB:CC:DD:EE:FF',
           otaStatus: 'IDLE',
           location: { x: 0, y: 0, z: 0 },
-          mqttTopic: `agri/prod/farm-alpha/zone-1/${deviceId}/telemetry`,
-          authCode: `ATH-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+          mqttTopic: `agri/prod/farm-alpha/${selectedZoneId}/${cleanId}/telemetry`,
+          authCode: authKey,
           lastSeen: new Date().toISOString(),
           batteryLevel: 100,
           signalRssi: -18,
-          firmwareVersion: selectedBoard.family === 'ESP8266' ? 'v2.4.1-esp8266' : 'v2.4.1-esp32',
-          sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW'],
+          boardId: selectedBoard.boardId,
+          boardFamily: selectedBoard.family === 'ESP8266' ? 'ESP8266' : 'ESP32',
+          sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW', 'RELAY_PUMP'],
         };
 
         const existingDevices = useSpatialStore.getState().devices;
-        if (!existingDevices.some((d) => d.uuid === deviceId)) {
-          useSpatialStore.getState().setDevices([...existingDevices, newDevice]);
-        }
+        const filtered = existingDevices.filter((d) => d.uuid !== cleanId);
+        useSpatialStore.getState().setDevices([newDevice, ...filtered]);
         useSpatialStore.setState({ isZeroDataMode: false });
 
         // Post initial heartbeat to backend ingestion route
@@ -129,11 +146,12 @@ export function BoardSelectorWizard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            deviceId,
-            zoneId: 'zone-1',
-            soilMoisture: 0,
-            airTemperature: 0,
-            humidity: 0,
+            deviceId: cleanId,
+            authCode: authKey,
+            zoneId: selectedZoneId,
+            soilMoisture: 45,
+            airTemperature: 28.4,
+            humidity: 65,
             batteryLevel: 100,
             rssi: -18,
           }),
@@ -163,16 +181,16 @@ export function BoardSelectorWizard() {
 
   return (
     <div className="space-y-6">
-      {/* Wizard Step Indicator */}
-      <div className="flex items-center justify-between p-3 rounded-2xl neu-convex border border-white/60 dark:border-slate-800">
+      {/* Wizard Step Indicator Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 rounded-2xl neu-convex border border-white/60 dark:border-slate-800">
         <div className="flex items-center gap-2">
           <Sparkles size={18} className="text-cyber-cyan animate-pulse" />
           <span className="text-xs font-mono font-extrabold uppercase tracking-widest text-slate-900 dark:text-slate-100">
-            IoT Board Selector & Firmware Provisioning Wizard
+            IoT Board Selector & Hardware Provisioning Wizard
           </span>
         </div>
 
-        <div className="flex items-center gap-2 font-mono text-[10px] font-bold">
+        <div className="flex items-center gap-2 font-mono text-[10px] font-bold flex-wrap">
           <span className={`px-2 py-1 rounded-lg ${step === 1 ? 'bg-cyber-cyan text-slate-950' : 'neu-pressed text-slate-500'}`}>
             1. CHIPSET & BOARD
           </span>
@@ -188,6 +206,15 @@ export function BoardSelectorWizard() {
           <span className={`px-2 py-1 rounded-lg ${step === 4 ? 'bg-cyber-cyan text-slate-950' : 'neu-pressed text-slate-500'}`}>
             4. GENERATE FIRMWARE
           </span>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 rounded-lg neu-button text-slate-500 hover:text-red-600 ml-2"
+              title="Close Wizard"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -350,25 +377,66 @@ export function BoardSelectorWizard() {
               onClick={() => setStep(3)}
               className="px-6 py-2.5 rounded-xl bg-sky-600 dark:bg-cyan-500 text-white font-mono text-xs font-extrabold uppercase tracking-wider shadow-md hover:bg-sky-700 transition-all flex items-center gap-2"
             >
-              <span>NEXT: NETWORK & MQTT CREDENTIALS</span>
+              <span>NEXT: NETWORK & CROP ZONE CONFIG</span>
               <ChevronRight size={16} />
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 3: Wi-Fi & MQTTS Credentials */}
+      {/* STEP 3: Wi-Fi & Node Details Configuration */}
       {step === 3 && (
         <div className="space-y-4">
           <GlassCard variant="default" padding="md">
             <div className="flex items-center gap-2 mb-3">
               <Wifi size={16} className="text-cyber-cyan" />
               <h3 className="text-xs font-mono font-extrabold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                Network & MQTT Broker Credentials
+                Network & Node Identity Configuration
               </h3>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  DEVICE FRIENDLY NAME
+                </label>
+                <input
+                  type="text"
+                  value={nodeName}
+                  onChange={(e) => setNodeName(e.target.value)}
+                  placeholder="e.g. NodeMCU Field Pump 1"
+                  className="w-full px-3 py-2 rounded-xl neu-pressed font-mono text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  DEVICE HARDWARE SERIAL / CHIP ID
+                </label>
+                <input
+                  type="text"
+                  value={deviceId}
+                  onChange={(e) => setDeviceId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl neu-pressed font-mono text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-mono font-bold text-amber-500 block mb-1">
+                  ASSIGNED CROP ZONE
+                </label>
+                <select
+                  value={selectedZoneId}
+                  onChange={(e) => setSelectedZoneId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl neu-pressed font-mono text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan bg-white dark:bg-[#0f172a]"
+                >
+                  <option value="zone-1">Zone 1: Corn Field</option>
+                  <option value="zone-2">Zone 2: Soybean Sector</option>
+                  <option value="zone-3">Zone 3: Vineyard East</option>
+                  <option value="zone-4">Zone 4: Orchard North</option>
+                </select>
+              </div>
+
               <div>
                 <label className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   WI-FI NETWORK SSID
@@ -404,18 +472,6 @@ export function BoardSelectorWizard() {
                   className="w-full px-3 py-2 rounded-xl neu-pressed font-mono text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
                 />
               </div>
-
-              <div>
-                <label className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  DEVICE HARDWARE ID
-                </label>
-                <input
-                  type="text"
-                  value={deviceId}
-                  onChange={(e) => setDeviceId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl neu-pressed font-mono text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
-                />
-              </div>
             </div>
           </GlassCard>
 
@@ -434,12 +490,12 @@ export function BoardSelectorWizard() {
               {isGenerating ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  <span>GENERATING C++ CODE...</span>
+                  <span>PROVISIONING & GENERATING CODE...</span>
                 </>
               ) : (
                 <>
                   <Code size={16} />
-                  <span>GENERATE BOARD FIRMWARE (.INO)</span>
+                  <span>PROVISION & GENERATE FIRMWARE (.INO)</span>
                 </>
               )}
             </button>
@@ -447,9 +503,18 @@ export function BoardSelectorWizard() {
         </div>
       )}
 
-      {/* STEP 4: Generated Firmware C++ Preview & Download */}
+      {/* STEP 4: Generated Firmware C++ Preview & Instant Webtool Activation */}
       {step === 4 && (
         <div className="space-y-4">
+          <GlassCard variant="glow" padding="md" className="border-cyber-emerald/50 bg-emerald-500/10">
+            <div className="flex items-center gap-2 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 size={18} />
+              <span>
+                PROVISIONED & ACTIVE ON WEBTOOL DASHBOARD: Device <strong>{nodeName}</strong> ({deviceId}) is now LIVE!
+              </span>
+            </div>
+          </GlassCard>
+
           <GlassCard variant="glow" padding="md" className="border-cyber-cyan/40">
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-300/40 dark:border-slate-700/40">
               <div className="flex items-center gap-2">
@@ -484,44 +549,28 @@ export function BoardSelectorWizard() {
             </div>
 
             {/* Code Box */}
-            <pre className="p-4 rounded-xl bg-slate-950 text-slate-100 font-mono text-[11px] overflow-x-auto max-h-[400px] leading-relaxed border border-slate-800">
+            <pre className="p-4 rounded-xl bg-slate-950 text-slate-100 font-mono text-[11px] overflow-x-auto max-h-[350px] leading-relaxed border border-slate-800">
               <code>{generatedCode}</code>
             </pre>
           </GlassCard>
 
-          {/* Arduino IDE Setup Guide Banner */}
-          <GlassCard variant="default" padding="md">
-            <div className="flex items-center gap-2 mb-2">
-              <HelpCircle size={14} className="text-cyber-cyan" />
-              <span className="text-xs font-mono font-extrabold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                Required Arduino IDE Setup Instructions
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[10px] font-mono">
-              <div className="p-2.5 rounded-xl neu-pressed">
-                <span className="font-extrabold text-cyber-cyan block mb-1">1. BOARD MANAGER URL</span>
-                <code className="text-[9px] text-slate-600 dark:text-slate-300 bg-slate-900/60 p-1 rounded block overflow-x-auto">
-                  {selectedBoard?.boardManagerUrl}
-                </code>
-              </div>
-
-              <div className="p-2.5 rounded-xl neu-pressed">
-                <span className="font-extrabold text-cyber-cyan block mb-1">2. REQUIRED LIBRARIES</span>
-                <div className="text-slate-600 dark:text-slate-300">
-                  PubSubClient, ArduinoJson, DHT sensor library, Adafruit Unified Sensor
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-
-          <div className="flex justify-start">
+          <div className="flex items-center justify-between pt-2">
             <button
               onClick={() => setStep(1)}
               className="px-4 py-2 rounded-xl neu-button font-mono text-xs font-extrabold text-slate-700 dark:text-slate-300"
             >
               CONFIGURE ANOTHER BOARD
             </button>
+
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="px-6 py-2.5 rounded-xl bg-sky-600 dark:bg-cyan-500 text-white font-mono text-xs font-extrabold uppercase tracking-wider shadow-md hover:bg-sky-700 transition-all flex items-center gap-2"
+              >
+                <CheckCircle2 size={16} />
+                <span>DONE & SEE DEVICE ON DASHBOARD</span>
+              </button>
+            )}
           </div>
         </div>
       )}
