@@ -24,6 +24,8 @@ export function useWebSocketFeed() {
 
           // Evaluate all store devices against live hardware telemetry heartbeats
           let hasChanged = false;
+          const knownUuids = new Set(currentDevices.map((d) => d.uuid));
+
           const updatedDevices = currentDevices.map((dev) => {
             const liveMatch = liveDevicesMap.get(dev.uuid) as any;
             if (liveMatch && liveMatch.status === 'ONLINE') {
@@ -58,7 +60,35 @@ export function useWebSocketFeed() {
             }
           });
 
-          if (hasChanged && currentDevices.length > 0) {
+          // Append any newly discovered physical hardware nodes
+          if (Array.isArray(data.devices)) {
+            data.devices.forEach((d: any) => {
+              if (d.status === 'ONLINE' && !knownUuids.has(d.uuid)) {
+                hasChanged = true;
+                updatedDevices.push({
+                  uuid: d.uuid,
+                  serialNumber: d.serialNumber || `SN-${d.uuid.toUpperCase()}`,
+                  name: d.name || `Hardware Node (${d.uuid})`,
+                  status: DeviceStatus.ONLINE,
+                  zoneId: d.zoneId || 'zone-1',
+                  farmId: d.farmId || 'farm-alpha',
+                  ownerId: d.ownerId || 'user-001',
+                  macAddress: d.macAddress || 'AA:BB:CC:DD:EE:FF',
+                  otaStatus: d.otaStatus || 'IDLE',
+                  location: d.location || { x: 0, y: 0, z: 0 },
+                  mqttTopic: d.mqttTopic || `agri/prod/farm-alpha/zone-1/${d.uuid}/telemetry`,
+                  authCode: d.authCode || 'ATH-8888',
+                  lastSeen: d.lastSeen || new Date().toISOString(),
+                  batteryLevel: d.batteryLevel ?? 100,
+                  signalRssi: d.signalRssi ?? -18,
+                  firmwareVersion: d.firmwareVersion || 'v2.4.1-esp',
+                  sensorsAttached: d.sensorsAttached || ['SOIL_MOISTURE', 'AIR_TEMP'],
+                } as any);
+              }
+            });
+          }
+
+          if (hasChanged) {
             setDevices(updatedDevices);
           }
 

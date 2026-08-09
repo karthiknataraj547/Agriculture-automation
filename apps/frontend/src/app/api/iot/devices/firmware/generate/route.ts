@@ -23,6 +23,7 @@ export async function POST(req: Request) {
 
     const isEsp8266 = board.family === 'ESP8266';
     const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>' : '#include <WiFi.h>';
+    const httpHeader = isEsp8266 ? '#include <ESP8266HTTPClient.h>' : '#include <HTTPClient.h>';
     const isTls = Number(mqttPort) === 8883;
 
     const assignedSoilPin = soilMoisturePin || (isEsp8266 ? 'A0' : '34');
@@ -43,6 +44,7 @@ export async function POST(req: Request) {
  */
 
 ${wifiHeader}
+${httpHeader}
 ${clientInclude}
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -60,9 +62,11 @@ ${clientInclude}
 // ─── NETWORK CONFIGURATION ───
 const char* WIFI_SSID = "${wifiSsid}";
 const char* WIFI_PASS = "${wifiPass}";
-const char* MQTT_HOST = "${mqttBrokerHost}"; // Public test broker or your laptop IP
+const char* MQTT_HOST = "${mqttBrokerHost}"; // Public test broker or local IP
 const int   MQTT_PORT = ${mqttPort};
 const char* DEVICE_ID = "${deviceId}";
+
+const char* VERCEL_WEB_API = "https://agriculture-automation.vercel.app/api/telemetry";
 
 const char* TOPIC_TELEMETRY = "agri/prod/farm-alpha/zone-1/${deviceId}/telemetry";
 const char* TOPIC_COMMAND   = "agri/prod/farm-alpha/zone-1/${deviceId}/command";
@@ -180,26 +184,23 @@ void publishTelemetry() {
   int rawAnalog = analogRead(PIN_SOIL_MOISTURE);
   float soilPercent = 0.0;
   
-  // If sensor is not connected (floating pin value extreme or invalid), default strictly to 0
   if (rawAnalog > 5 && rawAnalog < ${isEsp8266 ? '1020' : '4090'}) {
     soilPercent = map(rawAnalog, ${isEsp8266 ? '1024, 0' : '4095, 0'}, 0, 100);
     soilPercent = constrain(soilPercent, 0, 100);
   } else {
-    soilPercent = 0.0; // Strictly 0 when sensor is disconnected
+    soilPercent = 0.0;
   }
 
   // Read DHT Temperature & Humidity
   float tempC = dht.readTemperature();
   float humidity = dht.readHumidity();
 
-  // Strictly 0.0 when DHT sensor is not connected (dht.read returns NaN)
   float safeTemp = isnan(tempC) ? 0.0 : tempC;
   float safeHumidity = isnan(humidity) ? 0.0 : humidity;
 
-  // Read PIR Motion Pin (Strictly false when pin is floating / disconnected)
+  // Read PIR Motion Pin
   bool motion = digitalRead(PIN_PIR_MOTION) == HIGH;
   if (isnan(tempC) && rawAnalog >= ${isEsp8266 ? '1020' : '4090'}) {
-    // Hardware is completely un-sensorized prototype board
     motion = false;
   }
 
@@ -215,8 +216,24 @@ void publishTelemetry() {
 
   char buffer[512];
   serializeJson(doc, buffer);
+
+  // 1. Publish to MQTT Broker
   mqttClient.publish(TOPIC_TELEMETRY, buffer);
-  Serial.println("[Telemetry Published] " + String(buffer));
+  Serial.println("[MQTT Telemetry Published] " + String(buffer));
+
+  // 2. Post Directly to Vercel Web App Ingestion Gateway
+  if (WiFi.status() == WL_CONNECTED) {
+    ${isEsp8266 ? 'WiFiClientSecure httpsClient; httpsClient.setInsecure(); HTTPClient http;' : 'HTTPClient http;'}
+    ${isEsp8266 ? 'http.begin(httpsClient, VERCEL_WEB_API);' : 'http.begin(VERCEL_WEB_API);'}
+    http.addHeader("Content-Type", "application/json");
+    int httpCode = http.POST(buffer);
+    if (httpCode > 0) {
+      Serial.println("[Web Tool Direct Ingestion SUCCESS] HTTP " + String(httpCode));
+    } else {
+      Serial.println("[Web Tool Direct Ingestion] HTTP Err: " + String(httpCode));
+    }
+    http.end();
+  }
 }
 
 void loop() {

@@ -19,7 +19,8 @@ import {
   FileCode,
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
-import { IoTBoardDefinition } from '@aether/shared';
+import { IoTBoardDefinition, DeviceStatus } from '@aether/shared';
+import { useSpatialStore } from '../../store/useSpatialStore';
 
 export function BoardSelectorWizard() {
   const [familyTab, setFamilyTab] = useState<'ESP32' | 'ESP8266'>('ESP32');
@@ -95,6 +96,48 @@ export function BoardSelectorWizard() {
       if (data.success) {
         setGeneratedCode(data.cppCode);
         setStep(4);
+
+        // Auto-register provisioned device into store & backend inventory
+        const newDevice: any = {
+          uuid: deviceId,
+          serialNumber: `SN-${deviceId.toUpperCase()}`,
+          name: `${selectedBoard.name} (${deviceId})`,
+          status: DeviceStatus.ONLINE,
+          zoneId: 'zone-1',
+          farmId: 'farm-alpha',
+          ownerId: 'user-001',
+          macAddress: 'AA:BB:CC:DD:EE:FF',
+          otaStatus: 'IDLE',
+          location: { x: 0, y: 0, z: 0 },
+          mqttTopic: `agri/prod/farm-alpha/zone-1/${deviceId}/telemetry`,
+          authCode: `ATH-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+          lastSeen: new Date().toISOString(),
+          batteryLevel: 100,
+          signalRssi: -18,
+          firmwareVersion: selectedBoard.family === 'ESP8266' ? 'v2.4.1-esp8266' : 'v2.4.1-esp32',
+          sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW'],
+        };
+
+        const existingDevices = useSpatialStore.getState().devices;
+        if (!existingDevices.some((d) => d.uuid === deviceId)) {
+          useSpatialStore.getState().setDevices([...existingDevices, newDevice]);
+        }
+        useSpatialStore.setState({ isZeroDataMode: false });
+
+        // Post initial heartbeat to backend ingestion route
+        fetch('/api/telemetry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId,
+            zoneId: 'zone-1',
+            soilMoisture: 0,
+            airTemperature: 0,
+            humidity: 0,
+            batteryLevel: 100,
+            rssi: -18,
+          }),
+        }).catch(() => {});
       }
     } catch {
     } finally {
