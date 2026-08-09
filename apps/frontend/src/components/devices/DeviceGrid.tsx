@@ -27,6 +27,7 @@ import {
   Save,
   FileCode,
   CheckCircle2,
+  Download,
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
@@ -236,6 +237,37 @@ export function DeviceGrid() {
   const [editWifiPass, setEditWifiPass] = useState('SecurePass123');
   const [editSensors, setEditSensors] = useState<string[]>([]);
   const [confirmDeleteUuid, setConfirmDeleteUuid] = useState<string | null>(null);
+  const [otaStatusMsg, setOtaStatusMsg] = useState<string | null>(null);
+
+  const handleDownloadNodeIno = async (device: IoTDevice) => {
+    try {
+      const res = await fetch('/api/iot/devices/firmware/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boardId: device.boardId || 'esp32-dev-module',
+          wifiSsid: editWifiSsid || 'Farm_WiFi_5G',
+          wifiPass: editWifiPass || 'SecurePass123',
+          deviceId: device.uuid,
+          serialNumber: device.serialNumber,
+          sensorsAttached: editSensors,
+          isTls: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.code) {
+        const blob = new Blob([data.code], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `aethercrop_${device.boardFamily || 'ESP32'}_${device.uuid}.ino`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      alert('Could not generate firmware. Check network connection.');
+    }
+  };
 
   const AVAILABLE_SENSORS = [
     { id: 'SOIL_MOISTURE', label: 'Soil Moisture Probe (Analog)' },
@@ -341,8 +373,12 @@ export function DeviceGrid() {
       useSpatialStore.setState({ pumps: filteredPumps });
     }
 
-    setModalMode('NONE');
-    setEditingDevice(null);
+    setOtaStatusMsg(`📡 OTA Wi-Fi configuration (${editWifiSsid}) pushed to ${editingDevice.name}! Hardware board will save to EEPROM & reconnect.`);
+    setTimeout(() => {
+      setOtaStatusMsg(null);
+      setModalMode('NONE');
+      setEditingDevice(null);
+    }, 2500);
   };
 
   const handleDeleteSingleDevice = (deviceUuid: string) => {
@@ -449,9 +485,6 @@ export function DeviceGrid() {
 
   return (
     <div className="space-y-6">
-      {/* ESP32 / ESP8266 Microcontroller Board Selector & Firmware Provisioning Wizard */}
-      <BoardSelectorWizard />
-
       {/* Top Action Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -519,6 +552,13 @@ export function DeviceGrid() {
               <X size={14} />
             </button>
           </div>
+
+          {otaStatusMsg && (
+            <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-mono font-bold flex items-center gap-2 animate-bounce">
+              <Check size={16} className="text-emerald-500" />
+              <span>{otaStatusMsg}</span>
+            </div>
+          )}
 
           <form onSubmit={handleSaveNodeSettings} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -680,7 +720,16 @@ export function DeviceGrid() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleDownloadNodeIno(editingDevice)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-mono font-bold rounded-xl neu-button text-amber-600 dark:text-amber-400 hover:text-amber-500"
+                  title="Download Arduino C++ sketch pre-filled with these Wi-Fi credentials and Auth Key"
+                >
+                  <Download size={14} />
+                  <span>DOWNLOAD FIRMWARE (.INO)</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
