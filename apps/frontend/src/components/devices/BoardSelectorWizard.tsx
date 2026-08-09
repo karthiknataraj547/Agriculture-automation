@@ -42,6 +42,10 @@ export function BoardSelectorWizard({ onClose }: BoardSelectorWizardProps) {
   const [mqttHost, setMqttHost] = useState('test.mosquitto.org');
   const [mqttPort, setMqttPort] = useState<number>(1883);
 
+  // Water Pump Relays Selection
+  const [attachPump, setAttachPump] = useState(true);
+  const [pumpName, setPumpName] = useState('Pump Main Alpha');
+
   // Custom Pin Configurations
   const [soilPin, setSoilPin] = useState('');
   const [dhtPin, setDhtPin] = useState('');
@@ -114,6 +118,11 @@ export function BoardSelectorWizard({ onClose }: BoardSelectorWizardProps) {
         const updatedDeleted = currentDeleted.filter((id) => id !== cleanId && id !== `SN-${cleanId.toUpperCase()}`);
         useSpatialStore.setState({ deletedDeviceIds: updatedDeleted });
 
+        const sensors = ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW'];
+        if (attachPump) {
+          sensors.push('RELAY_PUMP');
+        }
+
         // Auto-register provisioned device into store & backend inventory
         const newDevice: any = {
           uuid: cleanId,
@@ -133,13 +142,42 @@ export function BoardSelectorWizard({ onClose }: BoardSelectorWizardProps) {
           signalRssi: -18,
           boardId: selectedBoard.boardId,
           boardFamily: selectedBoard.family === 'ESP8266' ? 'ESP8266' : 'ESP32',
-          sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW', 'RELAY_PUMP'],
+          sensorsAttached: sensors,
         };
 
         const existingDevices = useSpatialStore.getState().devices;
         const filtered = existingDevices.filter((d) => d.uuid !== cleanId);
         useSpatialStore.getState().setDevices([newDevice, ...filtered]);
         useSpatialStore.setState({ isZeroDataMode: false });
+
+        // Dynamically add/remove water pump based on user selection
+        const zoneNames: Record<string, string> = {
+          'zone-1': 'Zone 1: Corn Field',
+          'zone-2': 'Zone 2: Soybean Sector',
+          'zone-3': 'Zone 3: Vineyard East',
+          'zone-4': 'Zone 4: Orchard North',
+        };
+
+        const existingPumps = useSpatialStore.getState().pumps;
+        if (attachPump) {
+          const newPump: any = {
+            id: `pump-${cleanId}`,
+            name: pumpName.trim() || `Water Pump (${nodeName.trim() || cleanId})`,
+            zoneId: selectedZoneId,
+            zoneName: zoneNames[selectedZoneId] || 'Zone 1: Corn Field',
+            deviceId: cleanId,
+            status: 'OFF',
+            runtimeMinutes: 0,
+            manualOverride: false,
+            flowRateLmin: 0,
+            lastToggledAt: Date.now(),
+          };
+          const filteredPumps = existingPumps.filter((p) => p.id !== newPump.id && p.deviceId !== cleanId);
+          useSpatialStore.setState({ pumps: [newPump, ...filteredPumps] });
+        } else {
+          const filteredPumps = existingPumps.filter((p) => p.id !== `pump-${cleanId}` && p.deviceId !== cleanId);
+          useSpatialStore.setState({ pumps: filteredPumps });
+        }
 
         // Post initial heartbeat to backend ingestion route
         fetch('/api/telemetry', {
@@ -472,6 +510,35 @@ export function BoardSelectorWizard({ onClose }: BoardSelectorWizardProps) {
                   className="w-full px-3 py-2 rounded-xl neu-pressed font-mono text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan"
                 />
               </div>
+            </div>
+
+            {/* Water Pump Relay Selection Card */}
+            <div className="mt-4 p-3.5 rounded-xl neu-pressed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border border-cyber-cyan/30 bg-cyber-cyan/5">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="attachPumpCheckbox"
+                  checked={attachPump}
+                  onChange={(e) => setAttachPump(e.target.checked)}
+                  className="w-4 h-4 rounded text-cyber-cyan focus:ring-cyber-cyan bg-slate-900 border-slate-700 cursor-pointer"
+                />
+                <label htmlFor="attachPumpCheckbox" className="text-xs font-mono font-bold text-slate-800 dark:text-slate-100 cursor-pointer">
+                  🚰 ATTACH WATER PUMP RELAY TO THIS DEVICE NODE
+                </label>
+              </div>
+
+              {attachPump && (
+                <div className="w-full sm:w-1/2">
+                  <label className="text-[9px] font-mono font-bold text-cyber-cyan block mb-0.5">PUMP IDENTIFIER NAME</label>
+                  <input
+                    type="text"
+                    value={pumpName}
+                    onChange={(e) => setPumpName(e.target.value)}
+                    placeholder="e.g. Pump Main Alpha"
+                    className="w-full px-3 py-1.5 rounded-xl neu-pressed font-mono text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyber-cyan bg-white dark:bg-[#0f172a]"
+                  />
+                </div>
+              )}
             </div>
           </GlassCard>
 

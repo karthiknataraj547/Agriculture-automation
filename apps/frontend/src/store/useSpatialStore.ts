@@ -7,6 +7,7 @@ export interface PumpState {
   name: string;
   zoneId: string;
   zoneName: string;
+  deviceId?: string;
   status: 'RUNNING' | 'OFF' | 'FAULT';
   runtimeMinutes: number;
   manualOverride: boolean;
@@ -308,9 +309,13 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       const updatedDevices = state.devices.filter(
         (d) => d.uuid !== deviceId && d.serialNumber !== deviceId
       );
+      const updatedPumps = state.pumps.filter(
+        (p) => p.deviceId !== deviceId && p.id !== `pump-${deviceId}`
+      );
       const updatedDeletedIds = Array.from(new Set([...(state.deletedDeviceIds || []), deviceId]));
       return {
         devices: updatedDevices,
+        pumps: updatedPumps,
         deletedDeviceIds: updatedDeletedIds,
         selectedDeviceId: state.selectedDeviceId === deviceId ? null : state.selectedDeviceId,
         lastUserActionTime: Date.now(),

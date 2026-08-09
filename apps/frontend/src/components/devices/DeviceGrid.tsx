@@ -294,6 +294,38 @@ export function DeviceGrid() {
     });
 
     setDevices(updated);
+
+    // Sync water pump presence based on attached sensors selection
+    const zoneNames: Record<string, string> = {
+      'zone-1': 'Zone 1: Corn Field',
+      'zone-2': 'Zone 2: Soybean Sector',
+      'zone-3': 'Zone 3: Vineyard East',
+      'zone-4': 'Zone 4: Orchard North',
+    };
+
+    const hasPumpRelay = editSensors.includes('RELAY_PUMP');
+    const existingPumps = useSpatialStore.getState().pumps;
+
+    if (hasPumpRelay) {
+      const newPump: any = {
+        id: `pump-${editingDevice.uuid}`,
+        name: `Water Pump (${editName.trim() || editingDevice.name})`,
+        zoneId: editZoneId,
+        zoneName: zoneNames[editZoneId] || 'Zone 1: Corn Field',
+        deviceId: editingDevice.uuid,
+        status: 'OFF',
+        runtimeMinutes: 0,
+        manualOverride: false,
+        flowRateLmin: 0,
+        lastToggledAt: Date.now(),
+      };
+      const filteredPumps = existingPumps.filter((p) => p.id !== newPump.id && p.deviceId !== editingDevice.uuid);
+      useSpatialStore.setState({ pumps: [newPump, ...filteredPumps] });
+    } else {
+      const filteredPumps = existingPumps.filter((p) => p.id !== `pump-${editingDevice.uuid}` && p.deviceId !== editingDevice.uuid);
+      useSpatialStore.setState({ pumps: filteredPumps });
+    }
+
     setModalMode('NONE');
     setEditingDevice(null);
   };
