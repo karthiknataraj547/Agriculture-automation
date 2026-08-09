@@ -294,7 +294,9 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   setAggregatedStats: (stats) => set((state) => (state.isZeroDataMode ? state : { aggregatedStats: stats })),
   
   setDevices: (devices) => {
-    set({ devices, lastUserActionTime: Date.now() });
+    const deletedSet = new Set(get().deletedDeviceIds || []);
+    const filtered = devices.filter((d) => !deletedSet.has(d.uuid) && !deletedSet.has(d.serialNumber));
+    set({ devices: filtered, lastUserActionTime: Date.now() });
     get().syncStateToCloud();
   },
 

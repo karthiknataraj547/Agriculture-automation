@@ -34,6 +34,7 @@ interface HardwareDeviceRecord {
 declare global {
   var _aether_hardware_telemetry: Map<string, TelemetryPacket> | undefined;
   var _aether_hardware_devices: Map<string, HardwareDeviceRecord> | undefined;
+  var _aether_deleted_devices: Set<string> | undefined;
 }
 
 if (!global._aether_hardware_telemetry) {
@@ -42,9 +43,13 @@ if (!global._aether_hardware_telemetry) {
 if (!global._aether_hardware_devices) {
   global._aether_hardware_devices = new Map();
 }
+if (!global._aether_deleted_devices) {
+  global._aether_deleted_devices = new Set();
+}
 
 const liveTelemetry = global._aether_hardware_telemetry!;
 const liveDevices = global._aether_hardware_devices!;
+const deletedDevicesSet = global._aether_deleted_devices!;
 
 // ─── POST /api/telemetry (Hardware Ingestion API) ───
 export async function POST(req: Request) {
@@ -75,29 +80,31 @@ export async function POST(req: Request) {
 
     liveTelemetry.set(deviceId, updatedPacket);
 
-    // Auto-register / update hardware node status in live devices inventory
-    const existingDev = liveDevices.get(deviceId);
-    if (existingDev) {
-      existingDev.status = 'ONLINE';
-      existingDev.lastSeen = nowIso;
-      existingDev.batteryLevel = updatedPacket.batteryLevel!;
-      existingDev.signalRssi = updatedPacket.rssi!;
-      if (body.authCode) existingDev.authCode = body.authCode;
-    } else {
-      liveDevices.set(deviceId, {
-        uuid: deviceId,
-        serialNumber: `SN-${deviceId.toUpperCase()}`,
-        name: `${isEsp8266 ? 'ESP8266' : 'ESP32'} Hardware Node (${deviceId})`,
-        status: 'ONLINE',
-        zoneId: updatedPacket.zoneId || 'zone-1',
-        mqttTopic: `aether/farm-alpha/${updatedPacket.zoneId || 'zone-1'}/telemetry`,
-        authCode: body.authCode || `ATH-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-        lastSeen: nowIso,
-        batteryLevel: updatedPacket.batteryLevel!,
-        signalRssi: updatedPacket.rssi!,
-        firmwareVersion: isEsp8266 ? 'v2.4.1-esp8266' : 'v2.4.1-esp32',
-        sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW'],
-      });
+    // If device was explicitly deleted by user, do NOT re-register it in liveDevices inventory
+    if (!deletedDevicesSet.has(deviceId) && !deletedDevicesSet.has(deviceId.toLowerCase())) {
+      const existingDev = liveDevices.get(deviceId);
+      if (existingDev) {
+        existingDev.status = 'ONLINE';
+        existingDev.lastSeen = nowIso;
+        existingDev.batteryLevel = updatedPacket.batteryLevel!;
+        existingDev.signalRssi = updatedPacket.rssi!;
+        if (body.authCode) existingDev.authCode = body.authCode;
+      } else {
+        liveDevices.set(deviceId, {
+          uuid: deviceId,
+          serialNumber: `SN-${deviceId.toUpperCase()}`,
+          name: `${isEsp8266 ? 'ESP8266' : 'ESP32'} Hardware Node (${deviceId})`,
+          status: 'ONLINE',
+          zoneId: updatedPacket.zoneId || 'zone-1',
+          mqttTopic: `aether/farm-alpha/${updatedPacket.zoneId || 'zone-1'}/telemetry`,
+          authCode: body.authCode || `ATH-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+          lastSeen: nowIso,
+          batteryLevel: updatedPacket.batteryLevel!,
+          signalRssi: updatedPacket.rssi!,
+          firmwareVersion: isEsp8266 ? 'v2.4.1-esp8266' : 'v2.4.1-esp32',
+          sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW'],
+        });
+      }
     }
 
     return NextResponse.json({
@@ -111,22 +118,25 @@ export async function POST(req: Request) {
   }
 }
 
-// ─── DELETE /api/telemetry (Remove Hardware Node) ───
+// ─── DELETE /api/telemetry (Permanently Remove Hardware Node) ───
 export async function DELETE(req: Request) {
   try {
     const { deviceId } = await req.json();
     if (deviceId) {
+      deletedDevicesSet.add(deviceId);
+      deletedDevicesSet.add(deviceId.toLowerCase());
       liveDevices.delete(deviceId);
       liveTelemetry.delete(deviceId);
-      // Also check by lowercase or serial match
+
       for (const key of Array.from(liveDevices.keys())) {
         if (key === deviceId || key.includes(deviceId) || deviceId.includes(key)) {
+          deletedDevicesSet.add(key);
           liveDevices.delete(key);
           liveTelemetry.delete(key);
         }
       }
     }
-    return NextResponse.json({ success: true, message: `Device ${deviceId} deleted cleanly` });
+    return NextResponse.json({ success: true, message: `Device ${deviceId} permanently deleted` });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message || 'Deletion failed' }, { status: 400 });
   }
@@ -141,6 +151,9 @@ export async function GET() {
   const devicesArray: HardwareDeviceRecord[] = [];
 
   for (const [id, dev] of liveDevices.entries()) {
+    if (deletedDevicesSet.has(id) || deletedDevicesSet.has(id.toLowerCase())) {
+      continue;
+    }
     const lastSeenMs = new Date(dev.lastSeen).getTime();
     if (now - lastSeenMs > HEARTBEAT_TIMEOUT_MS) {
       dev.status = 'OFFLINE';
@@ -150,8 +163,10 @@ export async function GET() {
     devicesArray.push(dev);
   }
 
-  for (const packet of liveTelemetry.values()) {
-    telemetryArray.push(packet);
+  for (const [id, packet] of liveTelemetry.entries()) {
+    if (!deletedDevicesSet.has(id) && !deletedDevicesSet.has(id.toLowerCase())) {
+      telemetryArray.push(packet);
+    }
   }
 
   const onlineDevices = devicesArray.filter((d) => d.status === 'ONLINE');
