@@ -105,11 +105,7 @@ const STORAGE_THEME_KEY = 'aether_theme_mode';
 
 const ZERO_PUMPS: PumpState[] = [];
 
-const ZERO_SCHEDULES: IrrigationSchedule[] = [
-  { id: 'sch-1', name: 'Early Morning Deep Soak', enabled: false, farmId: 'farm-01', zoneId: 'zone-1', zoneName: 'Zone 1: Corn Field', pumpId: 'pump-1', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
-  { id: 'sch-2', name: 'Evening Orchard Mist', enabled: false, farmId: 'farm-01', zoneId: 'zone-4', zoneName: 'Zone 4: Orchard North', pumpId: 'pump-4', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
-  { id: 'sch-3', name: 'Vineyard Midday Moisture Boost', enabled: false, farmId: 'farm-01', zoneId: 'zone-3', zoneName: 'Zone 3: Vineyard East', pumpId: 'pump-3', startTime: '00:00', durationMinutes: 0, daysOfWeek: [], targetMoistureMin: 0, status: 'PAUSED' },
-];
+const ZERO_SCHEDULES: IrrigationSchedule[] = [];
 
 const DEFAULT_DEVICES: IoTDevice[] = [];
 
@@ -598,8 +594,8 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
 
     const currentState = get();
     
-    // Protection: Defer GET polling overwrite if user performed action within last 500ms
-    if (Date.now() - currentState.lastUserActionTime < 500) {
+    // Protection: Defer GET polling overwrite if user performed action within last 3000ms
+    if (Date.now() - currentState.lastUserActionTime < 3000) {
       return;
     }
 
@@ -610,7 +606,7 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       if (data.success && data.state && typeof data.state === 'object') {
         const cloudState = data.state;
 
-        if (Date.now() - get().lastUserActionTime < 500) {
+        if (Date.now() - get().lastUserActionTime < 3000) {
           return;
         }
 

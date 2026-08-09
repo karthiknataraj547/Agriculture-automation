@@ -201,6 +201,19 @@ export function SchedulePanel() {
         </GlassCard>
       )}
 
+      {/* Empty State Banner if no schedules exist */}
+      {schedules.length === 0 && (
+        <GlassCard variant="glow" padding="lg" className="border-cyber-cyan/30 text-center py-8">
+          <Calendar size={28} className="text-cyber-cyan mx-auto mb-2" />
+          <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-slate-100 mb-1">
+            NO IRRIGATION SCHEDULES CONFIGURED
+          </h3>
+          <p className="text-[11px] font-mono text-slate-500 max-w-sm mx-auto mb-3">
+            Click "CREATE NEW SCHEDULE" above to automate water pump irrigation cycles.
+          </p>
+        </GlassCard>
+      )}
+
       {/* Schedules List */}
       <div className="space-y-3">
         {schedules.map((sch) => (
