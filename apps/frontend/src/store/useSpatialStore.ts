@@ -66,6 +66,7 @@ export interface SpatialStoreState {
   updateTelemetryStream: (reading: TelemetryReading) => void;
   setAggregatedStats: (stats: SpatialStoreState['aggregatedStats']) => void;
   setDevices: (devices: IoTDevice[]) => void;
+  deleteDevice: (deviceId: string) => void;
   setInsights: (insights: AIInsight[]) => void;
   setRules: (rules: AutomationRule[]) => void;
   toggleEmergencyStop: () => void;
@@ -279,6 +280,20 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   
   setDevices: (devices) => {
     set({ devices, lastUserActionTime: Date.now() });
+    get().syncStateToCloud();
+  },
+
+  deleteDevice: (deviceId) => {
+    set((state) => {
+      const updatedDevices = state.devices.filter(
+        (d) => d.uuid !== deviceId && d.serialNumber !== deviceId
+      );
+      return {
+        devices: updatedDevices,
+        selectedDeviceId: state.selectedDeviceId === deviceId ? null : state.selectedDeviceId,
+        lastUserActionTime: Date.now(),
+      };
+    });
     get().syncStateToCloud();
   },
 
