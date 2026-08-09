@@ -159,6 +159,16 @@ export function useWebSocketFeed() {
     pollHardwareTelemetry();
     const interval = setInterval(pollHardwareTelemetry, 1000);
 
+    // Periodic cross-device account state synchronization every 3 seconds
+    const pollAccountCloudState = async () => {
+      try {
+        await useSpatialStore.getState().loadGlobalStateForUser();
+      } catch {}
+    };
+
+    pollAccountCloudState();
+    const cloudSyncInterval = setInterval(pollAccountCloudState, 3000);
+
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
       socket = io(backendUrl, { transports: ['websocket', 'polling'] });
@@ -176,6 +186,7 @@ export function useWebSocketFeed() {
 
     return () => {
       clearInterval(interval);
+      clearInterval(cloudSyncInterval);
       if (socket) {
         socket.disconnect();
       }

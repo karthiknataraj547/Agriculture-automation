@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { encryptPayload, decryptPayload } from '../auth/crypto';
 
-const STATE_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
+let STATE_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
 // Global In-memory state store cache to prevent rate-limit wipes
 declare global {
   var _aether_state_cache: Record<string, any> | undefined;
+  var _aether_state_db_id: string | undefined;
 }
 
 if (!global._aether_state_cache) {
@@ -16,9 +17,13 @@ const stateStoreCache = global._aether_state_cache!;
 
 async function fetchStateFromCloud(): Promise<Record<string, any>> {
   try {
+    const targetUrl = global._aether_state_db_id
+      ? `https://api.restful-api.dev/objects/${global._aether_state_db_id}`
+      : STATE_DB_URL;
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000);
-    const res = await fetch(STATE_DB_URL, {
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch(targetUrl, {
       headers: { 'Cache-Control': 'no-cache' },
       cache: 'no-store',
       signal: controller.signal,
@@ -27,7 +32,6 @@ async function fetchStateFromCloud(): Promise<Record<string, any>> {
     if (res.ok) {
       const json = await res.json();
       if (json?.data?.farmStates && typeof json.data.farmStates === 'object') {
-        // Merge cloud states into in-memory cache without overwriting active keys
         Object.entries(json.data.farmStates).forEach(([key, val]) => {
           if (val) {
             stateStoreCache[key] = val;
@@ -43,22 +47,47 @@ async function fetchStateFromCloud(): Promise<Record<string, any>> {
 
 async function saveStateToCloud(states: Record<string, any>): Promise<boolean> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
+    const targetUrl = global._aether_state_db_id
+      ? `https://api.restful-api.dev/objects/${global._aether_state_db_id}`
+      : STATE_DB_URL;
 
-    const getRes = await fetch(STATE_DB_URL, {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+
+    const getRes = await fetch(targetUrl, {
       cache: 'no-store',
       signal: controller.signal,
     }).finally(() => clearTimeout(timeout));
 
-    const existingJson = getRes.ok ? await getRes.json() : {};
-    const existingData = existingJson?.data || {};
+    let existingData = {};
+    if (getRes.ok) {
+      const existingJson = await getRes.json();
+      existingData = existingJson?.data || {};
+    } else if (getRes.status === 404) {
+      // Auto-heal: Create a new cloud object if original ID expired or was deleted
+      const createRes = await fetch('https://api.restful-api.dev/objects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Aether Farm Cloud DB',
+          data: { farmStates: states },
+        }),
+      });
+      if (createRes.ok) {
+        const createdJson = await createRes.json();
+        if (createdJson?.id) {
+          global._aether_state_db_id = createdJson.id;
+          STATE_DB_URL = `https://api.restful-api.dev/objects/${createdJson.id}`;
+        }
+        return true;
+      }
+    }
 
-    const putRes = await fetch(STATE_DB_URL, {
+    const putRes = await fetch(targetUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: 'Aether Users DB',
+        name: 'Aether Farm Cloud DB',
         data: {
           ...existingData,
           farmStates: states,
@@ -92,7 +121,6 @@ export async function GET(req: Request) {
 
     let parsedState: any = null;
 
-    // Handle string encrypted payload or plain object
     if (typeof rawData === 'string') {
       try {
         parsedState = decryptPayload(rawData);
@@ -130,8 +158,8 @@ export async function POST(req: Request) {
     // Store in global memory cache first for 0ms retrieval
     stateStoreCache[normalizedEmail] = state;
 
-    // Save to Cloud DB asynchronously without blocking response
-    saveStateToCloud(stateStoreCache).catch(() => {});
+    // Save to Cloud DB and MUST await so Vercel Serverless environment does not freeze
+    await saveStateToCloud(stateStoreCache);
 
     return NextResponse.json({ success: true, message: 'State saved globally' });
   } catch (err: any) {

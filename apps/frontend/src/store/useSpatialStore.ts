@@ -186,7 +186,7 @@ const getLocalPersistedState = () => {
 
 const initialLocal = getLocalPersistedState();
 
-// Smart Pump Merger: If either local or incoming state has RUNNING status, preserve RUNNING
+// Smart Pump Merger: Merge local and incoming cloud pump states using timestamp / latest status
 function mergePumps(existingPumps: PumpState[], incomingPumps: any[]): PumpState[] {
   if (!incomingPumps || !Array.isArray(incomingPumps) || incomingPumps.length === 0) {
     return existingPumps;
@@ -198,21 +198,22 @@ function mergePumps(existingPumps: PumpState[], incomingPumps: any[]): PumpState
     const incP = incomingMap.get(localP.id);
     if (!incP) return localP;
 
-    // If either local or cloud has RUNNING, prioritize RUNNING unless user performed a local OFF action
-    const isRunning = localP.status === 'RUNNING' || incP.status === 'RUNNING';
-    const nextStatus = isRunning ? ('RUNNING' as const) : ('OFF' as const);
+    const localTime = localP.lastToggledAt || 0;
+    const cloudTime = incP.lastToggledAt || 0;
+    const activeStatus = cloudTime > localTime ? incP.status : localP.status;
 
     return {
       ...localP,
       ...incP,
-      status: nextStatus,
-      flowRateLmin: nextStatus === 'RUNNING' ? 14.5 : 0,
-      manualOverride: localP.manualOverride || incP.manualOverride || false,
+      status: activeStatus,
+      flowRateLmin: activeStatus === 'RUNNING' ? 14.5 : 0,
+      manualOverride: cloudTime > localTime ? (incP.manualOverride ?? localP.manualOverride) : localP.manualOverride,
+      lastToggledAt: Math.max(localTime, cloudTime),
     };
   });
 }
 
-// Smart Array Merger: Combine arrays by unique ID (excludes deleted items)
+// Smart Array Merger: Combine arrays by unique ID (allows new items from cloud, excludes deleted ones)
 function mergeArrayById<T extends { id?: string; uuid?: string; serialNumber?: string }>(
   localArr: T[],
   incomingArr: any[],
@@ -228,7 +229,7 @@ function mergeArrayById<T extends { id?: string; uuid?: string; serialNumber?: s
     }
   });
 
-  // 2. Merge incoming props into existing local items ONLY (do NOT re-add deleted items)
+  // 2. Merge incoming items (add new items if missing, merge if existing, unless deleted)
   if (incomingArr && Array.isArray(incomingArr)) {
     incomingArr.forEach((item) => {
       const key = item.uuid || item.id || item.serialNumber;
@@ -236,6 +237,8 @@ function mergeArrayById<T extends { id?: string; uuid?: string; serialNumber?: s
         const existing = mergedMap.get(key);
         if (existing) {
           mergedMap.set(key, { ...existing, ...item });
+        } else {
+          mergedMap.set(key, item);
         }
       }
     });
