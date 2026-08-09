@@ -59,6 +59,10 @@ ${clientInclude}
 
 #define DHTTYPE            ${dhtType}
 
+// Change to LOW if your 5V Relay Module is Active-LOW
+#define RELAY_ON  HIGH
+#define RELAY_OFF LOW
+
 // ─── NETWORK CONFIGURATION ───
 const char* WIFI_SSID = "${wifiSsid}";
 const char* WIFI_PASS = "${wifiPass}";
@@ -67,6 +71,7 @@ const int   MQTT_PORT = ${mqttPort};
 const char* DEVICE_ID = "${deviceId}";
 
 const char* VERCEL_WEB_API = "https://agriculture-automation.vercel.app/api/telemetry";
+const char* VERCEL_CMD_API = "https://agriculture-automation.vercel.app/api/devices/command";
 
 const char* TOPIC_TELEMETRY = "agri/prod/farm-alpha/zone-1/${deviceId}/telemetry";
 const char* TOPIC_COMMAND   = "agri/prod/farm-alpha/zone-1/${deviceId}/command";
@@ -79,13 +84,16 @@ PubSubClient mqttClient(netClient);
 unsigned long lastTelemetryMillis = 0;
 const unsigned long TELEMETRY_INTERVAL = 3000; // Send telemetry every 3 seconds
 
+unsigned long lastWebCmdMillis = 0;
+const unsigned long WEB_CMD_INTERVAL = 2000; // Check Web Tool commands every 2 seconds
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\\n[AetherCrop] Initializing ${board.name} Firmware...");
 
   pinMode(PIN_RELAY_PUMP, OUTPUT);
-  digitalWrite(PIN_RELAY_PUMP, LOW); // Default Relay OFF
+  digitalWrite(PIN_RELAY_PUMP, RELAY_OFF); // Default Relay OFF
 
   #ifdef INPUT_PULLDOWN
     pinMode(PIN_PIR_MOTION, INPUT_PULLDOWN);
@@ -126,6 +134,7 @@ void connectMQTT() {
     if (mqttClient.connect(DEVICE_ID)) {
       Serial.println("[MQTT] SUCCESS! Connected to broker.");
       mqttClient.subscribe(TOPIC_COMMAND);
+      mqttClient.subscribe("agri/prod/farm-alpha/+/+/command");
     } else {
       int state = mqttClient.state();
       Serial.print("[MQTT] Failed, rc=");
@@ -142,6 +151,20 @@ void connectMQTT() {
   }
 }
 
+void setRelayState(bool turnOn, const char* source) {
+  if (turnOn) {
+    digitalWrite(PIN_RELAY_PUMP, RELAY_ON);
+    Serial.print("[ACTUATOR HARDWARE CHANGE] ");
+    Serial.print(source);
+    Serial.println(" ➔ Relay TURNED ON (Pump Running)");
+  } else {
+    digitalWrite(PIN_RELAY_PUMP, RELAY_OFF);
+    Serial.print("[ACTUATOR HARDWARE CHANGE] ");
+    Serial.print(source);
+    Serial.println(" ➔ Relay TURNED OFF (Pump Stopped)");
+  }
+}
+
 void onMqttCommandReceived(char* topic, byte* payload, unsigned int length) {
   String message;
   for (unsigned int i = 0; i < length; i++) {
@@ -153,18 +176,49 @@ void onMqttCommandReceived(char* topic, byte* payload, unsigned int length) {
   DeserializationError err = deserializeJson(doc, message);
   if (err) return;
 
-  const char* cmdType = doc["commandType"];
-  const char* commandId = doc["commandId"];
+  String cmdType = doc["commandType"] | doc["type"] | doc["action"] | "";
+  String reqVal = doc["requestedValue"] | doc["value"] | "";
+  const char* commandId = doc["commandId"] | "cmd_mqtt";
 
-  if (String(cmdType) == "START_PUMP") {
-    digitalWrite(PIN_RELAY_PUMP, HIGH);
-    Serial.println("[ACTUATOR] Pump TURNED ON");
+  if (cmdType == "START_PUMP" || cmdType == "PUMP_ON" || reqVal == "RUNNING" || reqVal == "START") {
+    setRelayState(true, "MQTT");
     sendAck(commandId, "EXECUTED", "RUNNING");
-  } else if (String(cmdType) == "STOP_PUMP") {
-    digitalWrite(PIN_RELAY_PUMP, LOW);
-    Serial.println("[ACTUATOR] Pump TURNED OFF");
+  } else if (cmdType == "STOP_PUMP" || cmdType == "PUMP_OFF" || reqVal == "OFF" || reqVal == "STOP") {
+    setRelayState(false, "MQTT");
     sendAck(commandId, "EXECUTED", "OFF");
   }
+}
+
+void checkWebCommands() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  ${isEsp8266 ? 'WiFiClientSecure httpsClient; httpsClient.setInsecure(); HTTPClient http;' : 'HTTPClient http;'}
+  ${isEsp8266 ? 'http.begin(httpsClient, VERCEL_CMD_API);' : 'http.begin(VERCEL_CMD_API);'}
+
+  int httpCode = http.GET();
+  if (httpCode == 200) {
+    String payload = http.getString();
+    StaticJsonDocument<2048> doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (!err) {
+      JsonArray commands = doc["commands"].as<JsonArray>();
+      if (commands.size() > 0) {
+        JsonObject latestCmd = commands[0];
+        String targetDev = latestCmd["deviceId"] | "";
+        String cmdType = latestCmd["commandType"] | "";
+        String reqVal = latestCmd["requestedValue"] | "";
+
+        if (targetDev == DEVICE_ID || targetDev == "esp32-node-zone-1" || targetDev.startsWith("pump")) {
+          if (cmdType == "START_PUMP" || cmdType == "PUMP_ON" || reqVal == "RUNNING" || reqVal == "START") {
+            setRelayState(true, "Web Tool Direct Sync");
+          } else if (cmdType == "STOP_PUMP" || cmdType == "PUMP_OFF" || reqVal == "OFF" || reqVal == "STOP") {
+            setRelayState(false, "Web Tool Direct Sync");
+          }
+        }
+      }
+    }
+  }
+  http.end();
 }
 
 void sendAck(const char* commandId, const char* status, const char* relayState) {
@@ -204,6 +258,8 @@ void publishTelemetry() {
     motion = false;
   }
 
+  bool isPumpRunning = digitalRead(PIN_RELAY_PUMP) == RELAY_ON;
+
   StaticJsonDocument<512> doc;
   doc["deviceId"] = DEVICE_ID;
   doc["boardId"] = "${board.boardId}";
@@ -211,7 +267,8 @@ void publishTelemetry() {
   doc["airTemperature"] = safeTemp;
   doc["humidity"] = safeHumidity;
   doc["motionDetected"] = motion;
-  doc["waterFlowRate"] = digitalRead(PIN_RELAY_PUMP) == HIGH ? 14.5 : 0.0;
+  doc["pumpRunning"] = isPumpRunning;
+  doc["waterFlowRate"] = isPumpRunning ? 14.5 : 0.0;
   doc["rssi"] = WiFi.RSSI();
 
   char buffer[512];
@@ -229,8 +286,6 @@ void publishTelemetry() {
     int httpCode = http.POST(buffer);
     if (httpCode > 0) {
       Serial.println("[Web Tool Direct Ingestion SUCCESS] HTTP " + String(httpCode));
-    } else {
-      Serial.println("[Web Tool Direct Ingestion] HTTP Err: " + String(httpCode));
     }
     http.end();
   }
@@ -248,6 +303,11 @@ void loop() {
   if (millis() - lastTelemetryMillis >= TELEMETRY_INTERVAL) {
     lastTelemetryMillis = millis();
     publishTelemetry();
+  }
+
+  if (millis() - lastWebCmdMillis >= WEB_CMD_INTERVAL) {
+    lastWebCmdMillis = millis();
+    checkWebCommands();
   }
 }
 `;
