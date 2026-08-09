@@ -142,9 +142,6 @@ const createZeroReading = (zoneId: string): TelemetryReading => ({
 
 const ZERO_TELEMETRY_MAP = new Map<string, TelemetryReading>([
   ['zone-1', createZeroReading('zone-1')],
-  ['zone-2', createZeroReading('zone-2')],
-  ['zone-3', createZeroReading('zone-3')],
-  ['zone-4', createZeroReading('zone-4')],
 ]);
 
 const getInitialView = (): SpatialStoreState['activeView'] => {
@@ -254,9 +251,29 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
     totalSensorsOnline: 0,
   },
   devices: initialLocal?.devices && Array.isArray(initialLocal.devices)
-    ? initialLocal.devices.filter((d: any) => !(initialLocal?.deletedDeviceIds || []).includes(d.uuid) && !(initialLocal?.deletedDeviceIds || []).includes(d.serialNumber))
+    ? initialLocal.devices.filter(
+        (d: any) =>
+          d.uuid !== 'esp32-node-zone-2' &&
+          d.uuid !== 'esp32-node-zone-3' &&
+          d.uuid !== 'esp32-node-zone-4' &&
+          !d.uuid.includes('zone-2') &&
+          !d.uuid.includes('zone-3') &&
+          !d.uuid.includes('zone-4') &&
+          !(initialLocal?.deletedDeviceIds || []).includes(d.uuid) &&
+          !(initialLocal?.deletedDeviceIds || []).includes(d.serialNumber)
+      )
     : DEFAULT_DEVICES,
-  deletedDeviceIds: initialLocal?.deletedDeviceIds || [],
+  deletedDeviceIds: Array.from(
+    new Set([
+      ...(initialLocal?.deletedDeviceIds || []),
+      'esp32-node-zone-2',
+      'esp32-node-zone-3',
+      'esp32-node-zone-4',
+      'SN-ESP32-NODE-ZONE-2',
+      'SN-ESP32-NODE-ZONE-3',
+      'SN-ESP32-NODE-ZONE-4',
+    ])
+  ),
   insights: [],
   rules: initialLocal?.rules || [],
   pumps: initialLocal?.pumps || ZERO_PUMPS,

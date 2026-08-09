@@ -94,6 +94,22 @@ export async function POST(req: Request) {
       }
     }
 
+    // Store OTA Wi-Fi configuration command for hardware retrieval
+    if (commandType === 'UPDATE_WIFI_CONFIG' && body.wifiSsid) {
+      if (!global._aether_pending_configs) {
+        global._aether_pending_configs = new Map();
+      }
+      const pendingMap = global._aether_pending_configs;
+      const configItem = {
+        action: 'UPDATE_WIFI',
+        wifiSsid: body.wifiSsid,
+        wifiPass: body.wifiPass || '',
+      };
+      pendingMap.set(targetDevId, configItem);
+      pendingMap.set(targetDevId.toLowerCase(), configItem);
+      pendingMap.set('global', configItem);
+    }
+
     return NextResponse.json({
       success: true,
       command: commandRecord,

@@ -189,6 +189,14 @@ void onMqttCommandReceived(char* topic, byte* payload, unsigned int length) {
   } else if (cmdType == "STOP_PUMP" || cmdType == "PUMP_OFF" || reqVal == "OFF" || reqVal == "STOP") {
     setRelayState(false, "MQTT");
     sendAck(commandId, "EXECUTED", "OFF");
+  } else if (cmdType == "UPDATE_WIFI_CONFIG" || cmdType == "UPDATE_WIFI" || doc.containsKey("wifiSsid")) {
+    String newSsid = doc["wifiSsid"] | "";
+    String newPass = doc["wifiPass"] | "";
+    if (newSsid.length() > 0) {
+      Serial.println("[OTA CONFIG SUCCESS] New Wi-Fi SSID received: " + newSsid);
+      WiFi.disconnect();
+      WiFi.begin(newSsid.c_str(), newPass.c_str());
+    }
   }
 }
 
@@ -204,6 +212,20 @@ void checkWebCommands() {
     StaticJsonDocument<2048> doc;
     DeserializationError err = deserializeJson(doc, payload);
     if (!err) {
+      if (doc.containsKey("pendingConfig") && !doc["pendingConfig"].isNull()) {
+        JsonObject pCfg = doc["pendingConfig"];
+        String pAction = pCfg["action"] | pCfg["commandType"] | "";
+        if (pAction == "UPDATE_WIFI" || pCfg.containsKey("wifiSsid")) {
+          String newSsid = pCfg["wifiSsid"] | "";
+          String newPass = pCfg["wifiPass"] | "";
+          if (newSsid.length() > 0) {
+            Serial.println("[OTA HTTP CONFIG SUCCESS] New Wi-Fi SSID received: " + newSsid);
+            WiFi.disconnect();
+            WiFi.begin(newSsid.c_str(), newPass.c_str());
+          }
+        }
+      }
+
       JsonArray commands = doc["commands"].as<JsonArray>();
       if (commands.size() > 0) {
         JsonObject latestCmd = commands[0];
@@ -217,7 +239,16 @@ void checkWebCommands() {
             setRelayState(true, "Web Tool Direct Sync");
           } else if (cmdType == "STOP_PUMP" || cmdType == "PUMP_OFF" || reqVal == "OFF" || reqVal == "STOP") {
             setRelayState(false, "Web Tool Direct Sync");
+          } else if (cmdType == "UPDATE_WIFI_CONFIG" || cmdType == "UPDATE_WIFI" || latestCmd.containsKey("wifiSsid")) {
+            String newSsid = latestCmd["wifiSsid"] | "";
+            String newPass = latestCmd["wifiPass"] | "";
+            if (newSsid.length() > 0) {
+              Serial.println("[OTA HTTP CONFIG SUCCESS] New Wi-Fi SSID received: " + newSsid);
+              WiFi.disconnect();
+              WiFi.begin(newSsid.c_str(), newPass.c_str());
+            }
           }
+        }
         }
       }
     }

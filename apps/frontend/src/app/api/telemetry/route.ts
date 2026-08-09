@@ -35,6 +35,7 @@ declare global {
   var _aether_hardware_telemetry: Map<string, TelemetryPacket> | undefined;
   var _aether_hardware_devices: Map<string, HardwareDeviceRecord> | undefined;
   var _aether_deleted_devices: Set<string> | undefined;
+  var _aether_pending_configs: Map<string, { wifiSsid: string; wifiPass: string; action: string }> | undefined;
 }
 
 if (!global._aether_hardware_telemetry) {
@@ -43,13 +44,31 @@ if (!global._aether_hardware_telemetry) {
 if (!global._aether_hardware_devices) {
   global._aether_hardware_devices = new Map();
 }
+if (!global._aether_pending_configs) {
+  global._aether_pending_configs = new Map();
+}
 if (!global._aether_deleted_devices) {
-  global._aether_deleted_devices = new Set();
+  global._aether_deleted_devices = new Set([
+    'esp32-node-zone-2',
+    'esp32-node-zone-3',
+    'esp32-node-zone-4',
+    'SN-ESP32-NODE-ZONE-2',
+    'SN-ESP32-NODE-ZONE-3',
+    'SN-ESP32-NODE-ZONE-4',
+  ]);
+} else {
+  global._aether_deleted_devices.add('esp32-node-zone-2');
+  global._aether_deleted_devices.add('esp32-node-zone-3');
+  global._aether_deleted_devices.add('esp32-node-zone-4');
+  global._aether_deleted_devices.add('SN-ESP32-NODE-ZONE-2');
+  global._aether_deleted_devices.add('SN-ESP32-NODE-ZONE-3');
+  global._aether_deleted_devices.add('SN-ESP32-NODE-ZONE-4');
 }
 
 const liveTelemetry = global._aether_hardware_telemetry!;
 const liveDevices = global._aether_hardware_devices!;
 const deletedDevicesSet = global._aether_deleted_devices!;
+const pendingConfigsMap = global._aether_pending_configs!;
 
 // ─── POST /api/telemetry (Hardware Ingestion API) ───
 export async function POST(req: Request) {
@@ -107,11 +126,20 @@ export async function POST(req: Request) {
       }
     }
 
+    // Check if there is an OTA Wi-Fi configuration command pending for this physical board
+    const pendingConfig = pendingConfigsMap.get(deviceId) || pendingConfigsMap.get(deviceId.toLowerCase()) || pendingConfigsMap.get('global');
+    if (pendingConfig) {
+      pendingConfigsMap.delete(deviceId);
+      pendingConfigsMap.delete(deviceId.toLowerCase());
+      pendingConfigsMap.delete('global');
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Hardware telemetry ingested successfully',
       deviceId,
       timestamp: nowIso,
+      pendingConfig: pendingConfig || null,
     });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message || 'Invalid JSON format' }, { status: 400 });
