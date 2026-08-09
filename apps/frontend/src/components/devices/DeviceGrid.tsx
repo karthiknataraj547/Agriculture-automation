@@ -26,6 +26,7 @@ import {
   Layers,
   Save,
   FileCode,
+  CheckCircle2,
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
@@ -313,14 +314,21 @@ export function DeviceGrid() {
 
     const generatedAuthCode = `ATH-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
+    const cleanSerial = serialNumber.trim();
+    const devUuid = cleanSerial.toLowerCase().startsWith('esp') || cleanSerial.toLowerCase().startsWith('dev') || cleanSerial.toLowerCase().startsWith('node')
+      ? cleanSerial.toLowerCase().replace(/\s+/g, '-')
+      : `esp32-node-${cleanSerial.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+
+    const isEsp8266 = selectedBoardOption.includes('8266') || selectedBoardOption.includes('nodemcu') || selectedBoardOption.includes('wemos') || selectedBoardOption.includes('esp-01');
+
     const newDevice: IoTDevice = {
-      uuid: `dev-${Date.now()}`,
-      serialNumber: serialNumber.trim(),
+      uuid: devUuid,
+      serialNumber: cleanSerial,
       name: deviceName.trim(),
       macAddress: `A4:CF:12:${Math.floor(Math.random() * 89 + 10)}:${Math.floor(
         Math.random() * 89 + 10
       )}:${Math.floor(Math.random() * 89 + 10)}`,
-      firmwareVersion: 'v2.4.1-pro',
+      firmwareVersion: isEsp8266 ? 'v2.4.1-esp8266' : 'v2.4.1-esp32',
       status: DeviceStatus.ONLINE,
       farmId: 'farm-01',
       zoneId,
@@ -331,15 +339,43 @@ export function DeviceGrid() {
       batteryLevel: 100,
       signalRssi: -18,
       boardId: selectedBoardOption,
-      boardFamily: (selectedBoardOption.includes('esp8266') || selectedBoardOption.includes('nodemcu') || selectedBoardOption.includes('wemos') || selectedBoardOption.includes('esp-01') ? 'ESP8266' : 'ESP32') as 'ESP32' | 'ESP8266',
+      boardFamily: isEsp8266 ? 'ESP8266' : 'ESP32',
       otaStatus: 'IDLE',
       location: { lat: 37.7749, lng: -122.4194, elevation: 120 },
       sensorsAttached: attachedSensors,
     };
 
-    setDevices([newDevice, ...devices]);
+    // Remove from deleted list if previously deleted
+    const currentDeleted = useSpatialStore.getState().deletedDeviceIds || [];
+    const updatedDeleted = currentDeleted.filter((id) => id !== devUuid && id !== cleanSerial);
+    useSpatialStore.setState({ deletedDeviceIds: updatedDeleted });
+
+    // Instantly append to devices list in store and activate Webtool dashboard
+    const existingDevices = useSpatialStore.getState().devices;
+    const filteredExisting = existingDevices.filter((d) => d.uuid !== devUuid && d.serialNumber !== cleanSerial);
+    useSpatialStore.getState().setDevices([newDevice, ...filteredExisting]);
+    useSpatialStore.setState({ isZeroDataMode: false });
+
+    // Register active heartbeat in backend telemetry API gateway
+    try {
+      await fetch('/api/telemetry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: devUuid,
+          authCode: generatedAuthCode,
+          zoneId: newDevice.zoneId,
+          soilMoisture: 45,
+          airTemperature: 28.4,
+          humidity: 65,
+          batteryLevel: 100,
+          rssi: -18,
+        }),
+      });
+    } catch {}
+
     setNewDeviceAuth({
-      serial: serialNumber.trim(),
+      serial: cleanSerial,
       authCode: generatedAuthCode,
       name: deviceName.trim(),
     });
@@ -642,6 +678,28 @@ export function DeviceGrid() {
                 {copiedAuthKey ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
                 {copiedAuthKey ? 'COPIED!' : 'COPY AUTH CODE'}
               </button>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+              <div className="flex items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                <CheckCircle2 size={16} />
+                <span>Device is now ACTIVE on the Webtool Dashboard & Node Grid!</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setModalMode('HARDWARE_GUIDE')}
+                  className="px-4 py-2 text-xs font-mono font-bold rounded-xl neu-button text-slate-700 dark:text-slate-200 hover:text-cyber-cyan"
+                >
+                  VIEW HARDWARE CODE SKETCHES
+                </button>
+                <button
+                  onClick={() => setModalMode('NONE')}
+                  className="px-5 py-2 text-xs font-mono font-bold rounded-xl bg-sky-600 dark:bg-cyan-500 text-white shadow-sm"
+                >
+                  DONE
+                </button>
+              </div>
             </div>
           </div>
         </GlassCard>
