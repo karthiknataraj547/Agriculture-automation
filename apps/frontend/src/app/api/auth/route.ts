@@ -20,8 +20,8 @@ const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fdd
 // Pre-seeded salted hashes with Admin Bootstrap from environment variables
 const seedDefaultUsers = (): GlobalUserRecord[] => {
   const initialAdminId = process.env.ADMIN_INITIAL_USER_ID || 'admin';
-  const initialAdminPass = process.env.ADMIN_INITIAL_PASSWORD || 'AdminSecure2026!';
-  const initialAdminEmail = process.env.ADMIN_INITIAL_EMAIL || 'admin@aethercrop.io';
+  const initialAdminPass = process.env.ADMIN_INITIAL_PASSWORD || 'admin@1234';
+  const initialAdminEmail = process.env.ADMIN_INITIAL_EMAIL || 'admin@agritech.com';
 
   const adminCreds = hashPassword(initialAdminPass);
   const karthikCreds = hashPassword('password123');
@@ -37,7 +37,7 @@ const seedDefaultUsers = (): GlobalUserRecord[] => {
       role: 'SUPER_ADMIN',
       accountId: 'account-system-admin',
       status: 'ACTIVE',
-      mustChangePassword: true,
+      mustChangePassword: false,
       createdAt: new Date().toISOString(),
     },
     {
@@ -67,7 +67,7 @@ const seedDefaultUsers = (): GlobalUserRecord[] => {
 
 let usersCache: GlobalUserRecord[] = seedDefaultUsers();
 
-// Reliable, Awaited Cloud Database Fetch
+// Reliable, Awaited Cloud Database Fetch with auto-healing for admin@agritech.com
 async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
   try {
     const res = await fetch(CLOUD_DB_URL, {
@@ -79,6 +79,43 @@ async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
       const json: any = await res.json();
       if (json?.data?.users && Array.isArray(json.data.users) && json.data.users.length > 0) {
         usersCache = json.data.users;
+      }
+    }
+
+    // Auto-heal / Ensure admin@agritech.com with admin@1234 exists
+    const adminEmail = (process.env.ADMIN_INITIAL_EMAIL || 'admin@agritech.com').toLowerCase();
+    const adminPass = process.env.ADMIN_INITIAL_PASSWORD || 'admin@1234';
+    
+    let adminUser = usersCache.find(u => u.email.toLowerCase() === adminEmail || u.email.toLowerCase() === 'admin@agritech.com' || u.id === 'admin');
+    
+    if (!adminUser) {
+      const creds = hashPassword(adminPass);
+      adminUser = {
+        id: 'admin',
+        name: 'System Super Administrator',
+        email: adminEmail,
+        passwordHash: creds.hash,
+        salt: creds.salt,
+        role: 'SUPER_ADMIN',
+        accountId: 'account-system-admin',
+        status: 'ACTIVE',
+        mustChangePassword: false,
+        createdAt: new Date().toISOString(),
+      };
+      usersCache.push(adminUser);
+      await saveUsersToCloudDB(usersCache);
+    } else {
+      // Verify password matches adminPass, if not update passwordHash & salt
+      const isMatch = verifyPassword(adminPass, adminUser.passwordHash, adminUser.salt);
+      if (!isMatch || (adminUser as any).password === 'admin@1234' || adminUser.email !== adminEmail) {
+        const creds = hashPassword(adminPass);
+        adminUser.email = adminEmail;
+        adminUser.passwordHash = creds.hash;
+        adminUser.salt = creds.salt;
+        adminUser.role = 'SUPER_ADMIN';
+        adminUser.status = 'ACTIVE';
+        adminUser.mustChangePassword = false;
+        await saveUsersToCloudDB(usersCache);
       }
     }
   } catch (e) {
