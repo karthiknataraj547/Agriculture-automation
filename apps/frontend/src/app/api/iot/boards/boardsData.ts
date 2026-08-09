@@ -157,13 +157,14 @@ export const PREDEFINED_BOARDS: IoTBoardDefinition[] = [
     recommendedPins: {
       soilMoisturePin: 'A0 (ADC0)',
       dhtPin: 'D2 (GPIO 4)',
-      relayPumpPin: 'D1 (GPIO 5)',
+      relayPumpPin: 'D3 (GPIO 0)',
       flowRatePin: 'D5 (GPIO 14)',
       pirMotionPin: 'D6 (GPIO 12)',
     },
     validPins: [
       { pinName: 'A0 (ADC0)', gpioNumber: 'A0', supportedModes: ['ANALOG_IN'], recommendedFor: 'SOIL_MOISTURE' },
-      { pinName: 'D1 (GPIO 5)', gpioNumber: '5', supportedModes: ['DIGITAL_IO', 'PWM', 'I2C'], recommendedFor: 'RELAY_PUMP' },
+      { pinName: 'D3 (GPIO 0)', gpioNumber: 'D3', supportedModes: ['DIGITAL_IO', 'PWM'], recommendedFor: 'RELAY_PUMP' },
+      { pinName: 'D1 (GPIO 5)', gpioNumber: '5', supportedModes: ['DIGITAL_IO', 'PWM', 'I2C'] },
       { pinName: 'D2 (GPIO 4)', gpioNumber: '4', supportedModes: ['DIGITAL_IO', 'PWM', 'I2C'], recommendedFor: 'DHT_SENSOR' },
       { pinName: 'D5 (GPIO 14)', gpioNumber: '14', supportedModes: ['DIGITAL_IO', 'SPI'], recommendedFor: 'FLOW_RATE' },
       { pinName: 'D6 (GPIO 12)', gpioNumber: '12', supportedModes: ['DIGITAL_IO', 'SPI'], recommendedFor: 'PIR_MOTION' },

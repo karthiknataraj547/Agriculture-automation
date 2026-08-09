@@ -26,11 +26,16 @@ export async function POST(req: Request) {
     const httpHeader = isEsp8266 ? '#include <ESP8266HTTPClient.h>' : '#include <HTTPClient.h>';
     const isTls = Number(mqttPort) === 8883;
 
-    const assignedSoilPin = soilMoisturePin || (isEsp8266 ? 'A0' : '34');
-    const assignedDhtPin = dhtPin || (isEsp8266 ? '4' : '4');
-    const assignedRelayPin = relayPumpPin || (isEsp8266 ? '5' : '26');
-    const assignedFlowPin = flowRatePin || (isEsp8266 ? '14' : '27');
-    const assignedPirPin = pirMotionPin || (isEsp8266 ? '12' : '14');
+    // Pin normalization for ESP8266 (D3 is GPIO 0) vs ESP32
+    let assignedSoilPin = soilMoisturePin || (isEsp8266 ? 'A0' : '34');
+    let assignedDhtPin = dhtPin || (isEsp8266 ? 'D2' : '4');
+    let assignedRelayPin = relayPumpPin || (isEsp8266 ? 'D3' : '26');
+    let assignedFlowPin = flowRatePin || (isEsp8266 ? 'D5' : '27');
+    let assignedPirPin = pirMotionPin || (isEsp8266 ? 'D6' : '14');
+
+    if (isEsp8266 && (!relayPumpPin || relayPumpPin.toLowerCase().includes('d3') || relayPumpPin === '3' || relayPumpPin === '0')) {
+      assignedRelayPin = 'D3'; // NodeMCU D3 pin (GPIO 0)
+    }
 
     const clientInclude = isTls ? '#include <WiFiClientSecure.h>' : '';
     const clientType = isTls ? 'WiFiClientSecure' : 'WiFiClient';
@@ -53,15 +58,15 @@ ${clientInclude}
 // ─── HARDWARE PIN ASSIGNMENTS (${board.name}) ───
 #define PIN_SOIL_MOISTURE  ${assignedSoilPin}  // Analog Soil Moisture Probe
 #define PIN_DHT_DATA       ${assignedDhtPin}   // Digital Air Temp & Humidity
-#define PIN_RELAY_PUMP     ${assignedRelayPin}   // Water Pump Relay
+#define PIN_RELAY_PUMP     ${assignedRelayPin}   // Water Pump Relay (D3 = GPIO 0 on NodeMCU)
 #define PIN_FLOW_RATE      ${assignedFlowPin}   // YF-S201 Water Flow Pulse Sensor
 #define PIN_PIR_MOTION     ${assignedPirPin}   // PIR Intrusion Sensor
 
 #define DHTTYPE            ${dhtType}
 
-// Change to LOW if your 5V Relay Module is Active-LOW
-#define RELAY_ON  HIGH
-#define RELAY_OFF LOW
+// ─── RELAY HARDWARE LOGIC CONFIGURATION ───
+// If your 5V Relay turns ON when pin goes LOW (0V), change RELAY_IS_ACTIVE_LOW to 1
+#define RELAY_IS_ACTIVE_LOW 0
 
 // ─── NETWORK CONFIGURATION ───
 const char* WIFI_SSID = "${wifiSsid}";
@@ -85,15 +90,16 @@ unsigned long lastTelemetryMillis = 0;
 const unsigned long TELEMETRY_INTERVAL = 3000; // Send telemetry every 3 seconds
 
 unsigned long lastWebCmdMillis = 0;
-const unsigned long WEB_CMD_INTERVAL = 2000; // Check Web Tool commands every 2 seconds
+const unsigned long WEB_CMD_INTERVAL = 1500; // Check Web Tool commands every 1.5 seconds
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\\n[AetherCrop] Initializing ${board.name} Firmware...");
+  Serial.println("[HARDWARE PIN] Pump Relay assigned to Pin ${assignedRelayPin}");
 
   pinMode(PIN_RELAY_PUMP, OUTPUT);
-  digitalWrite(PIN_RELAY_PUMP, RELAY_OFF); // Default Relay OFF
+  setRelayState(false, "INITIALIZATION"); // Default Relay OFF
 
   #ifdef INPUT_PULLDOWN
     pinMode(PIN_PIR_MOTION, INPUT_PULLDOWN);
@@ -140,28 +146,25 @@ void connectMQTT() {
       Serial.print("[MQTT] Failed, rc=");
       Serial.print(state);
       Serial.println(" retrying in 5 seconds...");
-
-      if (state == -2) {
-        Serial.println("[MQTT ERROR -2 RESOLUTION]");
-        Serial.println(" -> Host unreachable or network connection failed.");
-        Serial.println(" -> Fix: Make sure MQTT_HOST is 'test.mosquitto.org' or your Laptop IP.");
-      }
       delay(5000);
     }
   }
 }
 
 void setRelayState(bool turnOn, const char* source) {
+  int onSignal = RELAY_IS_ACTIVE_LOW ? LOW : HIGH;
+  int offSignal = RELAY_IS_ACTIVE_LOW ? HIGH : LOW;
+
   if (turnOn) {
-    digitalWrite(PIN_RELAY_PUMP, RELAY_ON);
-    Serial.print("[ACTUATOR HARDWARE CHANGE] ");
+    digitalWrite(PIN_RELAY_PUMP, onSignal);
+    Serial.print("[ACTUATOR HARDWARE SUCCESS] ");
     Serial.print(source);
-    Serial.println(" ➔ Relay TURNED ON (Pump Running)");
+    Serial.println(" ➔ Pin ${assignedRelayPin} VOLTAGE APPLIED (PUMP RUNNING)");
   } else {
-    digitalWrite(PIN_RELAY_PUMP, RELAY_OFF);
-    Serial.print("[ACTUATOR HARDWARE CHANGE] ");
+    digitalWrite(PIN_RELAY_PUMP, offSignal);
+    Serial.print("[ACTUATOR HARDWARE SUCCESS] ");
     Serial.print(source);
-    Serial.println(" ➔ Relay TURNED OFF (Pump Stopped)");
+    Serial.println(" ➔ Pin ${assignedRelayPin} VOLTAGE REMOVED (PUMP STOPPED)");
   }
 }
 
@@ -209,7 +212,7 @@ void checkWebCommands() {
         String cmdType = latestCmd["commandType"] | "";
         String reqVal = latestCmd["requestedValue"] | "";
 
-        if (targetDev == DEVICE_ID || targetDev == "esp32-node-zone-1" || targetPump == "pump-1" || targetDev.startsWith("pump")) {
+        if (targetDev == DEVICE_ID || targetDev == "esp32-node-zone-1" || targetPump == "pump-1" || targetDev.startsWith("pump") || targetDev.length() > 0) {
           if (cmdType == "START_PUMP" || cmdType == "PUMP_ON" || reqVal == "RUNNING" || reqVal == "START") {
             setRelayState(true, "Web Tool Direct Sync");
           } else if (cmdType == "STOP_PUMP" || cmdType == "PUMP_OFF" || reqVal == "OFF" || reqVal == "STOP") {
@@ -259,7 +262,7 @@ void publishTelemetry() {
     motion = false;
   }
 
-  bool isPumpRunning = digitalRead(PIN_RELAY_PUMP) == RELAY_ON;
+  bool isPumpRunning = digitalRead(PIN_RELAY_PUMP) == (RELAY_IS_ACTIVE_LOW ? LOW : HIGH);
 
   StaticJsonDocument<512> doc;
   doc["deviceId"] = DEVICE_ID;
