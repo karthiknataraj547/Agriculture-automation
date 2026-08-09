@@ -68,6 +68,15 @@ ${clientInclude}
 // If your 5V Relay turns ON when pin goes LOW (0V), change RELAY_IS_ACTIVE_LOW to 1
 #define RELAY_IS_ACTIVE_LOW 0
 
+// ─── FUNCTION PROTOTYPES ───
+void connectWiFi();
+void connectMQTT();
+void setRelayState(bool turnOn, const char* source);
+void onMqttCommandReceived(char* topic, byte* payload, unsigned int length);
+void checkWebCommands();
+void sendAck(const char* commandId, const char* status, const char* relayState);
+void publishTelemetry();
+
 // ─── NETWORK CONFIGURATION ───
 const char* WIFI_SSID = "${wifiSsid}";
 const char* WIFI_PASS = "${wifiPass}";
@@ -129,7 +138,9 @@ void connectWiFi() {
 }
 
 void connectMQTT() {
-  while (!mqttClient.connected()) {
+  int attempts = 0;
+  while (!mqttClient.connected() && attempts < 3) {
+    attempts++;
     Serial.print("[MQTT] Connecting to broker ");
     Serial.print(MQTT_HOST);
     Serial.print(":");
@@ -145,8 +156,8 @@ void connectMQTT() {
       int state = mqttClient.state();
       Serial.print("[MQTT] Failed, rc=");
       Serial.print(state);
-      Serial.println(" retrying in 5 seconds...");
-      delay(5000);
+      Serial.println(" retrying in next loop...");
+      delay(100);
     }
   }
 }
@@ -248,7 +259,6 @@ void checkWebCommands() {
               WiFi.begin(newSsid.c_str(), newPass.c_str());
             }
           }
-        }
         }
       }
     }
