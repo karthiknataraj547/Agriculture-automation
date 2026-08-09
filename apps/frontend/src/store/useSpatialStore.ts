@@ -204,8 +204,26 @@ function mergePumps(existingPumps: PumpState[], incomingPumps: any[]): PumpState
   });
 }
 
+function isItemDeleted(item: any, deletedIds: Set<string>): boolean {
+  if (!item) return true;
+  const keys = [item.uuid, item.id, item.serialNumber, item.deviceId].filter(Boolean);
+  for (const k of keys) {
+    const strK = String(k);
+    if (
+      deletedIds.has(strK) ||
+      deletedIds.has(strK.toLowerCase()) ||
+      deletedIds.has(strK.toUpperCase()) ||
+      deletedIds.has(`SN-${strK.toUpperCase()}`) ||
+      deletedIds.has(`esp32-node-${strK.toLowerCase()}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Smart Array Merger: Combine arrays by unique ID (allows new items from cloud, excludes deleted ones)
-function mergeArrayById<T extends { id?: string; uuid?: string; serialNumber?: string }>(
+function mergeArrayById<T extends { id?: string; uuid?: string; serialNumber?: string; deviceId?: string }>(
   localArr: T[],
   incomingArr: any[],
   deletedIds: Set<string> = new Set()
@@ -214,22 +232,24 @@ function mergeArrayById<T extends { id?: string; uuid?: string; serialNumber?: s
 
   // 1. Add local items excluding deleted ones
   (localArr || []).forEach((item) => {
-    const key = item.uuid || item.id || item.serialNumber;
-    if (key && !deletedIds.has(key)) {
-      mergedMap.set(key, item);
+    if (!isItemDeleted(item, deletedIds)) {
+      const key = item.uuid || item.id || item.serialNumber;
+      if (key) mergedMap.set(key, item);
     }
   });
 
   // 2. Merge incoming items (add new items if missing, merge if existing, unless deleted)
   if (incomingArr && Array.isArray(incomingArr)) {
     incomingArr.forEach((item) => {
-      const key = item.uuid || item.id || item.serialNumber;
-      if (key && !deletedIds.has(key)) {
-        const existing = mergedMap.get(key);
-        if (existing) {
-          mergedMap.set(key, { ...existing, ...item });
-        } else {
-          mergedMap.set(key, item);
+      if (!isItemDeleted(item, deletedIds)) {
+        const key = item.uuid || item.id || item.serialNumber;
+        if (key) {
+          const existing = mergedMap.get(key);
+          if (existing) {
+            mergedMap.set(key, { ...existing, ...item });
+          } else {
+            mergedMap.set(key, item);
+          }
         }
       }
     });

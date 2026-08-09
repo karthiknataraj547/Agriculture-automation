@@ -5,6 +5,24 @@ import { TelemetryReading, DeviceStatus } from '@aether/shared';
 
 let socket: Socket | null = null;
 
+const isItemDeleted = (item: any, deletedIds: Set<string>): boolean => {
+  if (!item) return true;
+  const keys = [item.uuid, item.serialNumber, item.id, item.deviceId].filter(Boolean);
+  for (const k of keys) {
+    const strK = String(k);
+    if (
+      deletedIds.has(strK) ||
+      deletedIds.has(strK.toLowerCase()) ||
+      deletedIds.has(strK.toUpperCase()) ||
+      deletedIds.has(`SN-${strK.toUpperCase()}`) ||
+      deletedIds.has(`esp32-node-${strK.toLowerCase()}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export function useWebSocketFeed() {
   const {
     updateTelemetryStream,
@@ -17,14 +35,22 @@ export function useWebSocketFeed() {
     // 1-second polling to /api/telemetry for real physical hardware ingestion
     const pollHardwareTelemetry = async () => {
       try {
-        const deletedIds = new Set(useSpatialStore.getState().deletedDeviceIds || []);
+        const deletedIds = new Set([
+          ...(useSpatialStore.getState().deletedDeviceIds || []),
+          'esp32-node-zone-2',
+          'esp32-node-zone-3',
+          'esp32-node-zone-4',
+          'SN-ESP32-NODE-ZONE-2',
+          'SN-ESP32-NODE-ZONE-3',
+          'SN-ESP32-NODE-ZONE-4',
+        ]);
 
         const res = await fetch('/api/telemetry');
         const data = await res.json();
         if (data.success) {
           const liveDevicesMap = new Map(
             (data.devices || [])
-              .filter((d: any) => !deletedIds.has(d.uuid) && !deletedIds.has(d.serialNumber))
+              .filter((d: any) => !isItemDeleted(d, deletedIds))
               .map((d: any) => [d.uuid, d])
           );
 
@@ -33,7 +59,7 @@ export function useWebSocketFeed() {
           const knownUuids = new Set(currentDevices.map((d) => d.uuid));
 
           const updatedDevices = currentDevices
-            .filter((dev) => !deletedIds.has(dev.uuid) && !deletedIds.has(dev.serialNumber))
+            .filter((dev) => !isItemDeleted(dev, deletedIds))
             .map((dev) => {
               const liveMatch = liveDevicesMap.get(dev.uuid) as any;
               if (liveMatch && liveMatch.status === 'ONLINE') {
@@ -74,8 +100,7 @@ export function useWebSocketFeed() {
               if (
                 d.status === 'ONLINE' &&
                 !knownUuids.has(d.uuid) &&
-                !deletedIds.has(d.uuid) &&
-                !deletedIds.has(d.serialNumber)
+                !isItemDeleted(d, deletedIds)
               ) {
                 hasChanged = true;
                 updatedDevices.push({

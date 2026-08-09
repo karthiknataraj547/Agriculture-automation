@@ -8,10 +8,19 @@ import { useSpatialStore } from '../../store/useSpatialStore';
 import { MotionAlertBanner } from '../alerts/MotionAlertBanner';
 
 export function PumpControlPanel() {
-  const { pumps, togglePumpState, setPumpState, deletePump, emergencyStop, setActiveView } = useSpatialStore();
+  const { pumps, devices, togglePumpState, setPumpState, deletePump, emergencyStop, setActiveView } = useSpatialStore();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const runningCount = pumps.filter((p) => p.status === 'RUNNING').length;
+  // Filter pumps to strictly require that their associated hardware device is currently registered in the web tool
+  const validDeviceUuids = new Set(devices.map((d) => d.uuid));
+  const validDeviceSerials = new Set(devices.map((d) => d.serialNumber));
+  const activePumps = pumps.filter(
+    (p) =>
+      p.deviceId &&
+      (validDeviceUuids.has(p.deviceId) || validDeviceSerials.has(p.deviceId))
+  );
+
+  const runningCount = activePumps.filter((p) => p.status === 'RUNNING').length;
 
   return (
     <div className="space-y-4">
@@ -31,7 +40,7 @@ export function PumpControlPanel() {
           <div className="flex items-center gap-2">
             <span className="skeuo-led skeuo-led-cyan" />
             <span className="text-xs font-mono font-extrabold text-emerald-700 dark:text-emerald-400 tracking-wider">
-              {runningCount} / {pumps.length} PUMPS ONLINE
+              {runningCount} / {activePumps.length} PUMPS ONLINE
             </span>
           </div>
           <button
@@ -57,7 +66,7 @@ export function PumpControlPanel() {
       )}
 
       {/* Empty State Banner if no pumps exist */}
-      {pumps.length === 0 && (
+      {activePumps.length === 0 && (
         <GlassCard variant="glow" padding="lg" className="border-cyber-cyan/30 text-center py-10">
           <div className="w-14 h-14 rounded-2xl neu-pressed flex items-center justify-center text-cyber-cyan mx-auto mb-3">
             <Power size={28} />
@@ -80,7 +89,7 @@ export function PumpControlPanel() {
 
       {/* Pumps Console Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {pumps.map((pump) => {
+        {activePumps.map((pump) => {
           const isRunning = pump.status === 'RUNNING';
           const isConfirmingDelete = confirmDeleteId === pump.id;
 
