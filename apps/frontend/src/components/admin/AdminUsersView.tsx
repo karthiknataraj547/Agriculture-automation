@@ -67,8 +67,16 @@ export const AdminUsersView: React.FC = () => {
 
   const [suspendReason, setSuspendReason] = useState('');
 
+  // Filter out system admin accounts from Customer User Management
+  const customerUsersList = usersList.filter(
+    (u) =>
+      u.role !== 'SUPER_ADMIN' &&
+      u.email?.toLowerCase() !== 'admin@agritech.com' &&
+      u.id !== 'admin'
+  );
+
   // Filtering users across multiple entities
-  const filteredUsers = usersList.filter((u) => {
+  const filteredUsers = customerUsersList.filter((u) => {
     const term = searchTerm.toLowerCase();
     const matchesSearch =
       u.name?.toLowerCase().includes(term) ||
@@ -81,11 +89,11 @@ export const AdminUsersView: React.FC = () => {
     return matchesSearch && matchesRole;
   });
 
-  // Calculate Metrics
-  const totalUsersCount = usersList.length || 3;
-  const activeUsersCount = usersList.filter((u) => u.status !== 'DISABLED').length || 3;
+  // Calculate Metrics for Customer Accounts Only
+  const totalUsersCount = customerUsersList.length;
+  const activeUsersCount = customerUsersList.filter((u) => u.status !== 'DISABLED').length;
   const disabledUsersCount = totalUsersCount - activeUsersCount;
-  const totalAccountsCount = accountsList.length || 3;
+  const totalAccountsCount = accountsList.length || 2;
   const totalDevicesCount = devicesList.length || 4;
   const onlineDevicesCount = devicesList.filter((d) => d.status === 'ONLINE').length || 3;
 

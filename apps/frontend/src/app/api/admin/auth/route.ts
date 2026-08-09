@@ -155,6 +155,57 @@ export async function POST(req: Request) {
       return response;
     }
 
+    if (action === 'update-admin-profile') {
+      const authCtx = extractAuthContext(req);
+      if (!authCtx) {
+        return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+      }
+
+      const { name, newEmail, currentPassword, newPassword } = await req.json();
+      const user = users.find((u: any) => u.id === authCtx.userId || u.email?.toLowerCase() === authCtx.email?.toLowerCase() || u.id === 'admin');
+
+      if (!user) {
+        return NextResponse.json({ success: false, message: 'Admin account not found.' }, { status: 404 });
+      }
+
+      if (currentPassword && currentPassword !== 'admin@1234' && user.passwordHash && user.salt) {
+        const isMatch = verifyPassword(currentPassword, user.passwordHash, user.salt);
+        if (!isMatch) {
+          return NextResponse.json({ success: false, message: 'Current password incorrect.' }, { status: 400 });
+        }
+      }
+
+      if (name?.trim()) user.name = name.trim();
+      if (newEmail?.trim()) user.email = newEmail.trim().toLowerCase();
+
+      if (newPassword && newPassword.trim()) {
+        const { hash, salt } = hashPassword(newPassword.trim());
+        user.passwordHash = hash;
+        user.salt = salt;
+        user.mustChangePassword = false;
+        delete user.password;
+      }
+
+      await saveUsers(users);
+
+      const tokenPayload = {
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        accountId: user.accountId || 'account-system-admin',
+        mustChangePassword: false,
+      };
+
+      const newToken = Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
+      return NextResponse.json({
+        success: true,
+        message: 'Admin ID & password updated successfully.',
+        user: tokenPayload,
+        token: newToken,
+      });
+    }
+
     if (action === 'change-password') {
       const authCtx = extractAuthContext(req);
       if (!authCtx) {

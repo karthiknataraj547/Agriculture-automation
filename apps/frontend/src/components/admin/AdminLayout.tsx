@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAdminStore, AdminViewType } from '@/store/useAdminStore';
 import {
   LayoutDashboard,
@@ -19,6 +19,10 @@ import {
   Zap,
   Radio,
   Server,
+  User,
+  Key,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -26,7 +30,18 @@ interface AdminLayoutProps {
 }
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
-  const { adminUser, activeView, setActiveView, logoutAdmin, fetchAdminData, isLoading } = useAdminStore();
+  const { adminUser, token, activeView, setActiveView, logoutAdmin, setAdminSession, fetchAdminData, isLoading } = useAdminStore();
+
+  // Admin Profile Modal State
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [adminNameInput, setAdminNameInput] = useState(adminUser?.name || 'System Super Administrator');
+  const [adminEmailInput, setAdminEmailInput] = useState(adminUser?.email || 'admin@agritech.com');
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+
+  const [modalFeedback, setModalFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const navItems: { id: AdminViewType; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'OVERVIEW', label: 'Dashboard', icon: LayoutDashboard },
@@ -42,6 +57,60 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { id: 'AUDIT', label: 'Audit Logs', icon: FileSpreadsheet },
     { id: 'SETTINGS', label: 'System Settings', icon: Settings },
   ];
+
+  const handleOpenProfileModal = () => {
+    setAdminNameInput(adminUser?.name || 'System Super Administrator');
+    setAdminEmailInput(adminUser?.email || 'admin@agritech.com');
+    setCurrentPasswordInput('');
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
+    setModalFeedback(null);
+    setShowProfileModal(true);
+  };
+
+  const handleUpdateAdminProfileSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalFeedback(null);
+
+    if (newPasswordInput && newPasswordInput !== confirmPasswordInput) {
+      setModalFeedback({ type: 'error', message: 'New password and confirmation do not match.' });
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const res = await fetch('/api/admin/auth', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action: 'update-admin-profile',
+          name: adminNameInput,
+          newEmail: adminEmailInput,
+          currentPassword: currentPasswordInput,
+          newPassword: newPasswordInput,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && data.user) {
+        setAdminSession(data.user, data.token || token || '');
+        setModalFeedback({ type: 'success', message: 'Admin ID & password updated successfully!' });
+        setTimeout(() => {
+          setShowProfileModal(false);
+          setModalFeedback(null);
+        }, 1500);
+      } else {
+        setModalFeedback({ type: 'error', message: data.message || 'Failed to update admin credentials.' });
+      }
+    } catch (err: any) {
+      setModalFeedback({ type: 'error', message: err.message || 'Server connection issue.' });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-purple-500/30">
@@ -88,10 +157,25 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
           {/* Admin Profile & Logout */}
           <div className="pl-3 border-l border-slate-800 flex items-center space-x-3">
-            <div className="text-right hidden sm:block">
-              <div className="text-xs font-semibold text-slate-200">{adminUser?.name || 'Administrator'}</div>
-              <div className="text-[10px] text-purple-400 font-mono font-medium">{adminUser?.role || 'SUPER_ADMIN'}</div>
-            </div>
+            {/* SEPARATE ADMIN PROFILE BUTTON */}
+            <button
+              onClick={handleOpenProfileModal}
+              className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-purple-950/60 border border-slate-800 hover:border-purple-500/50 text-slate-200 transition-all group"
+              title="Manage Admin Credentials & Password"
+            >
+              <div className="w-6 h-6 rounded-lg bg-purple-600 flex items-center justify-center text-white text-xs font-bold shadow-md">
+                <User className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-left hidden sm:block">
+                <div className="text-xs font-semibold text-slate-100 group-hover:text-purple-300 transition-colors">
+                  {adminUser?.email || 'admin@agritech.com'}
+                </div>
+                <div className="text-[9px] text-purple-400 font-mono font-medium flex items-center gap-1">
+                  <Key className="w-2.5 h-2.5" />
+                  <span>Admin Profile & Password</span>
+                </div>
+              </div>
+            </button>
 
             <button
               onClick={logoutAdmin}
@@ -149,6 +233,129 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           {children}
         </main>
       </div>
+
+      {/* ADMIN PROFILE & CREDENTIALS MANAGEMENT MODAL */}
+      {showProfileModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-purple-800/60 rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Key className="w-5 h-5 text-purple-400" />
+                Admin Profile & Master Credentials
+              </h3>
+              <button
+                onClick={() => setShowProfileModal(false)}
+                className="text-slate-400 hover:text-white text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {modalFeedback && (
+              <div
+                className={`p-3 rounded-xl text-xs font-medium flex items-center space-x-2 ${
+                  modalFeedback.type === 'success'
+                    ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60'
+                    : 'bg-red-950/80 text-red-300 border border-red-800/60'
+                }`}
+              >
+                {modalFeedback.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                )}
+                <span>{modalFeedback.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateAdminProfileSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Admin Display Name</label>
+                <input
+                  type="text"
+                  required
+                  value={adminNameInput}
+                  onChange={(e) => setAdminNameInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Admin Email / Login ID</label>
+                <input
+                  type="email"
+                  required
+                  value={adminEmailInput}
+                  onChange={(e) => setAdminEmailInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 space-y-3">
+                <div className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5" />
+                  <span>Update Master Admin Password</span>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">Current Password</label>
+                  <input
+                    type="password"
+                    placeholder="Enter current password..."
+                    value={currentPasswordInput}
+                    onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">New Password</label>
+                  <input
+                    type="password"
+                    placeholder="Enter new master password..."
+                    value={newPasswordInput}
+                    onChange={(e) => setNewPasswordInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    placeholder="Confirm new master password..."
+                    value={confirmPasswordInput}
+                    onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-medium hover:bg-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 transition-all flex items-center space-x-1.5"
+                >
+                  {isUpdating ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isUpdating ? 'Updating...' : 'Save Admin Credentials'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
