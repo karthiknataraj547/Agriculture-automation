@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { extractAuthContext } from '../../middleware/tenantContext';
 import { requireAdminRole } from '../../middleware/rbacGuard';
+import { hashPassword } from '../../auth/crypto';
 
 const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
@@ -62,10 +63,82 @@ export async function POST(req: Request) {
   if (!guard.allowed) return guard.errorResponse!;
 
   try {
-    const { action, userId, role, status } = await req.json();
+    const body = await req.json();
+    const { action, userId, role, status, name, email, accountName, accountId, reason, settings } = body;
     const users = await fetchUsers();
-    const targetUser = users.find((u: any) => u.id === userId);
 
+    if (action === 'CREATE_CUSTOMER_ACCOUNT') {
+      const newAccountId = `account-${Date.now().toString(36)}`;
+      const newUserId = `usr-${Date.now().toString().slice(-6)}`;
+      const creds = hashPassword('password123');
+
+      const newUser = {
+        id: newUserId,
+        name: name || email.split('@')[0],
+        email: email.trim().toLowerCase(),
+        passwordHash: creds.hash,
+        salt: creds.salt,
+        role: role || 'FARM_OWNER',
+        accountId: newAccountId,
+        accountName: accountName || `${name}'s Farm Enterprise`,
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      };
+
+      users.push(newUser);
+      await saveUsers(users);
+
+      return NextResponse.json({
+        success: true,
+        message: `Customer Account & Owner '${email}' provisioned with accountId ${newAccountId}`,
+        user: newUser,
+      });
+    }
+
+    if (action === 'ADD_ACCOUNT_MEMBER') {
+      const newUserId = `usr-${Date.now().toString().slice(-6)}`;
+      const creds = hashPassword('password123');
+
+      const newMember = {
+        id: newUserId,
+        name: name || email.split('@')[0],
+        email: email.trim().toLowerCase(),
+        passwordHash: creds.hash,
+        salt: creds.salt,
+        role: role || 'OPERATOR',
+        accountId: accountId,
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      };
+
+      users.push(newMember);
+      await saveUsers(users);
+
+      return NextResponse.json({
+        success: true,
+        message: `Member '${email}' added to Account ${accountId}`,
+        user: newMember,
+      });
+    }
+
+    if (action === 'SUSPEND_ACCOUNT') {
+      let suspendedCount = 0;
+      for (const u of users) {
+        if (u.accountId === accountId) {
+          u.status = 'DISABLED';
+          suspendedCount++;
+        }
+      }
+      await saveUsers(users);
+
+      return NextResponse.json({
+        success: true,
+        message: `Account ${accountId} suspended. ${suspendedCount} users disabled.`,
+        reason,
+      });
+    }
+
+    const targetUser = users.find((u: any) => u.id === userId);
     if (!targetUser) {
       return NextResponse.json({ success: false, message: 'User not found.' }, { status: 404 });
     }

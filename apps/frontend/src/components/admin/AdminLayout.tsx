@@ -15,6 +15,10 @@ import {
   Bell,
   RefreshCw,
   Lock,
+  Bot,
+  Zap,
+  Radio,
+  Server,
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -26,13 +30,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   const navItems: { id: AdminViewType; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'OVERVIEW', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'USERS', label: 'Users Management', icon: Users },
-    { id: 'ACCOUNTS', label: 'Tenant Accounts', icon: Building2 },
-    { id: 'DEVICES', label: 'IoT Devices', icon: Cpu },
+    { id: 'USERS', label: 'User Management', icon: Users },
+    { id: 'DEVICES', label: 'Devices', icon: Cpu },
+    { id: 'TELEMETRY', label: 'Telemetry', icon: Activity },
+    { id: 'COMMANDS', label: 'Commands', icon: Zap },
+    { id: 'ALERTS', label: 'Alerts', icon: AlertTriangle },
+    { id: 'AUTOMATION', label: 'Automation', icon: Bot },
+    { id: 'MQTT', label: 'MQTT', icon: Radio },
+    { id: 'FIRMWARE', label: 'Firmware', icon: RefreshCw },
+    { id: 'HEALTH', label: 'System Health', icon: Server },
     { id: 'AUDIT', label: 'Audit Logs', icon: FileSpreadsheet },
-    { id: 'HEALTH', label: 'System Health', icon: Activity },
-    { id: 'EMERGENCY', label: 'Emergency Controls', icon: AlertTriangle },
-    { id: 'SETTINGS', label: 'Settings', icon: Settings },
+    { id: 'SETTINGS', label: 'System Settings', icon: Settings },
   ];
 
   return (

@@ -1,7 +1,24 @@
 import { create } from 'zustand';
 import { Account, AuditLogEntry, DeviceTransferRecord, IoTDevice, UserRole } from '@aether/shared';
 
-export type AdminViewType = 'OVERVIEW' | 'USERS' | 'ACCOUNTS' | 'DEVICES' | 'AUDIT' | 'HEALTH' | 'EMERGENCY' | 'SETTINGS';
+export type AdminViewType = 'OVERVIEW' | 'USERS' | 'DEVICES' | 'TELEMETRY' | 'COMMANDS' | 'ALERTS' | 'AUTOMATION' | 'MQTT' | 'FIRMWARE' | 'HEALTH' | 'AUDIT' | 'EMERGENCY' | 'SETTINGS';
+
+export type User360Tab =
+  | 'OVERVIEW'
+  | 'ACCOUNT'
+  | 'MEMBERS'
+  | 'FARMS'
+  | 'ZONES'
+  | 'DEVICES'
+  | 'SENSORS'
+  | 'TELEMETRY'
+  | 'COMMANDS'
+  | 'ALERTS'
+  | 'AUTOMATION'
+  | 'USAGE'
+  | 'SECURITY'
+  | 'ACTIVITY'
+  | 'SETTINGS';
 
 export interface AdminUser {
   userId: string;
@@ -19,6 +36,10 @@ export interface AdminStoreState {
   activeView: AdminViewType;
   isLoading: boolean;
   
+  // 360 User Inspection State
+  selectedUser360: any | null;
+  active360Tab: User360Tab;
+
   // Data State
   usersList: any[];
   accountsList: Account[];
@@ -26,19 +47,24 @@ export interface AdminStoreState {
   auditLogs: AuditLogEntry[];
   transferHistory: DeviceTransferRecord[];
   systemHealth: any | null;
-  selectedUser: any | null;
 
   // Actions
   setAdminSession: (user: AdminUser, token: string) => void;
   logoutAdmin: () => void;
   setActiveView: (view: AdminViewType) => void;
+  setSelectedUser360: (user: any | null) => void;
+  setActive360Tab: (tab: User360Tab) => void;
+  
   fetchAdminData: () => Promise<void>;
   toggleUserStatus: (userId: string, currentStatus: string) => Promise<boolean>;
   updateUserRole: (userId: string, role: string) => Promise<boolean>;
+  createCustomerAccount: (payload: { name: string; email: string; accountName: string; role?: string }) => Promise<boolean>;
+  addAccountMember: (payload: { accountId: string; name: string; email: string; role: string }) => Promise<boolean>;
+  suspendAccount: (accountId: string, reason: string) => Promise<boolean>;
+  updateAccountSettings: (accountId: string, settings: any) => Promise<boolean>;
   transferDevice: (deviceId: string, newAccountId: string, reason: string) => Promise<boolean>;
   rotateDeviceCredentials: (deviceId: string) => Promise<string | null>;
   triggerEmergencyAction: (action: string, reason: string, targetId?: string) => Promise<boolean>;
-  setSelectedUser: (user: any | null) => void;
 }
 
 const STORAGE_ADMIN_TOKEN_KEY = 'aether_admin_token';
@@ -66,13 +92,15 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
   activeView: 'OVERVIEW',
   isLoading: false,
 
+  selectedUser360: null,
+  active360Tab: 'OVERVIEW',
+
   usersList: [],
   accountsList: [],
   devicesList: [],
   auditLogs: [],
   transferHistory: [],
   systemHealth: null,
-  selectedUser: null,
 
   setAdminSession: (user, token) => {
     if (typeof window !== 'undefined') {
@@ -87,12 +115,12 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
       localStorage.removeItem(STORAGE_ADMIN_USER_KEY);
       localStorage.removeItem(STORAGE_ADMIN_TOKEN_KEY);
     }
-    set({ adminUser: null, token: null, isAuthenticated: false });
+    set({ adminUser: null, token: null, isAuthenticated: false, selectedUser360: null });
   },
 
   setActiveView: (view) => set({ activeView: view }),
-
-  setSelectedUser: (user) => set({ selectedUser: user }),
+  setSelectedUser360: (user) => set({ selectedUser360: user, active360Tab: 'OVERVIEW' }),
+  setActive360Tab: (tab) => set({ active360Tab: tab }),
 
   fetchAdminData: async () => {
     const { token } = get();
@@ -168,6 +196,82 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
       }
     } catch (e) {
       console.error('[Admin Store] Update role error:', e);
+    }
+    return false;
+  },
+
+  createCustomerAccount: async (payload) => {
+    const { token, fetchAdminData } = get();
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'CREATE_CUSTOMER_ACCOUNT', ...payload }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAdminData();
+        return true;
+      }
+    } catch (e) {
+      console.error('[Admin Store] Create customer error:', e);
+    }
+    return false;
+  },
+
+  addAccountMember: async (payload) => {
+    const { token, fetchAdminData } = get();
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'ADD_ACCOUNT_MEMBER', ...payload }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAdminData();
+        return true;
+      }
+    } catch (e) {
+      console.error('[Admin Store] Add member error:', e);
+    }
+    return false;
+  },
+
+  suspendAccount: async (accountId, reason) => {
+    const { token, fetchAdminData } = get();
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'SUSPEND_ACCOUNT', accountId, reason }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAdminData();
+        return true;
+      }
+    } catch (e) {
+      console.error('[Admin Store] Suspend account error:', e);
+    }
+    return false;
+  },
+
+  updateAccountSettings: async (accountId, settings) => {
+    const { token, fetchAdminData } = get();
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'UPDATE_ACCOUNT_SETTINGS', accountId, settings }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAdminData();
+        return true;
+      }
+    } catch (e) {
+      console.error('[Admin Store] Settings error:', e);
     }
     return false;
   },
