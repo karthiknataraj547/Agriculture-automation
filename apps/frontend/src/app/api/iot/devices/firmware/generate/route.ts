@@ -205,10 +205,11 @@ void checkWebCommands() {
       if (commands.size() > 0) {
         JsonObject latestCmd = commands[0];
         String targetDev = latestCmd["deviceId"] | "";
+        String targetPump = latestCmd["pumpId"] | "";
         String cmdType = latestCmd["commandType"] | "";
         String reqVal = latestCmd["requestedValue"] | "";
 
-        if (targetDev == DEVICE_ID || targetDev == "esp32-node-zone-1" || targetDev.startsWith("pump")) {
+        if (targetDev == DEVICE_ID || targetDev == "esp32-node-zone-1" || targetPump == "pump-1" || targetDev.startsWith("pump")) {
           if (cmdType == "START_PUMP" || cmdType == "PUMP_ON" || reqVal == "RUNNING" || reqVal == "START") {
             setRelayState(true, "Web Tool Direct Sync");
           } else if (cmdType == "STOP_PUMP" || cmdType == "PUMP_OFF" || reqVal == "OFF" || reqVal == "STOP") {

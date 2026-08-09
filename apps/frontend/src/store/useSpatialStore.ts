@@ -333,10 +333,11 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
   },
 
   togglePumpState: (pumpId) => {
+    let nextStatus: 'RUNNING' | 'OFF' = 'OFF';
     set((state) => {
       const updatedPumps = state.pumps.map((p) => {
         if (p.id === pumpId) {
-          const nextStatus = p.status === 'RUNNING' ? ('OFF' as const) : ('RUNNING' as const);
+          nextStatus = p.status === 'RUNNING' ? ('OFF' as const) : ('RUNNING' as const);
           return {
             ...p,
             status: nextStatus,
@@ -349,6 +350,19 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       });
       return { pumps: updatedPumps, lastUserActionTime: Date.now() };
     });
+
+    // Dispatch Hardware Command to API for ESP32 / NodeMCU Actuation
+    fetch('/api/devices/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: 'esp32-node-zone-1',
+        pumpId,
+        commandType: String(nextStatus) === 'RUNNING' ? 'START_PUMP' : 'STOP_PUMP',
+        requestedValue: nextStatus,
+      }),
+    }).catch(() => {});
+
     get().syncStateToCloud();
   },
 
@@ -368,6 +382,19 @@ export const useSpatialStore = create<SpatialStoreState>((set, get) => ({
       });
       return { pumps: updatedPumps, lastUserActionTime: Date.now() };
     });
+
+    // Dispatch Hardware Command to API for ESP32 / NodeMCU Actuation
+    fetch('/api/devices/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: 'esp32-node-zone-1',
+        pumpId,
+        commandType: status === 'RUNNING' ? 'START_PUMP' : 'STOP_PUMP',
+        requestedValue: status,
+      }),
+    }).catch(() => {});
+
     get().syncStateToCloud();
   },
 
