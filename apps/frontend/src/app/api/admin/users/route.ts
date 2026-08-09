@@ -3,19 +3,74 @@ import { extractAuthContext } from '../../middleware/tenantContext';
 import { requireAdminRole } from '../../middleware/rbacGuard';
 import { hashPassword } from '../../auth/crypto';
 
-const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
+const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fe7c738771714';
 
 async function fetchUsers() {
+  let users: any[] = [];
   try {
     const res = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
     if (res.ok) {
       const json: any = await res.json();
-      if (json?.data?.users) return json.data.users;
+      if (json?.data?.users && Array.isArray(json.data.users)) {
+        users = json.data.users;
+      }
     }
   } catch (e) {
     console.error('[Admin Users] Fetch error:', e);
   }
-  return [];
+
+  // Ensure initial seed users are merged into the list
+  const seedUsers = [
+    {
+      id: 'admin',
+      name: 'System Super Administrator',
+      email: 'admin@agritech.com',
+      role: 'SUPER_ADMIN',
+      accountId: 'account-system-admin',
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'usr-admin-01',
+      name: 'Karthik Nataraj',
+      email: 'karthiknataraj547@gmail.com',
+      role: 'SUPER_ADMIN',
+      accountId: 'account-farm-alpha',
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'usr-admin-02',
+      name: 'Customer Operator',
+      email: 'customer@aethercrop.io',
+      role: 'USER',
+      accountId: 'account-farm-beta',
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  let needsSave = false;
+  for (const seedUser of seedUsers) {
+    const existing = users.find(
+      (u: any) => u.email?.toLowerCase() === seedUser.email.toLowerCase() || u.id === seedUser.id
+    );
+    if (!existing) {
+      const { hash, salt } = hashPassword('password123');
+      users.push({
+        ...seedUser,
+        passwordHash: hash,
+        salt,
+      });
+      needsSave = true;
+    }
+  }
+
+  if (needsSave) {
+    await saveUsers(users);
+  }
+
+  return users;
 }
 
 async function saveUsers(users: any[]) {

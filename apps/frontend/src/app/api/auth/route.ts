@@ -15,7 +15,7 @@ export interface GlobalUserRecord {
   lastLogin?: string;
 }
 
-const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
+const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fe7c738771714';
 
 // Pre-seeded salted hashes with Admin Bootstrap from environment variables
 const seedDefaultUsers = (): GlobalUserRecord[] => {
@@ -82,6 +82,20 @@ async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
       }
     }
 
+    // Merge default seeded users if missing from cloud DB
+    const seedUsers = seedDefaultUsers();
+    let needsSave = false;
+
+    for (const seedUser of seedUsers) {
+      const existing = usersCache.find(
+        (u) => u.email.toLowerCase() === seedUser.email.toLowerCase() || u.id === seedUser.id
+      );
+      if (!existing) {
+        usersCache.push(seedUser);
+        needsSave = true;
+      }
+    }
+
     // Auto-heal / Ensure admin@agritech.com with admin@1234 exists
     const adminEmail = (process.env.ADMIN_INITIAL_EMAIL || 'admin@agritech.com').toLowerCase();
     const adminPass = process.env.ADMIN_INITIAL_PASSWORD || 'admin@1234';
@@ -103,7 +117,7 @@ async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
         createdAt: new Date().toISOString(),
       };
       usersCache.push(adminUser);
-      await saveUsersToCloudDB(usersCache);
+      needsSave = true;
     } else {
       // Verify password matches adminPass, if not update passwordHash & salt
       const isMatch = verifyPassword(adminPass, adminUser.passwordHash, adminUser.salt);
@@ -115,8 +129,12 @@ async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
         adminUser.role = 'SUPER_ADMIN';
         adminUser.status = 'ACTIVE';
         adminUser.mustChangePassword = false;
-        await saveUsersToCloudDB(usersCache);
+        needsSave = true;
       }
+    }
+
+    if (needsSave) {
+      await saveUsersToCloudDB(usersCache);
     }
   } catch (e) {
     console.error('[Auth Cloud DB] Fetch error:', e);

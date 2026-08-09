@@ -3,7 +3,7 @@ import { extractAuthContext } from '../../middleware/tenantContext';
 import { requireAdminRole } from '../../middleware/rbacGuard';
 import { DeviceTransferRecord } from '@aether/shared';
 
-const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
+const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fe7c738771714';
 
 let transferAuditLog: DeviceTransferRecord[] = [];
 
