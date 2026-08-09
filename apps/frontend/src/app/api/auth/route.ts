@@ -8,32 +8,58 @@ export interface GlobalUserRecord {
   passwordHash: string;
   salt: string;
   role: string;
+  accountId: string;
+  status: 'ACTIVE' | 'DISABLED' | 'SUSPENDED';
+  mustChangePassword?: boolean;
   createdAt: string;
+  lastLogin?: string;
 }
 
 const CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fddd0e4790cf7';
 
-// Pre-seeded salted hashes for default accounts
+// Pre-seeded salted hashes with Admin Bootstrap from environment variables
 const seedDefaultUsers = (): GlobalUserRecord[] => {
-  const adminCreds = hashPassword('password123');
+  const initialAdminId = process.env.ADMIN_INITIAL_USER_ID || 'admin';
+  const initialAdminPass = process.env.ADMIN_INITIAL_PASSWORD || 'AdminSecure2026!';
+  const initialAdminEmail = process.env.ADMIN_INITIAL_EMAIL || 'admin@aethercrop.io';
+
+  const adminCreds = hashPassword(initialAdminPass);
+  const karthikCreds = hashPassword('password123');
   const custCreds = hashPassword('password123');
+
   return [
+    {
+      id: initialAdminId,
+      name: 'System Super Administrator',
+      email: initialAdminEmail,
+      passwordHash: adminCreds.hash,
+      salt: adminCreds.salt,
+      role: 'SUPER_ADMIN',
+      accountId: 'account-system-admin',
+      status: 'ACTIVE',
+      mustChangePassword: true,
+      createdAt: new Date().toISOString(),
+    },
     {
       id: 'usr-admin-01',
       name: 'Karthik Nataraj',
       email: 'karthiknataraj547@gmail.com',
-      passwordHash: adminCreds.hash,
-      salt: adminCreds.salt,
-      role: 'Farm Owner & System Administrator',
+      passwordHash: karthikCreds.hash,
+      salt: karthikCreds.salt,
+      role: 'SUPER_ADMIN',
+      accountId: 'account-farm-alpha',
+      status: 'ACTIVE',
       createdAt: new Date().toISOString(),
     },
     {
       id: 'usr-admin-02',
-      name: 'Customer Admin',
+      name: 'Customer Operator',
       email: 'customer@aethercrop.io',
       passwordHash: custCreds.hash,
       salt: custCreds.salt,
-      role: 'Farm Operator',
+      role: 'USER',
+      accountId: 'account-farm-beta',
+      status: 'ACTIVE',
       createdAt: new Date().toISOString(),
     },
   ];
@@ -125,6 +151,10 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false, message: `No account found for "${email}". Click "Set Password" to create.` }, { status: 404 });
       }
 
+      if (user.status === 'DISABLED') {
+        return NextResponse.json({ success: false, message: 'This account has been disabled by an administrator.' }, { status: 403 });
+      }
+
       let isMatch = false;
       if (user.passwordHash && user.salt) {
         isMatch = verifyPassword(password, user.passwordHash, user.salt);
@@ -142,6 +172,12 @@ export async function POST(req: Request) {
       if (!isMatch) {
         return NextResponse.json({ success: false, message: 'Incorrect password.' }, { status: 401 });
       }
+
+      user.lastLogin = new Date().toISOString();
+      if (!user.accountId) {
+        user.accountId = `account-${user.id}`;
+      }
+      await saveUsersToCloudDB(users);
 
       const { passwordHash: _, salt: __, ...sanitizedUser } = user;
       return NextResponse.json({ success: true, user: sanitizedUser });
@@ -161,6 +197,9 @@ export async function POST(req: Request) {
         users[existingIndex].salt = salt;
         delete (users[existingIndex] as any).password;
         if (name?.trim()) users[existingIndex].name = name.trim();
+        if (!users[existingIndex].accountId) {
+          users[existingIndex].accountId = `acc-${Date.now().toString(36)}`;
+        }
         user = users[existingIndex];
       } else {
         user = {
@@ -169,7 +208,9 @@ export async function POST(req: Request) {
           email: targetEmail,
           passwordHash: hash,
           salt,
-          role: 'Farm Owner & System Administrator',
+          role: 'USER',
+          accountId: `acc-${Date.now().toString(36)}`,
+          status: 'ACTIVE',
           createdAt: new Date().toISOString(),
         };
         users.push(user);

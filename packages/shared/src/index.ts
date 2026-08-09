@@ -5,12 +5,90 @@
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   ADMIN = 'ADMIN',
+  SUPPORT_ADMIN = 'SUPPORT_ADMIN',
+  TECHNICIAN = 'TECHNICIAN',
+  USER = 'USER',
+  VIEWER = 'VIEWER',
   FARM_OWNER = 'FARM_OWNER',
   MANAGER = 'MANAGER',
-  TECHNICIAN = 'TECHNICIAN',
   OPERATOR = 'OPERATOR',
-  VIEWER = 'VIEWER',
   GUEST = 'GUEST'
+}
+
+export type Permission =
+  | 'devices.read'
+  | 'devices.create'
+  | 'devices.update'
+  | 'devices.delete'
+  | 'devices.control'
+  | 'devices.transfer'
+  | 'telemetry.read'
+  | 'farms.manage'
+  | 'users.read'
+  | 'users.update'
+  | 'users.disable'
+  | 'admin.settings'
+  | 'audit.read'
+  | 'emergency.control';
+
+export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
+  [UserRole.SUPER_ADMIN]: [
+    'devices.read', 'devices.create', 'devices.update', 'devices.delete', 'devices.control', 'devices.transfer',
+    'telemetry.read', 'farms.manage', 'users.read', 'users.update', 'users.disable',
+    'admin.settings', 'audit.read', 'emergency.control'
+  ],
+  [UserRole.ADMIN]: [
+    'devices.read', 'devices.create', 'devices.update', 'devices.delete', 'devices.control', 'devices.transfer',
+    'telemetry.read', 'farms.manage', 'users.read', 'users.update', 'users.disable',
+    'admin.settings', 'audit.read', 'emergency.control'
+  ],
+  [UserRole.SUPPORT_ADMIN]: [
+    'devices.read', 'devices.control', 'telemetry.read', 'farms.manage', 'users.read', 'audit.read'
+  ],
+  [UserRole.TECHNICIAN]: [
+    'devices.read', 'devices.create', 'devices.update', 'devices.control', 'telemetry.read'
+  ],
+  [UserRole.USER]: [
+    'devices.read', 'devices.create', 'devices.update', 'devices.delete', 'devices.control',
+    'telemetry.read', 'farms.manage'
+  ],
+  [UserRole.FARM_OWNER]: [
+    'devices.read', 'devices.create', 'devices.update', 'devices.delete', 'devices.control',
+    'telemetry.read', 'farms.manage'
+  ],
+  [UserRole.MANAGER]: [
+    'devices.read', 'devices.update', 'devices.control', 'telemetry.read', 'farms.manage'
+  ],
+  [UserRole.OPERATOR]: [
+    'devices.read', 'devices.control', 'telemetry.read'
+  ],
+  [UserRole.VIEWER]: [
+    'devices.read', 'telemetry.read'
+  ],
+  [UserRole.GUEST]: [
+    'devices.read', 'telemetry.read'
+  ]
+};
+
+export interface Account {
+  id: string;
+  name: string;
+  slug: string;
+  ownerId: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+  maxDevices: number;
+  maxUsers: number;
+  maxTelemetryRate: number; // packets/min
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountMembership {
+  id: string;
+  accountId: string;
+  userId: string;
+  role: UserRole;
+  createdAt: string;
 }
 
 export enum DeviceStatus {
@@ -56,6 +134,7 @@ export enum CommandStatus {
 export interface DeviceCommand {
   commandId: string;
   deviceId: string;
+  accountId?: string;
   userId: string;
   userEmail: string;
   farmId: string;
@@ -69,6 +148,25 @@ export interface DeviceCommand {
   acknowledgedAt?: string;
   completedAt?: string;
   error?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  userRole: UserRole;
+  accountId?: string;
+  actorId?: string;
+  actorRole?: UserRole;
+  action: string;
+  resource: string;
+  targetType?: string;
+  targetId?: string;
+  ipAddress: string;
+  userAgent?: string;
+  details: Record<string, any>;
+  status: 'SUCCESS' | 'FAILURE' | 'DENIED';
 }
 
 export interface BoardPinDefinition {
@@ -172,6 +270,7 @@ export interface IoTDevice {
   macAddress: string;
   firmwareVersion: string;
   status: DeviceStatus;
+  accountId?: string;
   farmId: string;
   zoneId: string;
   ownerId: string;
@@ -189,6 +288,19 @@ export interface IoTDevice {
     elevation: number;
   };
   sensorsAttached: string[];
+  createdBy?: string;
+}
+
+export interface DeviceTransferRecord {
+  id: string;
+  deviceId: string;
+  deviceSerialNumber: string;
+  previousAccountId: string;
+  newAccountId: string;
+  transferredByAdminId: string;
+  transferredByAdminEmail: string;
+  reason?: string;
+  timestamp: string;
 }
 
 export interface DeviceCapabilities {
@@ -309,18 +421,6 @@ export interface AIInsight {
   estimatedWaterSavedLiters?: number;
 }
 
-export interface AuditLogEntry {
-  id: string;
-  timestamp: string;
-  userId: string;
-  userName: string;
-  userRole: UserRole;
-  action: string;
-  resource: string;
-  ipAddress: string;
-  details: Record<string, any>;
-  status: 'SUCCESS' | 'FAILURE' | 'DENIED';
-}
 
 export interface WeatherData {
   temperature: number;
