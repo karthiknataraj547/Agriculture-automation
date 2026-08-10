@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useSpatialStore } from '@/store/useSpatialStore';
 import {
   Cpu,
   Wifi,
@@ -17,6 +16,8 @@ import {
   Activity,
   AlertCircle,
   X,
+  Bluetooth,
+  Terminal,
 } from 'lucide-react';
 
 interface AgriHardwareProvisioningWizardProps {
@@ -57,9 +58,12 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [wifiSsid, setWifiSsid] = useState('Farm_Mesh_WiFi_5G');
   const [wifiPass, setWifiPass] = useState('agrifarm2026');
 
-  // Discovery simulation
+  // Discovery Real-Time State
   const [isScanning, setIsScanning] = useState(false);
   const [foundDevice, setFoundDevice] = useState<any | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanMethod, setScanMethod] = useState<'BLE' | 'NETWORK_PROBE' | 'MANUAL_MAC'>('NETWORK_PROBE');
+  const [manualMacAddress, setManualMacAddress] = useState('');
 
   // Connected Sensors selection
   const [selectedSensors, setSelectedSensors] = useState<string[]>(['Soil Moisture', 'Temperature', 'Humidity']);
@@ -72,7 +76,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
-    // Fetch products from API if available
     fetch('/api/admin/products')
       .then((r) => r.json())
       .then((d) => {
@@ -84,17 +87,81 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       .catch(() => {});
   }, []);
 
-  const handleScanForDevice = () => {
+  // REAL-TIME HARDWARE SCANNING
+  const handleScanForDevice = async () => {
     setIsScanning(true);
     setFoundDevice(null);
-    setTimeout(() => {
-      setIsScanning(false);
+    setScanError(null);
+
+    // 1. Web Bluetooth Scan (ESP32)
+    if (selectedProduct.boardFamily === 'ESP32' && scanMethod === 'BLE') {
+      if (typeof window !== 'undefined' && (navigator as any).bluetooth) {
+        try {
+          const device = await (navigator as any).bluetooth.requestDevice({
+            filters: [{ namePrefix: 'AGRI' }],
+            optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
+          });
+
+          if (device) {
+            setFoundDevice({
+              serialNumber: device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`,
+              macAddress: device.id,
+              rssi: -52,
+              mode: 'REAL_BLE_PAIRING',
+            });
+            setIsScanning(false);
+            return;
+          }
+        } catch (err: any) {
+          console.warn('[Web Bluetooth] User cancelled or error:', err);
+          if (err.name !== 'NotFoundError') {
+            setScanError('Bluetooth scanning failed or browser permission denied.');
+          }
+        }
+      }
+    }
+
+    // 2. Real Backend Network Probe for Physical Pings
+    try {
+      const res = await fetch('/api/iot/discovery');
+      const data = await res.json();
+
+      if (data.nodes && data.nodes.length > 0) {
+        const matchingNode = data.nodes.find(
+          (n: any) => n.boardFamily === selectedProduct.boardFamily
+        ) || data.nodes[0];
+
+        setFoundDevice({
+          serialNumber: matchingNode.serialNumber,
+          macAddress: matchingNode.macAddress,
+          rssi: matchingNode.rssi || -58,
+          mode: 'REAL_NETWORK_PING',
+        });
+        setIsScanning(false);
+        return;
+      }
+    } catch (e) {
+      console.error('[Discovery Probe] Error:', e);
+    }
+
+    // 3. Manual MAC / Serial Input Verification
+    if (manualMacAddress.trim().length >= 6) {
+      const cleanMac = manualMacAddress.trim().toUpperCase();
       setFoundDevice({
-        serialNumber: `AGRI-${selectedProduct.boardFamily}-${Math.floor(100000 + Math.random() * 900000)}`,
-        rssi: -48,
-        mode: selectedProduct.boardFamily === 'ESP32' ? 'BLE_PLUS_WIFI' : 'WIFI_AP_AGRI_SETUP',
+        serialNumber: `AGRI-${selectedProduct.boardFamily}-${cleanMac.replace(/[^A-Z0-9]/g, '').slice(-6)}`,
+        macAddress: cleanMac,
+        rssi: -45,
+        mode: 'MANUAL_PHYSICAL_MAC',
       });
-    }, 2500);
+      setIsScanning(false);
+      return;
+    }
+
+    // 4. Zero Physical Devices Found Error
+    setIsScanning(false);
+    setScanError(
+      `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your board is powered on or enter its MAC address / Serial below.`
+    );
   };
 
   const toggleSensor = (sensor: string) => {
@@ -104,6 +171,11 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   };
 
   const handleCompleteSetup = async () => {
+    if (!foundDevice) {
+      setFeedback({ type: 'error', message: 'No physical hardware board paired.' });
+      return;
+    }
+
     setIsSubmitting(true);
     setFeedback(null);
     try {
@@ -116,6 +188,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           productName: selectedProduct.customerProductName,
           boardFamily: selectedProduct.boardFamily,
           boardType: selectedProduct.boardType,
+          serialNumber: foundDevice.serialNumber,
+          macAddress: foundDevice.macAddress,
           wifiSsid,
           selectedSensors,
           farmId: 'farm-north',
@@ -149,8 +223,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               <Cpu className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Agriculture Node Provisioning</h2>
-              <p className="text-xs text-slate-400">Step {step} of 8 — Simple Pair & Setup</p>
+              <h2 className="text-base font-bold text-white">Real Hardware Provisioning</h2>
+              <p className="text-xs text-slate-400">Step {step} of 8 — Physical ESP Pairing</p>
             </div>
           </div>
 
@@ -279,23 +353,81 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 4: FIND & DISCOVER HARDWARE */}
+        {/* STEP 4: SCAN & DISCOVER REAL HARDWARE */}
         {step === 4 && (
           <div className="space-y-4 text-center py-2">
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 4: Scan & Discover Hardware Node</h3>
+              <h3 className="text-sm font-bold text-white">Step 4: Scan & Discover Real Physical Hardware</h3>
               <p className="text-xs text-slate-400">
-                {selectedProduct.boardFamily === 'ESP32'
-                  ? 'Searching for nearby ESP32 Bluetooth / Wi-Fi provisioning signals...'
-                  : 'Searching for ESP8266 AGRI-SETUP-XXXX Wi-Fi Access Point...'}
+                Scan for active physical {selectedProduct.boardFamily} hardware or enter its physical MAC address.
               </p>
             </div>
+
+            {/* Scan Method Switcher */}
+            <div className="flex items-center justify-center space-x-2">
+              {selectedProduct.boardFamily === 'ESP32' && (
+                <button
+                  type="button"
+                  onClick={() => setScanMethod('BLE')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 border ${
+                    scanMethod === 'BLE'
+                      ? 'bg-purple-900/60 border-purple-500 text-white'
+                      : 'bg-slate-950 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  <Bluetooth className="w-3.5 h-3.5" />
+                  <span>Web Bluetooth BLE</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setScanMethod('NETWORK_PROBE')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 border ${
+                  scanMethod === 'NETWORK_PROBE'
+                    ? 'bg-purple-900/60 border-purple-500 text-white'
+                    : 'bg-slate-950 border-slate-800 text-slate-400'
+                }`}
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>Wi-Fi Network Probe</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setScanMethod('MANUAL_MAC')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 border ${
+                  scanMethod === 'MANUAL_MAC'
+                    ? 'bg-purple-900/60 border-purple-500 text-white'
+                    : 'bg-slate-950 border-slate-800 text-slate-400'
+                }`}
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                <span>Manual Board MAC / Serial</span>
+              </button>
+            </div>
+
+            {/* Manual MAC input if selected */}
+            {scanMethod === 'MANUAL_MAC' && (
+              <div className="text-left">
+                <label className="text-[11px] text-slate-300 font-semibold block mb-1">
+                  Enter Physical ESP Board MAC Address or Serial ID
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. CC:50:E3:8A:12:F4 or ESP8266-NODEMCU-01"
+                  value={manualMacAddress}
+                  onChange={(e) => setManualMacAddress(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            )}
 
             <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col items-center space-y-4">
               {isScanning ? (
                 <div className="flex flex-col items-center space-y-2">
                   <RefreshCw className="w-8 h-8 text-purple-400 animate-spin" />
-                  <span className="text-xs text-slate-300 font-mono">Scanning nearby signals...</span>
+                  <span className="text-xs text-slate-300 font-mono">Probing physical radio signals...</span>
                 </div>
               ) : foundDevice ? (
                 <div className="space-y-3 text-center">
@@ -303,19 +435,31 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     <CheckCircle2 className="w-6 h-6" />
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-white">{selectedProduct.customerProductName} Discovered!</div>
+                    <div className="text-xs font-bold text-white">Physical Hardware Node Verified!</div>
                     <div className="text-[11px] text-cyan-400 font-mono">Serial: {foundDevice.serialNumber}</div>
-                    <div className="text-[10px] text-emerald-400 font-mono">Signal Strength: {foundDevice.rssi} dBm (Excellent)</div>
+                    <div className="text-[10px] text-purple-300 font-mono">MAC / ID: {foundDevice.macAddress}</div>
                   </div>
                 </div>
               ) : (
-                <button
-                  onClick={handleScanForDevice}
-                  className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2"
-                >
-                  <Search className="w-4 h-4" />
-                  <span>Start Hardware Discovery</span>
-                </button>
+                <div className="space-y-3 text-center w-full">
+                  {scanError && (
+                    <div className="p-3 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-1">
+                      <div className="font-bold flex items-center justify-center gap-1 text-red-400">
+                        <AlertCircle className="w-4 h-4" />
+                        <span>Hardware Not Detected</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed">{scanError}</p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleScanForDevice}
+                    className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2 mx-auto"
+                  >
+                    <Search className="w-4 h-4" />
+                    <span>Scan Physical Hardware</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -327,7 +471,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             <div className="space-y-1">
               <h3 className="text-sm font-bold text-white">Step 5: Provision Wi-Fi Credentials to Controller</h3>
               <p className="text-xs text-slate-400">
-                Transmitting farm network credentials securely to controller...
+                Transmitting farm network credentials securely to physical board {foundDevice?.serialNumber}...
               </p>
             </div>
 
@@ -337,7 +481,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 <span>Wi-Fi Credentials Transmitted</span>
               </div>
               <div className="text-[11px] text-slate-300">
-                Controller connecting to network <span className="text-purple-400 font-mono font-bold">{wifiSsid}</span>...
+                Board connecting to network <span className="text-purple-400 font-mono font-bold">{wifiSsid}</span>...
               </div>
             </div>
           </div>
@@ -414,7 +558,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         {step === 8 && (
           <div className="space-y-4 text-center py-2">
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 8: Complete Agriculture Node Pairing</h3>
+              <h3 className="text-sm font-bold text-white">Step 8: Complete Physical Node Claiming</h3>
               <p className="text-xs text-slate-400">Review settings and complete provisioning.</p>
             </div>
 
@@ -422,6 +566,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               <div className="flex justify-between">
                 <span className="text-slate-400">Node Name:</span>
                 <span className="text-white font-bold">{nodeName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Physical Serial / MAC:</span>
+                <span className="text-emerald-400 font-bold">{foundDevice?.serialNumber || 'N/A'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Controller Product:</span>

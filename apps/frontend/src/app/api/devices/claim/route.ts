@@ -41,19 +41,24 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { deviceName, productId, productName, wifiSsid, selectedSensors, farmId, zoneId } = body;
+    const { deviceName, productId, productName, wifiSsid, selectedSensors, farmId, zoneId, serialNumber, macAddress } = body;
+
+    if (!serialNumber && !macAddress) {
+      return NextResponse.json({ success: false, message: 'No physical hardware paired. Scan or enter a valid MAC / Serial.' }, { status: 400 });
+    }
 
     const data = await fetchStateFromCloudDB();
     const state = data.state || { devices: [] };
     const devices = state.devices || [];
 
     const newDeviceId = `node_${Date.now().toString(36)}`;
-    const serialNumber = `AGRI-${(body.boardFamily || 'ESP32').toUpperCase()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const physicalSerial = serialNumber || `AGRI-${(body.boardFamily || 'ESP32').toUpperCase()}-${macAddress.replace(/[^A-Z0-9]/g, '').slice(-6)}`;
 
     const newDevice = {
       uuid: newDeviceId,
       name: deviceName || 'Agricultural Node',
-      serialNumber,
+      serialNumber: physicalSerial,
+      macAddress: macAddress || physicalSerial,
       productId: productId || 'prod_agriflow_v1',
       customerProductName: productName || 'AgriFlow Smart Irrigation Controller',
       boardFamily: body.boardFamily || 'ESP32',
@@ -75,15 +80,18 @@ export async function POST(req: Request) {
       },
     };
 
-    devices.push(newDevice);
-    state.devices = devices;
+    // Remove any previous instance of this physical serial
+    const filtered = devices.filter((d: any) => d.serialNumber !== physicalSerial && d.uuid !== newDeviceId);
+    filtered.push(newDevice);
+
+    state.devices = filtered;
     data.state = state;
 
     await saveStateToCloudDB(data);
 
     return NextResponse.json({
       success: true,
-      message: `Agricultural Node '${newDevice.name}' (${newDevice.customerProductName}) successfully provisioned!`,
+      message: `Physical Hardware '${newDevice.name}' (${newDevice.serialNumber}) successfully claimed into account!`,
       device: newDevice,
     });
   } catch (err: any) {
