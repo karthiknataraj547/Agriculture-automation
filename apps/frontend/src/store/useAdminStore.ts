@@ -64,6 +64,7 @@ export interface AdminStoreState {
   suspendAccount: (accountId: string, reason: string) => Promise<boolean>;
   updateAccountSettings: (accountId: string, settings: any) => Promise<boolean>;
   createHardwareProduct: (product: Partial<HardwareProduct>) => Promise<boolean>;
+  updateHardwareProduct: (product: Partial<HardwareProduct>) => Promise<boolean>;
   deleteHardwareProduct: (productId: string) => Promise<boolean>;
   transferDevice: (deviceId: string, newAccountId: string, reason: string) => Promise<boolean>;
   rotateDeviceCredentials: (deviceId: string) => Promise<string | null>;
@@ -298,6 +299,25 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
       }
     } catch (e) {
       console.error('[Admin Store] Create product error:', e);
+    }
+    return false;
+  },
+
+  updateHardwareProduct: async (product) => {
+    const { token, fetchAdminData } = get();
+    try {
+      const res = await fetch('/api/admin/products', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'UPDATE_PRODUCT', product }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAdminData();
+        return true;
+      }
+    } catch (e) {
+      console.error('[Admin Store] Update product error:', e);
     }
     return false;
   },
