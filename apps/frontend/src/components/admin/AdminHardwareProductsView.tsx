@@ -133,123 +133,241 @@ export const AdminHardwareProductsView: React.FC = () => {
   // GENERATE C++ ARDUINO CODE FOR ESP32 & ESP8266 FAMILIES
   const generateArduinoCode = (product: HardwareProduct, family: 'ESP32' | 'ESP8266') => {
     const isEsp8266 = family === 'ESP8266';
-    const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>\n#include <ESP8266HTTPClient.h>' : '#include <WiFi.h>\n#include <HTTPClient.h>';
+    const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>\n#include <ESP8266HTTPClient.h>\n#include <ESP8266WebServer.h>' : '#include <WiFi.h>\n#include <HTTPClient.h>\n#include <WebServer.h>\n#include <BLEDevice.h>\n#include <BLEUtils.h>\n#include <BLEServer.h>';
+    const prefHeader = isEsp8266 ? '#include <EEPROM.h>' : '#include <Preferences.h>';
+    const ledPin = isEsp8266 ? '2' : '2'; // GPIO 2 (D4 on NodeMCU / GPIO 2 on ESP32)
     const soilPin = isEsp8266 ? 'A0' : '34';
     const dhtPin = isEsp8266 ? 'D2' : '4';
     const relayPin = isEsp8266 ? 'D3' : '26';
     const flowPin = isEsp8266 ? 'D5' : '27';
+    const serverType = isEsp8266 ? 'ESP8266WebServer' : 'WebServer';
 
     return `/*
- * Commercial Smart Agriculture Node Firmware
+ * Commercial Smart Agriculture Node Firmware (Provisioning + Real-Time Telemetry)
  * Product: ${product.customerProductName}
- * Internal Board SKU: ${product.internalName}
- * Family: ${family} (${isEsp8266 ? 'Tensilica L106 80MHz' : 'Xtensa Dual-Core 240MHz'})
- * Firmware Version: v${product.firmwareVersion || '1.4.2'}
- * Target Architecture: ${isEsp8266 ? 'ESP8266EX / NodeMCU 1.0' : 'ESP32-WROOM-32 / ESP32-S3'}
+ * Internal SKU: ${product.internalName}
+ * Microcontroller: ${family} (${isEsp8266 ? 'Tensilica L106 NodeMCU' : 'Xtensa LX6 ESP32'})
+ * Version: v${product.firmwareVersion || '1.4.2'}
  */
 
 ${wifiHeader}
+${prefHeader}
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
 // ─── HARDWARE GPIO PIN MAPPING (${family}) ───
+#define PIN_LED_INDICATOR  ${ledPin}    // Onboard Status LED (Blinks rapidly in Setup Mode)
+#define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0 - hold for 3s to reset setup)
 #define PIN_SOIL_MOISTURE  ${soilPin}  // Analog Soil Moisture Probe
 #define PIN_DHT_DATA       ${dhtPin}   // Digital Air Temp & Humidity
 #define PIN_RELAY_PUMP     ${relayPin}   // Water Pump Relay (Active ${isEsp8266 ? 'LOW' : 'HIGH'})
 #define PIN_FLOW_RATE      ${flowPin}   // Pulse Water Flow Sensor
 #define DHTTYPE            DHT11
 
-// ─── NETWORK & MQTT CONFIGURATION ───
-const char* wifi_ssid     = "YOUR_FARM_WIFI_SSID";
-const char* wifi_password = "YOUR_WIFI_PASSWORD";
-const char* mqtt_broker   = "mqtt.agritech.com";
-const int   mqtt_port     = 8883; // Secure TLS Port
-
-const char* device_id     = "${product.id}";
-const char* pub_topic     = "agri/farm-alpha/zone-1/telemetry";
-const char* sub_topic     = "agri/farm-alpha/zone-1/commands";
-
+${isEsp8266 ? '' : '#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"\n#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"\n'}
+// ─── GLOBAL OBJECTS & STATE ───
+${isEsp8266 ? '' : 'Preferences preferences;\n'}${serverType} server(80);
 WiFiClientSecure espClient;
-PubSubClient client(espClient);
+PubSubClient mqttClient(espClient);
 DHT dht(PIN_DHT_DATA, DHTTYPE);
+
+String wifiSsid = "";
+String wifiPass = "";
+String deviceSerial = "";
+String macAddress = "";
+bool isProvisioned = false;
+
+unsigned long lastLedToggle = 0;
+bool ledState = LOW;
+
+void setupProvisioningMode();
+void handleProvisioningRequest();
+void connectToWiFi();
+void pingDiscoveryGateway();
+void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 void setup() {
   Serial.begin(115200);
+  pinMode(PIN_LED_INDICATOR, OUTPUT);
+  pinMode(PIN_BUTTON_RESET, INPUT_PULLUP);
   pinMode(PIN_RELAY_PUMP, OUTPUT);
   digitalWrite(PIN_RELAY_PUMP, LOW);
   
   dht.begin();
   
-  Serial.println("[AGRI] Connecting to Farm Wi-Fi Network...");
-  WiFi.begin(wifi_ssid, wifi_password);
-  while (WiFi.status() != WL_CONNECTED) {
+  macAddress = WiFi.macAddress();
+  deviceSerial = "AGRI-${family}-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  deviceSerial.toUpperCase();
+
+  Serial.println("\\n==========================================");
+  Serial.println(" ${product.customerProductName} (${family})");
+  Serial.println(" Serial Number: " + deviceSerial);
+  Serial.println(" MAC Address:   " + macAddress);
+  Serial.println("==========================================");
+
+  ${isEsp8266 ? 'EEPROM.begin(512);\n  char s[32], p[64];\n  // Load saved Wi-Fi credentials\n' : 'preferences.begin("agri-node", false);\n  wifiSsid = preferences.getString("ssid", "");\n  wifiPass = preferences.getString("pass", "");\n'}
+  if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
+    Serial.println("[MODE] Entering PROVISIONING / SETUP MODE...");
+    setupProvisioningMode();
+  } else {
+    Serial.println("[MODE] Connecting with saved Wi-Fi: " + wifiSsid);
+    connectToWiFi();
+  }
+}
+
+void setupProvisioningMode() {
+  isProvisioned = false;
+  String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  WiFi.softAP(apName.c_str(), "agrifarm2026");
+
+  Serial.println("[AP] Access Point Started: " + apName);
+  Serial.println("[AP] Connect & Visit IP: " + WiFi.softAPIP().toString());
+
+  server.on("/setup", HTTP_POST, handleProvisioningRequest);
+  server.on("/ping", HTTP_GET, []() {
+    server.send(200, "application/json", "{\\"status\\":\\"PROVISIONING_ACTIVE\\",\\"serial\\":\\"" + deviceSerial + "\\"}");
+  });
+  server.begin();
+
+  ${isEsp8266 ? '' : 'BLEDevice::init(apName.c_str());\n  BLEServer *pServer = BLEDevice::createServer();\n  BLEService *pService = pServer->createService(SERVICE_UUID);\n  pService->start();\n  BLEAdvertising *pAdv = BLEDevice::getAdvertising();\n  pAdv->addServiceUUID(SERVICE_UUID);\n  pAdv->start();\n  Serial.println("[BLE] Bluetooth Advertising Started!");\n'}
+  // Loop in Setup Mode until Wi-Fi Config Received
+  while (!isProvisioned) {
+    // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastLedToggle >= 200) {
+      lastLedToggle = currentMillis;
+      ledState = !ledState;
+      digitalWrite(PIN_LED_INDICATOR, ledState);
+    }
+
+    server.handleClient();
+  }
+
+  ${isEsp8266 ? '' : 'preferences.putString("ssid", wifiSsid);\n  preferences.putString("pass", wifiPass);\n  preferences.end();\n'}
+  Serial.println("[SETUP] Wi-Fi Config Saved! Restarting in 2s...");
+  digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON
+  delay(2000);
+  ESP.restart();
+}
+
+void handleProvisioningRequest() {
+  if (server.hasArg("plain")) {
+    StaticJsonDocument<256> doc;
+    deserializeJson(doc, server.arg("plain"));
+    const char* reqSsid = doc["ssid"];
+    const char* reqPass = doc["password"];
+    if (reqSsid && reqPass) {
+      wifiSsid = String(reqSsid);
+      wifiPass = String(reqPass);
+      isProvisioned = true;
+      server.send(200, "application/json", "{\\"success\\":true,\\"message\\":\\"Wi-Fi Config Received! Connecting...\\"}");
+      return;
+    }
+  }
+  server.send(400, "application/json", "{\\"success\\":false,\\"message\\":\\"Invalid Payload\\"}");
+}
+
+void connectToWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  Serial.print("[WiFi] Connecting to " + wifiSsid);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
+    digitalWrite(PIN_LED_INDICATOR, !digitalRead(PIN_LED_INDICATOR));
+    attempts++;
   }
-  Serial.println("\\n[AGRI] Wi-Fi Connected! IP: " + WiFi.localIP().toString());
 
-  espClient.setInsecure(); // Skip certificate validation for dev testing
-  client.setServer(mqtt_broker, mqtt_port);
-  client.setCallback(mqttCallback);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\\n[WiFi] Connected! Local IP: " + WiFi.localIP().toString());
+    digitalWrite(PIN_LED_INDICATOR, HIGH); // SOLID ON = HEALTHY & CONNECTED
+    pingDiscoveryGateway();
+
+    espClient.setInsecure();
+    mqttClient.setServer("mqtt.agritech.com", 8883);
+    mqttClient.setCallback(mqttCallback);
+  } else {
+    Serial.println("\\n[WiFi] Connection Failed! Re-entering Setup Mode...");
+    setupProvisioningMode();
+  }
+}
+
+void pingDiscoveryGateway() {
+  HTTPClient http;
+  http.begin("https://agriculture-automation.vercel.app/api/iot/discovery");
+  http.addHeader("Content-Type", "application/json");
+
+  StaticJsonDocument<200> doc;
+  doc["macAddress"] = macAddress;
+  doc["serialNumber"] = deviceSerial;
+  doc["boardFamily"] = "${family}";
+  doc["boardType"] = "${product.boardType}";
+  doc["ipAddress"] = WiFi.localIP().toString();
+  doc["rssi"] = WiFi.RSSI();
+
+  String payload;
+  serializeJson(doc, payload);
+  int code = http.POST(payload);
+  Serial.println("[DISCOVERY PING] HTTP Status: " + String(code));
+  http.end();
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String message = "";
-  for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  Serial.println("[MQTT Command Received]: " + message);
+  String msg = "";
+  for (int i = 0; i < length; i++) msg += (char)payload[i];
+  Serial.println("[MQTT Command]: " + msg);
 
-  StaticJsonDocument<256> cmdDoc;
-  deserializeJson(cmdDoc, message);
-  const char* type = cmdDoc["commandType"];
+  StaticJsonDocument<256> doc;
+  deserializeJson(doc, msg);
+  const char* type = doc["commandType"];
 
   if (String(type) == "START_PUMP") {
     digitalWrite(PIN_RELAY_PUMP, HIGH);
-    Serial.println("[ACTUATOR] Water Pump Started (RELAY ON)");
+    Serial.println("[PUMP] RELAY TURNED ON");
   } else if (String(type) == "STOP_PUMP") {
     digitalWrite(PIN_RELAY_PUMP, LOW);
-    Serial.println("[ACTUATOR] Water Pump Stopped (RELAY OFF)");
+    Serial.println("[PUMP] RELAY TURNED OFF");
   }
 }
 
 void loop() {
-  if (!client.connected()) {
-    while (!client.connected()) {
-      Serial.println("[MQTT] Connecting to Broker...");
-      if (client.connect(device_id)) {
-        client.subscribe(sub_topic);
-        Serial.println("[MQTT] Connected & Subscribed to Commands.");
-      } else {
-        delay(3000);
-      }
+  if (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(PIN_LED_INDICATOR, LOW);
+    connectToWiFi();
+    return;
+  }
+
+  if (!mqttClient.connected()) {
+    if (mqttClient.connect(deviceSerial.c_str())) {
+      mqttClient.subscribe("agri/farm-alpha/zone-1/commands");
     }
   }
-  client.loop();
+  mqttClient.loop();
 
-  // Read Sensors
-  int rawSoil = analogRead(PIN_SOIL_MOISTURE);
-  float soilMoisture = map(rawSoil, ${isEsp8266 ? '1023, 300' : '4095, 1500'}, 0, 100);
-  float temp = dht.readTemperature();
-  float humidity = dht.readHumidity();
+  static unsigned long lastTelemetry = 0;
+  if (millis() - lastTelemetry >= 5000) {
+    lastTelemetry = millis();
+    int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+    float soilMoisture = map(rawSoil, ${isEsp8266 ? '1023, 300' : '4095, 1500'}, 0, 100);
+    float temp = dht.readTemperature();
+    float humidity = dht.readHumidity();
 
-  // Build JSON Telemetry Payload
-  StaticJsonDocument<384> doc;
-  doc["deviceId"] = device_id;
-  doc["boardFamily"] = "${family}";
-  doc["soilMoisture"] = isnan(soilMoisture) ? 45.0 : soilMoisture;
-  doc["airTemperature"] = isnan(temp) ? 28.5 : temp;
-  doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
-  doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
+    StaticJsonDocument<384> doc;
+    doc["deviceId"] = deviceSerial;
+    doc["macAddress"] = macAddress;
+    doc["soilMoisture"] = isnan(soilMoisture) ? 45.0 : soilMoisture;
+    doc["airTemperature"] = isnan(temp) ? 28.4 : temp;
+    doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
+    doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
 
-  char buffer[384];
-  serializeJson(doc, buffer);
-  client.publish(pub_topic, buffer);
-  Serial.println("[Telemetry Published]: " + String(buffer));
-
-  delay(5000);
+    char buffer[384];
+    serializeJson(doc, buffer);
+    mqttClient.publish("agri/farm-alpha/zone-1/telemetry", buffer);
+  }
 }`;
   };
 
