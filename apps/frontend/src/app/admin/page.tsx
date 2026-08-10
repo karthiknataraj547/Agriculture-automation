@@ -10,6 +10,7 @@ import { AdminAccountsView } from '@/components/admin/AdminAccountsView';
 import { AdminDevicesView } from '@/components/admin/AdminDevicesView';
 import { AdminAuditLogsView } from '@/components/admin/AdminAuditLogsView';
 import { AdminEmergencyControls } from '@/components/admin/AdminEmergencyControls';
+import { AdminHardwareProductsView } from '@/components/admin/AdminHardwareProductsView';
 import { Activity, Settings, Bot, Zap, Radio, RefreshCw, AlertTriangle } from 'lucide-react';
 
 export default function AdminPage() {
@@ -32,6 +33,7 @@ export default function AdminPage() {
     <AdminLayout>
       {activeView === 'OVERVIEW' && <AdminDashboardView />}
       {activeView === 'USERS' && <AdminUsersView />}
+      {activeView === 'PRODUCTS' && <AdminHardwareProductsView />}
       {activeView === 'DEVICES' && <AdminDevicesView />}
       {activeView === 'TELEMETRY' && (
         <div className="space-y-6">

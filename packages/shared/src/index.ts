@@ -204,6 +204,24 @@ export interface IoTBoardDefinition {
   validPins: BoardPinDefinition[];
 }
 
+export interface HardwareProduct {
+  id: string;
+  internalName: string;
+  customerProductName: string;
+  description: string;
+  boardFamily: 'ESP32' | 'ESP8266';
+  boardType: string;
+  firmwareVersion: string;
+  firmwareTemplate: string;
+  supportedSensors: string[];
+  supportedActuators: string[];
+  gpioMapping: Record<string, string | number>;
+  hardwareCapabilities: string[];
+  status: 'STABLE' | 'TESTING' | 'DEPRECATED';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FirmwareGenerationRequest {
   deviceId: string;
   boardId: string;

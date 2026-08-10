@@ -23,7 +23,6 @@ import {
   AlertCircle,
   Settings,
   Sliders,
-  Layers,
   Save,
   FileCode,
   CheckCircle2,
@@ -33,7 +32,7 @@ import { GlassCard } from '../ui/GlassCard';
 import { StatusIndicator } from '../ui/StatusIndicator';
 import { useSpatialStore } from '../../store/useSpatialStore';
 import { DeviceStatus, IoTDevice } from '@aether/shared';
-import { BoardSelectorWizard } from './BoardSelectorWizard';
+import { AgriHardwareProvisioningWizard } from './AgriHardwareProvisioningWizard';
 
 function deviceStatusToUi(status: DeviceStatus): 'online' | 'offline' | 'warning' | 'critical' | 'maintenance' {
   switch (status) {
@@ -816,11 +815,12 @@ export function DeviceGrid() {
         </GlassCard>
       )}
 
-      {/* Provision Device Modal (Interactive 4-Step Board Selector & Provisioning Wizard) */}
+      {/* Provision Device Modal (Interactive 8-Step Agriculture Provisioning Wizard) */}
       {modalMode === 'ADD_DEVICE' && (
-        <GlassCard variant="glow" padding="lg" className="border-cyber-cyan/40">
-          <BoardSelectorWizard onClose={() => setModalMode('NONE')} />
-        </GlassCard>
+        <AgriHardwareProvisioningWizard
+          onClose={() => setModalMode('NONE')}
+          onSuccess={() => setModalMode('NONE')}
+        />
       )}
 
       {/* Devices View Container */}

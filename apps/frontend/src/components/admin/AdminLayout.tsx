@@ -23,6 +23,7 @@ import {
   Key,
   CheckCircle2,
   AlertCircle,
+  Box,
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -46,6 +47,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const navItems: { id: AdminViewType; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'OVERVIEW', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'USERS', label: 'User Management', icon: Users },
+    { id: 'PRODUCTS', label: 'Hardware Products', icon: Box },
     { id: 'DEVICES', label: 'Devices', icon: Cpu },
     { id: 'TELEMETRY', label: 'Telemetry', icon: Activity },
     { id: 'COMMANDS', label: 'Commands', icon: Zap },

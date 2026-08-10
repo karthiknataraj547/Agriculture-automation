@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { Account, AuditLogEntry, DeviceTransferRecord, IoTDevice, UserRole } from '@aether/shared';
+import { Account, AuditLogEntry, DeviceTransferRecord, IoTDevice, UserRole, HardwareProduct } from '@aether/shared';
 
-export type AdminViewType = 'OVERVIEW' | 'USERS' | 'DEVICES' | 'TELEMETRY' | 'COMMANDS' | 'ALERTS' | 'AUTOMATION' | 'MQTT' | 'FIRMWARE' | 'HEALTH' | 'AUDIT' | 'EMERGENCY' | 'SETTINGS';
+export type AdminViewType = 'OVERVIEW' | 'USERS' | 'PRODUCTS' | 'DEVICES' | 'TELEMETRY' | 'COMMANDS' | 'ALERTS' | 'AUTOMATION' | 'MQTT' | 'FIRMWARE' | 'HEALTH' | 'AUDIT' | 'EMERGENCY' | 'SETTINGS';
 
 export type User360Tab =
   | 'OVERVIEW'
@@ -44,6 +44,7 @@ export interface AdminStoreState {
   usersList: any[];
   accountsList: Account[];
   devicesList: IoTDevice[];
+  hardwareProducts: HardwareProduct[];
   auditLogs: AuditLogEntry[];
   transferHistory: DeviceTransferRecord[];
   systemHealth: any | null;
@@ -62,6 +63,8 @@ export interface AdminStoreState {
   addAccountMember: (payload: { accountId: string; name: string; email: string; role: string }) => Promise<boolean>;
   suspendAccount: (accountId: string, reason: string) => Promise<boolean>;
   updateAccountSettings: (accountId: string, settings: any) => Promise<boolean>;
+  createHardwareProduct: (product: Partial<HardwareProduct>) => Promise<boolean>;
+  deleteHardwareProduct: (productId: string) => Promise<boolean>;
   transferDevice: (deviceId: string, newAccountId: string, reason: string) => Promise<boolean>;
   rotateDeviceCredentials: (deviceId: string) => Promise<string | null>;
   triggerEmergencyAction: (action: string, reason: string, targetId?: string) => Promise<boolean>;
@@ -98,6 +101,7 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
   usersList: [],
   accountsList: [],
   devicesList: [],
+  hardwareProducts: [],
   auditLogs: [],
   transferHistory: [],
   systemHealth: null,
@@ -133,10 +137,11 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
         'Content-Type': 'application/json',
       };
 
-      const [usersRes, accountsRes, devicesRes, auditRes, healthRes] = await Promise.all([
+      const [usersRes, accountsRes, devicesRes, productsRes, auditRes, healthRes] = await Promise.all([
         fetch('/api/admin/users', { headers }),
         fetch('/api/admin/accounts', { headers }),
         fetch('/api/admin/devices', { headers }),
+        fetch('/api/admin/products', { headers }),
         fetch('/api/admin/audit', { headers }),
         fetch('/api/admin/health', { headers }),
       ]);
@@ -144,6 +149,7 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
       const usersData = usersRes.ok ? await usersRes.json() : {};
       const accountsData = accountsRes.ok ? await accountsRes.json() : {};
       const devicesData = devicesRes.ok ? await devicesRes.json() : {};
+      const productsData = productsRes.ok ? await productsRes.json() : {};
       const auditData = auditRes.ok ? await auditRes.json() : {};
       const healthData = healthRes.ok ? await healthRes.json() : {};
 
@@ -151,6 +157,7 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
         usersList: usersData.users || [],
         accountsList: accountsData.accounts || [],
         devicesList: devicesData.devices || [],
+        hardwareProducts: productsData.products || [],
         transferHistory: devicesData.transferHistory || [],
         auditLogs: auditData.auditLogs || [],
         systemHealth: healthData.services ? healthData : null,
@@ -272,6 +279,44 @@ export const useAdminStore = create<AdminStoreState>((set, get) => ({
       }
     } catch (e) {
       console.error('[Admin Store] Settings error:', e);
+    }
+    return false;
+  },
+
+  createHardwareProduct: async (product) => {
+    const { token, fetchAdminData } = get();
+    try {
+      const res = await fetch('/api/admin/products', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'CREATE_PRODUCT', product }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAdminData();
+        return true;
+      }
+    } catch (e) {
+      console.error('[Admin Store] Create product error:', e);
+    }
+    return false;
+  },
+
+  deleteHardwareProduct: async (productId) => {
+    const { token, fetchAdminData } = get();
+    try {
+      const res = await fetch('/api/admin/products', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'DELETE_PRODUCT', productId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchAdminData();
+        return true;
+      }
+    } catch (e) {
+      console.error('[Admin Store] Delete product error:', e);
     }
     return false;
   },
