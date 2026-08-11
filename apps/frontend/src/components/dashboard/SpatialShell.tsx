@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { clsx } from 'clsx';
+import Link from 'next/link';
 import {
   Box,
   Cpu,
@@ -24,6 +25,7 @@ import {
   Power,
   Calendar,
   Activity,
+  Download,
 } from 'lucide-react';
 import { SpatialButton } from '../ui/SpatialButton';
 import { GlassCard } from '../ui/GlassCard';
@@ -218,6 +220,15 @@ export function SpatialShell({ children, onOpenCommandPalette }: SpatialShellPro
 
           {/* Controls */}
           <div className="flex items-center gap-2">
+            {/* Official App Downloads Button (.EXE & .APK) */}
+            <Link
+              href="/download"
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-mono text-[11px] font-bold shadow-md shadow-purple-600/30 flex items-center space-x-1.5 transition-all"
+            >
+              <Download size={13} />
+              <span className="hidden sm:inline">APPS (.EXE / .APK)</span>
+            </Link>
+
             {/* Theme Toggle Button */}
             <SpatialButton
               variant="ghost"
