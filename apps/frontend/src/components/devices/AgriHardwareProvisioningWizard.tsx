@@ -61,6 +61,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
   // Discovery Real-Time State
   const [isScanning, setIsScanning] = useState(false);
+  const [scanCountdown, setScanCountdown] = useState<number>(0);
   const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([]);
   const [foundDevice, setFoundDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -93,10 +94,12 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       .catch(() => {});
   }, []);
 
-  // REAL-TIME HARDWARE SCANNING FOR HARDWARE IN PROVISIONING MODE
+  // REAL-TIME 10-SECOND HARDWARE SCANNING FOR HARDWARE IN PROVISIONING MODE
   const handleScanForDevice = async () => {
     setIsScanning(true);
     setScanError(null);
+    setFoundDevice(null);
+    setScanCountdown(10);
 
     // 1. Web Bluetooth Scan (ESP32)
     if (selectedProduct.boardFamily === 'ESP32' && scanMethod === 'BLE') {
@@ -111,12 +114,13 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             const bleNode = {
               serialNumber: device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`,
               macAddress: device.id,
-              rssi: -52,
-              mode: 'Web Bluetooth Device',
+              rssi: -48,
+              mode: 'Web Bluetooth BLE Device',
             };
             setDiscoveredNodes((prev) => [bleNode, ...prev]);
             setFoundDevice(bleNode);
             setIsScanning(false);
+            setScanCountdown(0);
             return;
           }
         } catch (err: any) {
@@ -125,57 +129,65 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     }
 
-    // 2. Direct HTTP Ping to SoftAP (192.168.4.1/ping) for ESP in Provisioning Mode (Only on HTTP)
-    if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
+    // 2. Active 10-Second Hardware Scan Loop
+    let secondsLeft = 10;
+    const scanTimer = setInterval(async () => {
+      secondsLeft -= 1;
+      setScanCountdown(secondsLeft);
+
+      // Probe Cloud IoT Gateway (/api/iot/discovery)
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (pingRes.ok) {
-          const pingData = await pingRes.json();
-          const apNode = {
-            serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
-            macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
-            rssi: -42,
-            mode: 'Direct SoftAP Node (192.168.4.1)',
-          };
-          setDiscoveredNodes((prev) => [apNode, ...prev]);
-          setFoundDevice(apNode);
+        const res = await fetch('/api/iot/discovery');
+        const data = await res.json();
+
+        if (data.nodes && data.nodes.length > 0) {
+          clearInterval(scanTimer);
+          setDiscoveredNodes(data.nodes);
+          const matchingNode = data.nodes.find(
+            (n: any) => n.boardFamily === selectedProduct.boardFamily
+          ) || data.nodes[0];
+          setFoundDevice(matchingNode);
           setIsScanning(false);
+          setScanCountdown(0);
           return;
         }
-      } catch (e) {
-        // Direct AP HTTP request (CORS/offline) ignored
+      } catch (e) {}
+
+      // Probe Direct HTTP SoftAP (http://192.168.4.1/ping on HTTP)
+      if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 1200);
+          const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (pingRes.ok) {
+            const pingData = await pingRes.json();
+            clearInterval(scanTimer);
+            const apNode = {
+              serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
+              macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
+              rssi: -42,
+              mode: 'Direct SoftAP Node (192.168.4.1)',
+            };
+            setDiscoveredNodes((prev) => [apNode, ...prev]);
+            setFoundDevice(apNode);
+            setIsScanning(false);
+            setScanCountdown(0);
+            return;
+          }
+        } catch (e) {}
       }
-    }
 
-    // 3. Real Backend Network Probe for Physical Pings
-    try {
-      const res = await fetch('/api/iot/discovery');
-      const data = await res.json();
-
-      if (data.nodes && data.nodes.length > 0) {
-        setDiscoveredNodes(data.nodes);
-        const matchingNode = data.nodes.find(
-          (n: any) => n.boardFamily === selectedProduct.boardFamily
-        ) || data.nodes[0];
-        setFoundDevice(matchingNode);
+      if (secondsLeft <= 0) {
+        clearInterval(scanTimer);
         setIsScanning(false);
-        return;
+        setFoundDevice(null);
+        setScanError(
+          `No active physical ${selectedProduct.boardFamily} hardware node detected after 10 seconds scan. Ensure your board is powered on and flashing LED, or click Retry below.`
+        );
       }
-    } catch (e) {
-      console.error('[Discovery Probe] Error:', e);
-    }
-
-    // 4. Strict Real-Time Scanning Failure (No Fake Hardware Generation)
-    setIsScanning(false);
-    setFoundDevice(null);
-    setScanError(
-      `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your board is powered on or enter its MAC address / Serial below.`
-    );
+    }, 1000);
   };
-
 
   // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP32 SOFTAP (http://192.168.4.1/setup)
   const handleTransmitWifiConfig = async () => {
@@ -198,7 +210,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         console.log('[Provisioning] Local AP direct HTTP transmit attempt');
       }
     }
-
 
     // 2. Also register payload to backend IoT gateway for sync
     try {
@@ -397,7 +408,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             <div className="space-y-1 text-left">
               <h3 className="text-sm font-bold text-white">Step 3: Scan & Select Hardware Device</h3>
               <p className="text-xs text-slate-400">
-                Scan nearby radio signals and select your physical ESP board from the discovered list below.
+                Perform an active 10-second scan for nearby hardware and select your physical ESP board from the discovered list below.
               </p>
             </div>
 
@@ -489,14 +500,50 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               </div>
             ) : (
               <div className="space-y-3 pt-2">
-                <button
-                  type="button"
-                  onClick={handleScanForDevice}
-                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2 mx-auto"
-                >
-                  {isScanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  <span>{isScanning ? 'Scanning Nearby Hardware...' : 'Scan Nearby Hardware Devices'}</span>
-                </button>
+                {isScanning ? (
+                  <div className="p-6 rounded-2xl bg-purple-950/40 border border-purple-500/50 flex flex-col items-center space-y-3 my-2">
+                    <div className="relative w-16 h-16 flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full border-2 border-purple-500 animate-ping opacity-40"></div>
+                      <div className="w-12 h-12 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center text-white font-mono font-bold text-base shadow-lg shadow-purple-500/30">
+                        {scanCountdown}s
+                      </div>
+                    </div>
+                    <div className="text-xs font-bold text-white">Actively Scanning Nearby ESP Hardware...</div>
+                    <div className="text-[11px] text-purple-300 font-mono">
+                      Probing Radio Signals ({scanCountdown}s remaining)
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleScanForDevice}
+                    className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2 mx-auto transition-all"
+                  >
+                    <Search className="w-4 h-4" />
+                    <span>Scan Nearby Hardware Devices (10s)</span>
+                  </button>
+                )}
+
+                {scanError && !isScanning && (
+                  <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-2">
+                    <div className="font-bold flex items-center justify-center gap-1.5 text-red-400">
+                      <AlertCircle className="w-4 h-4" />
+                      <span>Hardware Not Detected (10s Scan Complete)</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed">{scanError}</p>
+
+                    <div className="pt-1 flex flex-wrap justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleScanForDevice}
+                        className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-1.5 transition-all mx-auto"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        <span>Retry 10-Second Hardware Scan</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="text-xs font-bold text-slate-300 text-left pt-1">
                   Discovered Hardware Devices (Click to Select):
@@ -507,7 +554,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-1">
                       <div className="font-bold text-slate-300">No Nearby Hardware Discovered</div>
                       <p className="text-[11px] leading-relaxed">
-                        Click <strong className="text-purple-300">"Scan Nearby Hardware Devices"</strong> above or enter your physical board MAC address in the <strong className="text-purple-300">"Manual Board MAC / Serial"</strong> tab.
+                        Click <strong className="text-purple-300">"Scan Nearby Hardware Devices (10s)"</strong> above or enter your physical board MAC address in the <strong className="text-purple-300">"Manual Board MAC / Serial"</strong> tab.
                       </p>
                     </div>
                   ) : (
@@ -544,7 +591,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     })
                   )}
                 </div>
-
               </div>
             )}
           </div>
