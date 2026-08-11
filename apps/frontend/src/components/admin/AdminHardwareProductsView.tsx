@@ -133,7 +133,8 @@ export const AdminHardwareProductsView: React.FC = () => {
   // GENERATE C++ ARDUINO CODE FOR ESP32 & ESP8266 FAMILIES
   const generateArduinoCode = (product: HardwareProduct, family: 'ESP32' | 'ESP8266') => {
     const isEsp8266 = family === 'ESP8266';
-    const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>\n#include <ESP8266HTTPClient.h>\n#include <ESP8266WebServer.h>' : '#include <WiFi.h>\n#include <HTTPClient.h>\n#include <WebServer.h>\n#include <BLEDevice.h>\n#include <BLEUtils.h>\n#include <BLEServer.h>';
+    const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>\n#include <ESP8266HTTPClient.h>\n#include <ESP8266WebServer.h>' : '#include <WiFi.h>\n#include <HTTPClient.h>\n#include <WebServer.h>\n#include <NimBLEDevice.h>';
+
     const prefHeader = isEsp8266 ? '#include <EEPROM.h>' : '#include <Preferences.h>';
     const ledPin = isEsp8266 ? '2' : '2'; // GPIO 2 (D4 on NodeMCU / GPIO 2 on ESP32)
     const soilPin = isEsp8266 ? 'A0' : '34';
@@ -231,7 +232,7 @@ void setupProvisioningMode() {
   });
   server.begin();
 
-  ${isEsp8266 ? '' : 'BLEDevice::init(apName.c_str());\n  BLEServer *pServer = BLEDevice::createServer();\n  BLEService *pService = pServer->createService(SERVICE_UUID);\n  pService->start();\n  BLEAdvertising *pAdv = BLEDevice::getAdvertising();\n  pAdv->addServiceUUID(SERVICE_UUID);\n  pAdv->start();\n  Serial.println("[BLE] Bluetooth Advertising Started!");\n'}
+  ${isEsp8266 ? '' : 'NimBLEDevice::init(apName.c_str());\n  NimBLEServer *pServer = NimBLEDevice::createServer();\n  NimBLEService *pService = pServer->createService(SERVICE_UUID);\n  pService->start();\n  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();\n  pAdv->addServiceUUID(SERVICE_UUID);\n  pAdv->start();\n  Serial.println("[BLE] NimBLE Bluetooth Advertising Started!");\n'}
   // Loop in Setup Mode until Wi-Fi Config Received
   while (!isProvisioned) {
     // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
@@ -245,7 +246,7 @@ void setupProvisioningMode() {
     server.handleClient();
   }
 
-  ${isEsp8266 ? '' : 'preferences.putString("ssid", wifiSsid);\n  preferences.putString("pass", wifiPass);\n  preferences.end();\n'}
+  ${isEsp8266 ? '' : 'NimBLEDevice::deinit(true);\n  preferences.putString("ssid", wifiSsid);\n  preferences.putString("pass", wifiPass);\n  preferences.end();\n'}
   Serial.println("[SETUP] Wi-Fi Config Saved! Restarting in 2s...");
   digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON
   delay(2000);
