@@ -166,7 +166,28 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     }
 
-    // SoftAP & Cloud Network Discovery Probe
+    // Active Hardware Registration & Discovery Probe
+    try {
+      const probeRes = await fetch('/api/iot/discovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boardFamily: selectedProduct.boardFamily,
+          boardType: selectedProduct.customerProductName,
+        }),
+      });
+      const probeData = await probeRes.json();
+
+      if (probeData.node) {
+        setDiscoveredNodes([probeData.node]);
+        setFoundDevice(probeData.node);
+        setCurrentStage('DEVICE_FOUND');
+        setIsScanning(false);
+        return;
+      }
+    } catch (e) {}
+
+    // Fallback Cloud Probe
     try {
       const res = await fetch('/api/iot/discovery');
       const data = await res.json();
@@ -182,31 +203,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         return;
       }
     } catch (e) {}
-
-    // Direct HTTP SoftAP Probe
-    if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500);
-        const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (pingRes.ok) {
-          const pingData = await pingRes.json();
-          const apNode = {
-            serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
-            macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
-            boardFamily: selectedProduct.boardFamily,
-            rssi: -38,
-            mode: 'Direct SoftAP Node (192.168.4.1)',
-          };
-          setDiscoveredNodes([apNode]);
-          setFoundDevice(apNode);
-          setCurrentStage('DEVICE_FOUND');
-          setIsScanning(false);
-          return;
-        }
-      } catch (e) {}
-    }
 
     setIsScanning(false);
     setFoundDevice(null);
