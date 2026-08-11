@@ -132,6 +132,8 @@ async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
         adminUser.mustChangePassword = false;
         needsSave = true;
       }
+    }
+
     // Auto-heal / Ensure karthiknataraj547@gmail.com with karthik@547 exists & is valid
     let karthikUser = usersCache.find((u) => u.email.toLowerCase() === 'karthiknataraj547@gmail.com');
     if (!karthikUser) {
