@@ -7,18 +7,10 @@ import {
   ChevronRight,
   ChevronLeft,
   Radio,
-  Sliders,
-  Layers,
-  Sparkles,
   RefreshCw,
-  Lock,
-  Box,
-  Activity,
   AlertCircle,
   X,
   Bluetooth,
-  Terminal,
-  Usb,
   ExternalLink,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -61,15 +53,12 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [wifiSsid, setWifiSsid] = useState('Farm_Mesh_WiFi_5G');
   const [wifiPass, setWifiPass] = useState('agrifarm2026');
 
-  // Discovery Real-Time State
+  // Unified Discovery Real-Time State (Merged BLE & Wi-Fi)
   const [isScanning, setIsScanning] = useState(false);
   const [scanCountdown, setScanCountdown] = useState<number>(0);
   const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([]);
   const [foundDevice, setFoundDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [scanMethod, setScanMethod] = useState<'USB_SERIAL' | 'BLE' | 'NETWORK_PROBE' | 'MANUAL_MAC'>('USB_SERIAL');
-  const [manualMacAddress, setManualMacAddress] = useState('');
-  const [serialPort, setSerialPort] = useState<any>(null);
 
   // Transmission state
   const [isTransmitting, setIsTransmitting] = useState(false);
@@ -97,79 +86,40 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       .catch(() => {});
   }, []);
 
-  // PROTOCOL 1: WEB SERIAL HARDWARE CONNECTION (DIRECT USB PLUG-IN)
-  const handleConnectWebSerial = async () => {
-    if (typeof window === 'undefined' || !(navigator as any).serial) {
-      setScanError('Web Serial API is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
-      return;
-    }
-
-    try {
-      setIsScanning(true);
-      setScanError(null);
-      const port = await (navigator as any).serial.requestPort();
-      await port.open({ baudRate: 115200 });
-      setSerialPort(port);
-
-      const usbMac = `CC:50:E3:8A:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
-      const usbNode = {
-        serialNumber: `AGRI-${selectedProduct.boardFamily}-USB-01`,
-        macAddress: usbMac,
-        rssi: 0,
-        mode: 'Direct USB Serial (115200 Baud)',
-      };
-
-      setDiscoveredNodes((prev) => [usbNode, ...prev]);
-      setFoundDevice(usbNode);
-      setIsScanning(false);
-    } catch (err: any) {
-      console.warn('[Web Serial] Connection error:', err);
-      setIsScanning(false);
-      setScanError('USB Serial connection cancelled or port busy.');
-    }
-  };
-
-  // PROTOCOL 2: REAL-TIME 10-SECOND WIRELESS SCANNING
+  // MERGED SIMULTANEOUS BLE AND WI-FI REAL-TIME HARDWARE SCANNING
   const handleScanForDevice = async () => {
-    if (scanMethod === 'USB_SERIAL') {
-      await handleConnectWebSerial();
-      return;
-    }
-
     setIsScanning(true);
     setScanError(null);
     setFoundDevice(null);
     setScanCountdown(10);
 
-    // Web Bluetooth Scan (ESP32)
-    if (selectedProduct.boardFamily === 'ESP32' && scanMethod === 'BLE') {
-      if (typeof window !== 'undefined' && (navigator as any).bluetooth) {
-        try {
-          const device = await (navigator as any).bluetooth.requestDevice({
-            filters: [{ namePrefix: 'AGRI' }],
-            optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
-          });
-
+    // 1. Trigger Web Bluetooth BLE Scan simultaneously if supported
+    if (typeof window !== 'undefined' && (navigator as any).bluetooth) {
+      (navigator as any).bluetooth
+        .requestDevice({
+          filters: [{ namePrefix: 'AGRI' }],
+          optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
+        })
+        .then((device: any) => {
           if (device) {
             const bleNode = {
               serialNumber: device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`,
               macAddress: device.id,
-              rssi: -48,
-              mode: 'Web Bluetooth BLE Device',
+              rssi: -45,
+              mode: 'Bluetooth BLE Hardware',
             };
             setDiscoveredNodes((prev) => [bleNode, ...prev]);
             setFoundDevice(bleNode);
             setIsScanning(false);
             setScanCountdown(0);
-            return;
           }
-        } catch (err: any) {
-          console.warn('[Web Bluetooth] User cancelled or error:', err);
-        }
-      }
+        })
+        .catch((err: any) => {
+          console.warn('[BLE Scan] Device scan prompt closed or out of range:', err);
+        });
     }
 
-    // Active 10-Second Hardware Scan Loop
+    // 2. Active 10-Second Wi-Fi & Cloud Network Probing Loop
     let secondsLeft = 10;
     const scanTimer = setInterval(async () => {
       secondsLeft -= 1;
@@ -221,33 +171,19 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       if (secondsLeft <= 0) {
         clearInterval(scanTimer);
         setIsScanning(false);
-        setFoundDevice(null);
         setScanError(
-          `No active physical ${selectedProduct.boardFamily} hardware node detected after 10 seconds scan. Plug in via USB Serial or connect your PC to AGRI-SETUP-XXXX.`
+          `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your physical board is powered on and its status LED is flashing rapidly.`
         );
       }
     }, 1000);
   };
 
-  // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP BOARD VIA USB SERIAL OR HTTP
+  // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP BOARD
   const handleTransmitWifiConfig = async () => {
     setIsTransmitting(true);
     setTransmitSuccess(false);
 
-    // 1. Transmit over USB Serial if connected
-    if (serialPort && serialPort.writable) {
-      try {
-        const encoder = new TextEncoder();
-        const writer = serialPort.writable.getWriter();
-        const payload = JSON.stringify({ ssid: wifiSsid, password: wifiPass }) + '\n';
-        await writer.write(encoder.encode(payload));
-        writer.releaseLock();
-      } catch (e) {
-        console.error('[Web Serial Transmit Error]', e);
-      }
-    }
-
-    // 2. Send HTTP POST payload directly to ESP SoftAP (http://192.168.4.1/setup) if running on HTTP
+    // 1. Send HTTP POST payload directly to ESP SoftAP (http://192.168.4.1/setup) if running on HTTP
     if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
       try {
         const controller = new AbortController();
@@ -264,7 +200,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     }
 
-    // 3. Register payload to backend IoT gateway for sync
+    // 2. Register payload to backend IoT gateway for sync
     try {
       await fetch('/api/iot/discovery', {
         method: 'POST',
@@ -454,214 +390,114 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 3: SCAN & SELECT PHYSICAL HARDWARE DEVICE */}
+        {/* STEP 3: UNIFIED BLE AND WI-FI HARDWARE DISCOVERY */}
         {step === 3 && (
           <div className="space-y-4 text-center py-1">
             <div className="space-y-1 text-left">
               <h3 className="text-sm font-bold text-white">Step 3: Scan & Select Hardware Device</h3>
               <p className="text-xs text-slate-400">
-                Connect via USB Cable (Recommended), Web Bluetooth BLE, or Wi-Fi Probe to detect your board.
+                Click below to launch simultaneous 10-second Bluetooth BLE & Wi-Fi signal scanning for nearby physical ESP hardware.
               </p>
             </div>
 
-            {/* Mode Switcher Tabs */}
-            <div className="flex flex-wrap items-center justify-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setScanMethod('USB_SERIAL')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 border ${
-                  scanMethod === 'USB_SERIAL'
-                    ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300'
-                    : 'bg-slate-950 border-slate-800 text-slate-400'
-                }`}
-              >
-                <Usb className="w-3.5 h-3.5" />
-                <span>🔌 USB Serial (Chrome/Edge)</span>
-              </button>
-
-              {selectedProduct.boardFamily === 'ESP32' && (
+            <div className="space-y-3 pt-2">
+              {isScanning ? (
+                <div className="p-6 rounded-2xl bg-purple-950/40 border border-purple-500/50 flex flex-col items-center space-y-3 my-2">
+                  <div className="relative w-16 h-16 flex items-center justify-center">
+                    <div className="absolute inset-0 rounded-full border-2 border-purple-500 animate-ping opacity-40"></div>
+                    <div className="w-12 h-12 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center text-white font-mono font-bold text-base shadow-lg shadow-purple-500/30">
+                      {scanCountdown}s
+                    </div>
+                  </div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Bluetooth className="w-3.5 h-3.5 text-purple-400" />
+                    <Radio className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Scanning Bluetooth BLE & Wi-Fi Hardware...</span>
+                  </div>
+                  <div className="text-[11px] text-purple-300 font-mono">
+                    Probing Nearby Signals ({scanCountdown}s remaining)
+                  </div>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => setScanMethod('BLE')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 border ${
-                    scanMethod === 'BLE'
-                      ? 'bg-purple-900/60 border-purple-500 text-white'
-                      : 'bg-slate-950 border-slate-800 text-slate-400'
-                  }`}
+                  onClick={handleScanForDevice}
+                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-xl shadow-purple-600/30 flex items-center space-x-2.5 mx-auto transition-all"
                 >
-                  <Bluetooth className="w-3.5 h-3.5" />
-                  <span>Bluetooth BLE</span>
+                  <Bluetooth className="w-4 h-4" />
+                  <Radio className="w-4 h-4" />
+                  <span>Scan Nearby Hardware (BLE & Wi-Fi)</span>
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => setScanMethod('NETWORK_PROBE')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 border ${
-                  scanMethod === 'NETWORK_PROBE'
-                    ? 'bg-purple-900/60 border-purple-500 text-white'
-                    : 'bg-slate-950 border-slate-800 text-slate-400'
-                }`}
-              >
-                <Radio className="w-3.5 h-3.5" />
-                <span>Wi-Fi Network Probe</span>
-              </button>
+              {scanError && !isScanning && (
+                <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-2">
+                  <div className="font-bold flex items-center justify-center gap-1.5 text-red-400">
+                    <AlertCircle className="w-4 h-4" />
+                    <span>Hardware Not Detected (Scan Complete)</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed">{scanError}</p>
 
-              <button
-                type="button"
-                onClick={() => setScanMethod('MANUAL_MAC')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 border ${
-                  scanMethod === 'MANUAL_MAC'
-                    ? 'bg-purple-900/60 border-purple-500 text-white'
-                    : 'bg-slate-950 border-slate-800 text-slate-400'
-                }`}
-              >
-                <Terminal className="w-3.5 h-3.5" />
-                <span>Manual MAC</span>
-              </button>
-            </div>
-
-            {scanMethod === 'MANUAL_MAC' ? (
-              <div className="text-left space-y-2 pt-2">
-                <label className="text-[11px] text-slate-300 font-semibold block">
-                  Enter Physical ESP Board MAC Address or Serial ID
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="e.g. CC:50:E3:8A:12:F4 or ESP8266-NODEMCU-01"
-                    value={manualMacAddress}
-                    onChange={(e) => {
-                      setManualMacAddress(e.target.value);
-                      if (e.target.value.trim().length >= 6) {
-                        const cleanMac = e.target.value.trim().toUpperCase();
-                        setFoundDevice({
-                          serialNumber: `AGRI-${selectedProduct.boardFamily}-${cleanMac.replace(/[^A-Z0-9]/g, '').slice(-6)}`,
-                          macAddress: cleanMac,
-                          rssi: -45,
-                          mode: 'MANUAL_PHYSICAL_MAC',
-                        });
-                      }
-                    }}
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const mac = `CC:50:E3:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
-                      setManualMacAddress(mac);
-                      setFoundDevice({
-                        serialNumber: `AGRI-${selectedProduct.boardFamily}-${mac.replace(/[^A-Z0-9]/g, '').slice(-6)}`,
-                        macAddress: mac,
-                        rssi: -45,
-                        mode: 'MANUAL_PHYSICAL_MAC',
-                      });
-                    }}
-                    className="px-3 py-2 bg-purple-900/40 hover:bg-purple-800/60 border border-purple-500/40 text-purple-200 rounded-xl text-xs font-mono font-semibold transition-all"
-                  >
-                    Auto-Fill MAC
-                  </button>
+                  <div className="pt-1 flex flex-wrap justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleScanForDevice}
+                      className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-1.5 transition-all mx-auto"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Retry Hardware Scan</span>
+                    </button>
+                  </div>
                 </div>
+              )}
+
+              <div className="text-xs font-bold text-slate-300 text-left pt-1">
+                Discovered Hardware Devices (Click to Select):
               </div>
-            ) : (
-              <div className="space-y-3 pt-2">
-                {isScanning ? (
-                  <div className="p-6 rounded-2xl bg-purple-950/40 border border-purple-500/50 flex flex-col items-center space-y-3 my-2">
-                    <div className="relative w-16 h-16 flex items-center justify-center">
-                      <div className="absolute inset-0 rounded-full border-2 border-purple-500 animate-ping opacity-40"></div>
-                      <div className="w-12 h-12 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center text-white font-mono font-bold text-base shadow-lg shadow-purple-500/30">
-                        {scanCountdown || 'USB'}
-                      </div>
-                    </div>
-                    <div className="text-xs font-bold text-white">Actively Connecting Hardware...</div>
-                    <div className="text-[11px] text-purple-300 font-mono">
-                      Probing Physical Port & Signals
-                    </div>
+
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {discoveredNodes.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-1">
+                    <div className="font-bold text-slate-300">No Nearby Hardware Discovered</div>
+                    <p className="text-[11px] leading-relaxed">
+                      Ensure your physical ESP board is powered on and its status LED is flashing rapidly, then click <strong className="text-purple-300">"Scan Nearby Hardware (BLE & Wi-Fi)"</strong> above!
+                    </p>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={handleScanForDevice}
-                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center space-x-2 mx-auto transition-all"
-                  >
-                    {scanMethod === 'USB_SERIAL' ? <Usb className="w-4 h-4" /> : <Search className="w-4 h-4" />}
-                    <span>
-                      {scanMethod === 'USB_SERIAL'
-                        ? 'Connect ESP Board via USB Serial Port'
-                        : 'Scan Nearby Hardware Devices (10s)'}
-                    </span>
-                  </button>
-                )}
-
-                {scanError && !isScanning && (
-                  <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-2">
-                    <div className="font-bold flex items-center justify-center gap-1.5 text-red-400">
-                      <AlertCircle className="w-4 h-4" />
-                      <span>Hardware Not Detected</span>
-                    </div>
-                    <p className="text-[11px] leading-relaxed">{scanError}</p>
-
-                    <div className="pt-1 flex flex-wrap justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleScanForDevice}
-                        className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-1.5 transition-all mx-auto"
+                  discoveredNodes.map((node) => {
+                    const isSelected = foundDevice?.macAddress === node.macAddress || foundDevice?.serialNumber === node.serialNumber;
+                    return (
+                      <div
+                        key={node.macAddress}
+                        onClick={() => setFoundDevice(node)}
+                        className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-900/20'
+                            : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                        }`}
                       >
-                        <RefreshCw className="w-4 h-4" />
-                        <span>Retry Hardware Connection</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="text-xs font-bold text-slate-300 text-left pt-1">
-                  Discovered Hardware Devices (Click to Select):
-                </div>
-
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {discoveredNodes.length === 0 ? (
-                    <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-1">
-                      <div className="font-bold text-slate-300">No Nearby Hardware Discovered</div>
-                      <p className="text-[11px] leading-relaxed">
-                        Plug your ESP board into your PC via USB cable and click <strong className="text-emerald-300">"Connect ESP Board via USB Serial Port"</strong> above!
-                      </p>
-                    </div>
-                  ) : (
-                    discoveredNodes.map((node) => {
-                      const isSelected = foundDevice?.macAddress === node.macAddress || foundDevice?.serialNumber === node.serialNumber;
-                      return (
-                        <div
-                          key={node.macAddress}
-                          onClick={() => setFoundDevice(node)}
-                          className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
-                            isSelected
-                              ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-900/20'
-                              : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-3 text-left">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
-                              <Cpu className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-white flex items-center gap-2">
-                                <span>{node.serialNumber}</span>
-                                <span className="text-[10px] text-cyan-400 font-mono">({node.mode || 'ESP32 Node'})</span>
-                              </div>
-                              <div className="text-[11px] text-purple-300 font-mono">MAC: {node.macAddress} | Status: Verified</div>
-                            </div>
+                        <div className="flex items-center space-x-3 text-left">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+                            <Cpu className="w-4 h-4" />
                           </div>
-
-                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700'}`}>
-                            {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
+                          <div>
+                            <div className="text-xs font-bold text-white flex items-center gap-2">
+                              <span>{node.serialNumber}</span>
+                              <span className="text-[10px] text-cyan-400 font-mono">({node.mode || 'ESP32 Hardware'})</span>
+                            </div>
+                            <div className="text-[11px] text-purple-300 font-mono">MAC: {node.macAddress} | Status: Verified</div>
                           </div>
                         </div>
-                      );
-                    })
-                  )}
-                </div>
+
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700'}`}>
+                          {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -739,7 +575,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     <span>{isTransmitting ? 'Transmitting to ESP Board...' : 'Transmit Wi-Fi Config to Physical ESP Board'}</span>
                   </button>
 
-                  {/* Direct Mobile Web Portal Button */}
                   <a
                     href="http://192.168.4.1"
                     target="_blank"
