@@ -175,17 +175,12 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       return;
     }
 
-    // 5. Detect Active Broadcasting Hardware in Provisioning Mode (AGRI-SETUP-XXYY Node)
-    const provSerial = `AGRI-${selectedProduct.boardFamily}-PROV-${Math.floor(1000 + Math.random() * 9000)}`;
-    const provMac = `CC:50:E3:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
-    
-    setFoundDevice({
-      serialNumber: provSerial,
-      macAddress: provMac,
-      rssi: -48,
-      mode: 'ACTIVE_PROVISIONING_MODE',
-    });
+    // 5. Zero Physical Hardware Detected Error (Strict Real-Time Scanning - No Faking)
     setIsScanning(false);
+    setFoundDevice(null);
+    setScanError(
+      `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your board is powered on or enter its MAC address / Serial below.`
+    );
   };
 
 
@@ -203,10 +198,26 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
     setIsSubmitting(true);
     setFeedback(null);
+
+    // Retrieve active user session
+    const activeUser = useAuthStore.getState().user;
+    let token = '';
+    if (activeUser) {
+      token = Buffer.from(JSON.stringify(activeUser)).toString('base64');
+    } else if (typeof window !== 'undefined') {
+      const stored = sessionStorage.getItem('aether_active_session_user') || localStorage.getItem('aether_active_session_user');
+      if (stored) {
+        token = Buffer.from(stored).toString('base64');
+      }
+    }
+
     try {
       const res = await fetch('/api/devices/claim', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           deviceName: nodeName,
           productId: selectedProduct.id,
@@ -222,7 +233,9 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         }),
       });
 
+
       const data = await res.json();
+
       if (data.success) {
         setFeedback({ type: 'success', message: data.message });
         setTimeout(() => {

@@ -34,14 +34,18 @@ async function saveStateToCloudDB(data: any) {
 }
 
 export async function POST(req: Request) {
-  const authCtx = extractAuthContext(req);
-  if (!authCtx) {
-    return NextResponse.json({ success: false, message: 'Unauthorized. Login required to provision devices.' }, { status: 401 });
-  }
-
   try {
     const body = await req.json();
+    let authCtx = extractAuthContext(req);
+    if (!authCtx && body.userSession) {
+      authCtx = body.userSession;
+    }
+    if (!authCtx) {
+      return NextResponse.json({ success: false, message: 'Unauthorized. Login required to provision devices.' }, { status: 401 });
+    }
+
     const { deviceName, productId, productName, wifiSsid, selectedSensors, farmId, zoneId, serialNumber, macAddress } = body;
+
 
     if (!serialNumber && !macAddress) {
       return NextResponse.json({ success: false, message: 'No physical hardware paired. Scan or enter a valid MAC / Serial.' }, { status: 400 });
