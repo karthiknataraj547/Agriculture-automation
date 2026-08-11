@@ -3,15 +3,14 @@
  * Product: AgriFlow Smart Irrigation Controller
  * Internal SKU: ESP32-IRRIGATION-V1
  * Microcontroller: ESP32 (Xtensa LX6 ESP32)
- * Version: v1.4.3 (Optimized with NimBLE-Arduino for reduced Flash memory footprint)
+ * Version: v1.4.4 (Optimized for standard 1.31MB partition - Size ~1.17MB)
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
-#include <NimBLEDevice.h> // Optimized BLE library (~400KB smaller than standard BLEDevice)
+#include <NimBLEDevice.h> // Lightweight BLE stack (~400KB smaller than Bluedroid)
 #include <Preferences.h>
-#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
@@ -31,7 +30,7 @@
 // ─── GLOBAL OBJECTS & STATE ───
 Preferences preferences;
 WebServer server(80);
-WiFiClientSecure espClient;
+WiFiClient espClient; // Standard TCP socket client (saves ~140KB mbedTLS Flash overhead)
 PubSubClient mqttClient(espClient);
 DHT dht(PIN_DHT_DATA, DHTTYPE);
 
@@ -63,21 +62,21 @@ void setup() {
   deviceSerial = "AGRI-ESP32-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
   deviceSerial.toUpperCase();
 
-  Serial.println("\n==========================================");
-  Serial.println(" AgriFlow Smart Irrigation Controller (ESP32)");
-  Serial.println(" Serial Number: " + deviceSerial);
-  Serial.println(" MAC Address:   " + macAddress);
-  Serial.println("==========================================");
+  Serial.println(F("\n=========================================="));
+  Serial.println(F(" AgriFlow Smart Irrigation Controller (ESP32)"));
+  Serial.print(F(" Serial Number: ")); Serial.println(deviceSerial);
+  Serial.print(F(" MAC Address:   ")); Serial.println(macAddress);
+  Serial.println(F("=========================================="));
 
   preferences.begin("agri-node", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPass = preferences.getString("pass", "");
 
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
-    Serial.println("[MODE] Entering PROVISIONING / SETUP MODE...");
+    Serial.println(F("[MODE] Entering PROVISIONING / SETUP MODE..."));
     setupProvisioningMode();
   } else {
-    Serial.println("[MODE] Connecting with saved Wi-Fi: " + wifiSsid);
+    Serial.print(F("[MODE] Connecting with saved Wi-Fi: ")); Serial.println(wifiSsid);
     connectToWiFi();
   }
 }
@@ -87,8 +86,8 @@ void setupProvisioningMode() {
   String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
   WiFi.softAP(apName.c_str(), "agrifarm2026");
 
-  Serial.println("[AP] Access Point Started: " + apName);
-  Serial.println("[AP] Connect & Visit IP: " + WiFi.softAPIP().toString());
+  Serial.print(F("[AP] Access Point Started: ")); Serial.println(apName);
+  Serial.print(F("[AP] Connect & Visit IP: ")); Serial.println(WiFi.softAPIP().toString());
 
   server.on("/setup", HTTP_POST, handleProvisioningRequest);
   server.on("/ping", HTTP_GET, []() {
@@ -104,7 +103,7 @@ void setupProvisioningMode() {
   NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
   pAdv->addServiceUUID(SERVICE_UUID);
   pAdv->start();
-  Serial.println("[BLE] NimBLE Bluetooth Advertising Started!");
+  Serial.println(F("[BLE] NimBLE Bluetooth Advertising Started!"));
 
   // Loop in Setup Mode until Wi-Fi Config Received
   while (!isProvisioned) {
@@ -119,14 +118,14 @@ void setupProvisioningMode() {
     server.handleClient();
   }
 
-  // De-initialize BLE to free RAM resources once setup completes
+  // De-initialize BLE stack to release memory once setup completes
   NimBLEDevice::deinit(true);
 
   preferences.putString("ssid", wifiSsid);
   preferences.putString("pass", wifiPass);
   preferences.end();
 
-  Serial.println("[SETUP] Wi-Fi Config Saved! Restarting in 2s...");
+  Serial.println(F("[SETUP] Wi-Fi Config Saved! Restarting in 2s..."));
   digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON
   delay(2000);
   ESP.restart();
@@ -134,7 +133,7 @@ void setupProvisioningMode() {
 
 void handleProvisioningRequest() {
   if (server.hasArg("plain")) {
-    JsonDocument doc; // Compatible with ArduinoJson v7 / StaticJsonDocument<256> v6
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, server.arg("plain"));
     if (!err) {
       const char* reqSsid = doc["ssid"];
@@ -154,7 +153,7 @@ void handleProvisioningRequest() {
 void connectToWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-  Serial.print("[WiFi] Connecting to " + wifiSsid);
+  Serial.print(F("[WiFi] Connecting to ")); Serial.println(wifiSsid);
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
@@ -164,23 +163,24 @@ void connectToWiFi() {
     attempts++;
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WiFi] Connected! Local IP: " + WiFi.localIP().toString());
-    digitalWrite(PIN_LED_INDICATOR, HIGH); // SOLID ON = HEALTHY & CONNECTED
-    pingDiscoveryGateway();
-
-    espClient.setInsecure();
-    mqttClient.setServer("mqtt.agritech.com", 8883);
-    mqttClient.setCallback(mqttCallback);
-  } else {
-    Serial.println("\n[WiFi] Connection Failed! Re-entering Setup Mode...");
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(F("\n[WiFi] Connection Failed! Re-entering Setup Mode..."));
     setupProvisioningMode();
+    return;
   }
+
+  Serial.println(F("\n[WiFi] Connected!"));
+  Serial.print(F("Local IP: ")); Serial.println(WiFi.localIP().toString());
+  digitalWrite(PIN_LED_INDICATOR, HIGH); // SOLID ON = HEALTHY & CONNECTED
+  pingDiscoveryGateway();
+
+  mqttClient.setServer("mqtt.agritech.com", 1883); // Standard MQTT Port
+  mqttClient.setCallback(mqttCallback);
 }
 
 void pingDiscoveryGateway() {
   HTTPClient http;
-  http.begin("https://agriculture-automation.vercel.app/api/iot/discovery");
+  http.begin("http://agriculture-automation.vercel.app/api/iot/discovery");
   http.addHeader("Content-Type", "application/json");
 
   JsonDocument doc;
@@ -194,25 +194,21 @@ void pingDiscoveryGateway() {
   String payload;
   serializeJson(doc, payload);
   int code = http.POST(payload);
-  Serial.println("[DISCOVERY PING] HTTP Status: " + String(code));
+  Serial.print(F("[DISCOVERY PING] HTTP Status: ")); Serial.println(code);
   http.end();
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String msg = "";
-  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
-  Serial.println("[MQTT Command]: " + msg);
-
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, msg);
+  DeserializationError err = deserializeJson(doc, payload, length);
   if (!err) {
     const char* type = doc["commandType"];
-    if (type && String(type) == "START_PUMP") {
+    if (type && strcmp(type, "START_PUMP") == 0) {
       digitalWrite(PIN_RELAY_PUMP, HIGH);
-      Serial.println("[PUMP] RELAY TURNED ON");
-    } else if (type && String(type) == "STOP_PUMP") {
+      Serial.println(F("[PUMP] RELAY TURNED ON"));
+    } else if (type && strcmp(type, "STOP_PUMP") == 0) {
       digitalWrite(PIN_RELAY_PUMP, LOW);
-      Serial.println("[PUMP] RELAY TURNED OFF");
+      Serial.println(F("[PUMP] RELAY TURNED OFF"));
     }
   }
 }

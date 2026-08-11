@@ -153,7 +153,6 @@ export const AdminHardwareProductsView: React.FC = () => {
 
 ${wifiHeader}
 ${prefHeader}
-#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
@@ -170,8 +169,9 @@ ${prefHeader}
 ${isEsp8266 ? '' : '#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"\n#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"\n'}
 // ─── GLOBAL OBJECTS & STATE ───
 ${isEsp8266 ? '' : 'Preferences preferences;\n'}${serverType} server(80);
-WiFiClientSecure espClient;
+WiFiClient espClient;
 PubSubClient mqttClient(espClient);
+
 DHT dht(PIN_DHT_DATA, DHTTYPE);
 
 String wifiSsid = "";
@@ -288,9 +288,9 @@ void connectToWiFi() {
     digitalWrite(PIN_LED_INDICATOR, HIGH); // SOLID ON = HEALTHY & CONNECTED
     pingDiscoveryGateway();
 
-    espClient.setInsecure();
-    mqttClient.setServer("mqtt.agritech.com", 8883);
+    mqttClient.setServer("mqtt.agritech.com", 1883);
     mqttClient.setCallback(mqttCallback);
+
   } else {
     Serial.println("\\n[WiFi] Connection Failed! Re-entering Setup Mode...");
     setupProvisioningMode();
