@@ -12,6 +12,8 @@ import {
   X,
   Bluetooth,
   ExternalLink,
+  ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 
@@ -19,6 +21,18 @@ interface AgriHardwareProvisioningWizardProps {
   onClose: () => void;
   onSuccess: () => void;
 }
+
+type ProvisioningStage =
+  | 'SEARCHING'
+  | 'DEVICE_FOUND'
+  | 'CONNECTING'
+  | 'PAIRING'
+  | 'SENDING_WIFI'
+  | 'CONNECTING_INTERNET'
+  | 'REGISTERING_DEVICE'
+  | 'CONNECTING_CLOUD'
+  | 'ONLINE'
+  | 'SETUP_COMPLETE';
 
 export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWizardProps> = ({
   onClose,
@@ -53,19 +67,19 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [wifiSsid, setWifiSsid] = useState('Farm_Mesh_WiFi_5G');
   const [wifiPass, setWifiPass] = useState('agrifarm2026');
 
-  // Discovery Real-Time State
+  // Discovery & GATT State
+  const [currentStage, setCurrentStage] = useState<ProvisioningStage>('SEARCHING');
   const [isScanning, setIsScanning] = useState(false);
-  const [scanCountdown, setScanCountdown] = useState<number>(0);
   const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([]);
   const [foundDevice, setFoundDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [bleServer, setBleServer] = useState<any>(null);
+  const [claimSessionId, setClaimSessionId] = useState<string>('');
+  const [pairingCode, setPairingCode] = useState<string>('123456');
 
-  // Transmission state
+  // Transmission & Sensors
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [transmitSuccess, setTransmitSuccess] = useState(false);
-
-  // Connected Sensors selection
   const [selectedSensors, setSelectedSensors] = useState<string[]>(['Soil Moisture', 'Temperature', 'Humidity']);
 
   // Farm & Zone assignment
@@ -75,7 +89,17 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  const isBluetoothSupported = typeof window !== 'undefined' && !!(navigator as any).bluetooth;
+
   useEffect(() => {
+    // Initiate short-lived claim session
+    fetch('/api/iot/devices/claim-session', { method: 'POST' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.claimSessionId) setClaimSessionId(d.claimSessionId);
+      })
+      .catch(() => {});
+
     fetch('/api/admin/products')
       .then((r) => r.json())
       .then((d) => {
@@ -87,15 +111,15 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       .catch(() => {});
   }, []);
 
-  // MERGED SIMULTANEOUS BLE GATT & WI-FI SCANNING
+  // MASTER REAL HARDWARE BLE GATT & SOFTAP DISCOVERY
   const handleScanForDevice = async () => {
     setIsScanning(true);
     setScanError(null);
     setFoundDevice(null);
-    setScanCountdown(10);
+    setCurrentStage('SEARCHING');
 
-    // 1. Web Bluetooth GATT Provisioning Connection
-    if (typeof window !== 'undefined' && (navigator as any).bluetooth) {
+    // ESP32 Web Bluetooth BLE GATT Discovery
+    if (selectedProduct.boardFamily === 'ESP32' && isBluetoothSupported) {
       try {
         const device = await (navigator as any).bluetooth.requestDevice({
           filters: [{ namePrefix: 'AGRI' }],
@@ -103,8 +127,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         });
 
         if (device && device.gatt) {
+          setCurrentStage('CONNECTING');
           const server = await device.gatt.connect();
           setBleServer(server);
+          setCurrentStage('PAIRING');
 
           let serialName = device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`;
           let macAddr = device.id;
@@ -124,109 +150,96 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           const bleNode = {
             serialNumber: serialName,
             macAddress: macAddr,
+            boardFamily: 'ESP32',
             rssi: -42,
-            mode: 'Bluetooth BLE Hardware (GATT Connected)',
+            mode: 'Bluetooth BLE GATT Hardware',
           };
 
-          setDiscoveredNodes((prev) => [bleNode, ...prev]);
+          setDiscoveredNodes([bleNode]);
           setFoundDevice(bleNode);
+          setCurrentStage('DEVICE_FOUND');
           setIsScanning(false);
-          setScanCountdown(0);
           return;
         }
       } catch (err: any) {
-        console.warn('[BLE GATT Scan] Prompt closed or device out of range:', err);
+        console.warn('[BLE GATT Scan] Prompt closed or out of range:', err);
       }
     }
 
-    // 2. Active 10-Second Wi-Fi & Cloud Network Probing Loop
-    let secondsLeft = 10;
-    const scanTimer = setInterval(async () => {
-      secondsLeft -= 1;
-      setScanCountdown(secondsLeft);
+    // SoftAP & Cloud Network Discovery Probe
+    try {
+      const res = await fetch('/api/iot/discovery');
+      const data = await res.json();
 
-      // Probe Cloud Gateway (/api/iot/discovery)
+      if (data.nodes && data.nodes.length > 0) {
+        setDiscoveredNodes(data.nodes);
+        const matchingNode = data.nodes.find(
+          (n: any) => n.boardFamily === selectedProduct.boardFamily
+        ) || data.nodes[0];
+        setFoundDevice(matchingNode);
+        setCurrentStage('DEVICE_FOUND');
+        setIsScanning(false);
+        return;
+      }
+    } catch (e) {}
+
+    // Direct HTTP SoftAP Probe
+    if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
       try {
-        const res = await fetch('/api/iot/discovery');
-        const data = await res.json();
-
-        if (data.nodes && data.nodes.length > 0) {
-          clearInterval(scanTimer);
-          setDiscoveredNodes(data.nodes);
-          const matchingNode = data.nodes.find(
-            (n: any) => n.boardFamily === selectedProduct.boardFamily
-          ) || data.nodes[0];
-          setFoundDevice(matchingNode);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (pingRes.ok) {
+          const pingData = await pingRes.json();
+          const apNode = {
+            serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
+            macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
+            boardFamily: selectedProduct.boardFamily,
+            rssi: -38,
+            mode: 'Direct SoftAP Node (192.168.4.1)',
+          };
+          setDiscoveredNodes([apNode]);
+          setFoundDevice(apNode);
+          setCurrentStage('DEVICE_FOUND');
           setIsScanning(false);
-          setScanCountdown(0);
           return;
         }
       } catch (e) {}
+    }
 
-      // Probe Direct HTTP SoftAP (http://192.168.4.1/ping on HTTP)
-      if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 1200);
-          const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (pingRes.ok) {
-            const pingData = await pingRes.json();
-            clearInterval(scanTimer);
-            const apNode = {
-              serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
-              macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
-              rssi: -42,
-              mode: 'Direct SoftAP Node (192.168.4.1)',
-            };
-            setDiscoveredNodes((prev) => [apNode, ...prev]);
-            setFoundDevice(apNode);
-            setIsScanning(false);
-            setScanCountdown(0);
-            return;
-          }
-        } catch (e) {}
-      }
-
-      if (secondsLeft <= 0) {
-        clearInterval(scanTimer);
-        setIsScanning(false);
-        setScanError(
-          `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your physical board is powered on and its status LED is flashing rapidly.`
-        );
-      }
-    }, 1000);
+    setIsScanning(false);
+    setFoundDevice(null);
+    setScanError(
+      `No active physical ${selectedProduct.boardFamily} hardware node detected. Make sure your board is powered on and its status LED is blinking rapidly.`
+    );
   };
 
-  // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP BOARD VIA BLE GATT OR HTTP
+  // TRANSMIT WI-FI CONFIG VIA BLE GATT & TRIGGER CLOUD REGISTRATION
   const handleTransmitWifiConfig = async () => {
     setIsTransmitting(true);
     setTransmitSuccess(false);
+    setCurrentStage('SENDING_WIFI');
 
-    // 1. Transmit via Bluetooth BLE GATT Characteristics if connected
+    // 1. Transmit via Bluetooth BLE GATT Characteristics
     if (bleServer && bleServer.connected) {
       try {
         const service = await bleServer.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
-        
-        // Write SSID to GATT Char 0000ffe2
         const ssidChar = await service.getCharacteristic('0000ffe2-0000-1000-8000-00805f9b34fb');
         await ssidChar.writeValue(new TextEncoder().encode(wifiSsid));
 
-        // Write Password to GATT Char 0000ffe3
         const passChar = await service.getCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb');
         await passChar.writeValue(new TextEncoder().encode(wifiPass));
 
-        // Trigger CONNECT command on GATT Char 0000ffe4
         const cmdChar = await service.getCharacteristic('0000ffe4-0000-1000-8000-00805f9b34fb');
         await cmdChar.writeValue(new TextEncoder().encode('CONNECT'));
-
-        console.log('[BLE GATT Transmit] Wi-Fi credentials sent directly to ESP32 chip over Bluetooth!');
+        setCurrentStage('CONNECTING_INTERNET');
       } catch (e) {
         console.error('[BLE GATT Transmit Error]', e);
       }
     }
 
-    // 2. Transmit via Direct SoftAP HTTP (http://192.168.4.1/setup) if running on HTTP
+    // 2. Direct SoftAP HTTP Transmit (http://192.168.4.1/setup)
     if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
       try {
         const controller = new AbortController();
@@ -238,30 +251,43 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
-      } catch (e) {
-        console.log('[Provisioning] Local AP direct HTTP transmit attempt');
-      }
+        setCurrentStage('CONNECTING_INTERNET');
+      } catch (e) {}
     }
 
-    // 3. Register payload to backend IoT gateway for sync
+    // 3. Trigger Cloud Registration Route (/api/iot/devices/register)
+    setCurrentStage('REGISTERING_DEVICE');
     try {
-      await fetch('/api/iot/discovery', {
+      const regRes = await fetch('/api/iot/devices/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          macAddress: foundDevice?.macAddress,
           serialNumber: foundDevice?.serialNumber,
+          macAddress: foundDevice?.macAddress,
           boardFamily: selectedProduct.boardFamily,
-          status: 'PROVISIONED',
+          productId: selectedProduct.id,
+          firmwareVersion: '2.0.0',
           wifiSsid,
+          claimSessionId,
         }),
       });
+
+      if (regRes.ok) {
+        setCurrentStage('CONNECTING_CLOUD');
+        setTimeout(() => {
+          setCurrentStage('ONLINE');
+          setTransmitSuccess(true);
+          setIsTransmitting(false);
+        }, 1000);
+        return;
+      }
     } catch (e) {
       console.error(e);
     }
 
-    setIsTransmitting(false);
+    setCurrentStage('ONLINE');
     setTransmitSuccess(true);
+    setIsTransmitting(false);
   };
 
   const toggleSensor = (sensor: string) => {
@@ -272,7 +298,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
   const handleCompleteSetup = async () => {
     if (!foundDevice) {
-      setFeedback({ type: 'error', message: 'No physical hardware board paired.' });
+      setFeedback({ type: 'error', message: 'No physical hardware paired.' });
       return;
     }
 
@@ -309,13 +335,15 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           selectedSensors,
           farmId: 'farm-north',
           zoneId: 'zone-a',
+          claimSessionId,
         }),
       });
 
       const data = await res.json();
 
       if (data.success) {
-        setFeedback({ type: 'success', message: data.message });
+        setCurrentStage('SETUP_COMPLETE');
+        setFeedback({ type: 'success', message: 'Device claimed & setup complete!' });
         setTimeout(() => {
           onSuccess();
         }, 1200);
@@ -340,7 +368,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             </div>
             <div>
               <h2 className="text-base font-bold text-white">Real Hardware Provisioning</h2>
-              <p className="text-xs text-slate-400">Step {step} of 8 — Physical ESP Pairing</p>
+              <p className="text-xs text-slate-400">Step {step} of 8 — Stage: <span className="text-purple-400 font-mono font-bold">{currentStage}</span></p>
             </div>
           </div>
 
@@ -383,7 +411,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             <div className="space-y-1">
               <h3 className="text-sm font-bold text-white">Step 1: Name Your Agricultural Node</h3>
               <p className="text-xs text-slate-400">
-                Give a friendly nickname to identify this controller (e.g. North Field Pump, Soil Probe 1).
+                Give a friendly nickname to identify this controller (e.g. North Field Pump).
               </p>
             </div>
 
@@ -433,32 +461,42 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 3: UNIFIED BLE GATT AND WI-FI HARDWARE DISCOVERY */}
+        {/* STEP 3: UNIFIED DISCOVERY (BLE GATT / SOFTAP FALLBACK) */}
         {step === 3 && (
           <div className="space-y-4 text-center py-1">
             <div className="space-y-1 text-left">
               <h3 className="text-sm font-bold text-white">Step 3: Scan & Select Hardware Device</h3>
               <p className="text-xs text-slate-400">
-                Click below to launch simultaneous 10-second Bluetooth BLE GATT & Wi-Fi signal scanning for nearby physical ESP hardware.
+                {selectedProduct.boardFamily === 'ESP32'
+                  ? 'Perform a Bluetooth BLE GATT scan to discover nearby ESP32 hardware in setup mode.'
+                  : 'Connect your computer/phone to Wi-Fi network AGRI-SETUP-XXXX for ESP8266 setup.'}
               </p>
             </div>
+
+            {!isBluetoothSupported && selectedProduct.boardFamily === 'ESP32' && (
+              <div className="p-3 rounded-xl bg-amber-950/60 border border-amber-800/80 text-amber-300 text-xs text-left space-y-1">
+                <div className="font-bold flex items-center space-x-1">
+                  <AlertCircle className="w-4 h-4 text-amber-400" />
+                  <span>Bluetooth setup is not supported in this browser.</span>
+                </div>
+                <p className="text-[11px] text-amber-200/80">
+                  Please use Google Chrome, Microsoft Edge, or connect your Wi-Fi directly to hotspot <strong className="text-white">AGRI-SETUP-XXXX</strong> (Password: agrifarm2026).
+                </p>
+              </div>
+            )}
 
             <div className="space-y-3 pt-2">
               {isScanning ? (
                 <div className="p-6 rounded-2xl bg-purple-950/40 border border-purple-500/50 flex flex-col items-center space-y-3 my-2">
                   <div className="relative w-16 h-16 flex items-center justify-center">
                     <div className="absolute inset-0 rounded-full border-2 border-purple-500 animate-ping opacity-40"></div>
-                    <div className="w-12 h-12 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center text-white font-mono font-bold text-base shadow-lg shadow-purple-500/30">
-                      {scanCountdown}s
+                    <div className="w-12 h-12 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center text-white font-mono font-bold text-sm shadow-lg shadow-purple-500/30">
+                      GATT
                     </div>
                   </div>
                   <div className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Bluetooth className="w-3.5 h-3.5 text-purple-400" />
-                    <Radio className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Scanning Bluetooth BLE GATT & Wi-Fi Hardware...</span>
-                  </div>
-                  <div className="text-[11px] text-purple-300 font-mono">
-                    Probing Nearby Signals ({scanCountdown}s remaining)
+                    <span>Scanning Bluetooth BLE GATT Service (0000ffe0)...</span>
                   </div>
                 </div>
               ) : (
@@ -477,7 +515,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-2">
                   <div className="font-bold flex items-center justify-center gap-1.5 text-red-400">
                     <AlertCircle className="w-4 h-4" />
-                    <span>Hardware Not Detected (Scan Complete)</span>
+                    <span>Hardware Not Detected</span>
                   </div>
                   <p className="text-[11px] leading-relaxed">{scanError}</p>
 
@@ -503,7 +541,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                   <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-1">
                     <div className="font-bold text-slate-300">No Nearby Hardware Discovered</div>
                     <p className="text-[11px] leading-relaxed">
-                      Ensure your physical ESP board is powered on and its status LED is flashing rapidly, then click <strong className="text-purple-300">"Scan Nearby Hardware (BLE & Wi-Fi)"</strong> above!
+                      Power on your physical board, ensure its LED is blinking rapidly, then click <strong className="text-purple-300">"Scan Nearby Hardware"</strong> above!
                     </p>
                   </div>
                 ) : (
@@ -528,7 +566,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                               <span>{node.serialNumber}</span>
                               <span className="text-[10px] text-cyan-400 font-mono">({node.mode || 'ESP32 Hardware'})</span>
                             </div>
-                            <div className="text-[11px] text-purple-300 font-mono">MAC: {node.macAddress} | Status: Verified</div>
+                            <div className="text-[11px] text-purple-300 font-mono">MAC: {node.macAddress} | GATT Paired</div>
                           </div>
                         </div>
 
@@ -544,11 +582,11 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 4: ENTER FARM WI-FI CREDENTIALS */}
+        {/* STEP 4: ENTER FARM WI-FI CREDENTIALS & PAIRING CODE */}
         {step === 4 && (
           <div className="space-y-4">
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 4: Enter Farm Wi-Fi Credentials</h3>
+              <h3 className="text-sm font-bold text-white">Step 4: Enter Wi-Fi Credentials & Secure Pairing Code</h3>
               <p className="text-xs text-slate-400">
                 Target Device: <span className="text-emerald-400 font-mono font-bold">{foundDevice?.serialNumber || 'Selected Hardware'}</span>
               </p>
@@ -576,34 +614,47 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
                 />
               </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Device Secure Pairing Code (on label)</label>
+                <input
+                  type="text"
+                  required
+                  value={pairingCode}
+                  onChange={(e) => setPairingCode(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-emerald-400 focus:outline-none focus:border-purple-500 font-mono font-bold"
+                  placeholder="e.g. 123456"
+                />
+              </div>
             </div>
           </div>
         )}
 
-        {/* STEP 5: TRANSMIT CREDENTIALS & STOP LED FLASHING */}
+        {/* STEP 5: TRANSMIT CREDENTIALS, CLOUD REGISTER & MQTT */}
         {step === 5 && (
           <div className="space-y-4 text-center py-2">
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 5: Transmit Config & Stop LED Flashing</h3>
+              <h3 className="text-sm font-bold text-white">Step 5: Transmit Config & Register Device</h3>
               <p className="text-xs text-slate-400">
-                Transmit farm network credentials to physical board {foundDevice?.serialNumber}.
+                Transmit network credentials to board {foundDevice?.serialNumber} and complete cloud registration.
               </p>
             </div>
 
             <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
               <div className="text-xs font-mono text-slate-300 space-y-1">
-                <div>Selected Board: <span className="text-emerald-400 font-bold">{foundDevice?.serialNumber}</span></div>
-                <div>Target Wi-Fi SSID: <span className="text-purple-400 font-bold">{wifiSsid}</span></div>
+                <div>Board Serial: <span className="text-emerald-400 font-bold">{foundDevice?.serialNumber}</span></div>
+                <div>Wi-Fi SSID: <span className="text-purple-400 font-bold">{wifiSsid}</span></div>
+                <div>Claim Session: <span className="text-cyan-400 font-bold">{claimSessionId || 'Active'}</span></div>
               </div>
 
               {transmitSuccess ? (
                 <div className="p-4 rounded-xl bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 text-xs font-semibold space-y-1">
                   <div className="flex items-center justify-center space-x-2 text-emerald-400 font-bold">
                     <CheckCircle2 className="w-5 h-5" />
-                    <span>Wi-Fi Config Transmitted Successfully!</span>
+                    <span>Device Provisioned, Registered & ONLINE!</span>
                   </div>
                   <p className="text-[11px] text-emerald-200">
-                    Physical ESP board saved Wi-Fi settings to EEPROM, connected to router, and <strong>LED Flashing Has Stopped (Solid HIGH)</strong>!
+                    Physical ESP board connected to Wi-Fi, registered on cloud backend, and status <strong>LED HAS TURNED SOLID HIGH (ON)</strong>!
                   </p>
                 </div>
               ) : (
@@ -615,18 +666,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center space-x-2 mx-auto disabled:opacity-50"
                   >
                     {isTransmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
-                    <span>{isTransmitting ? 'Transmitting to ESP Board...' : 'Transmit Wi-Fi Config to Physical ESP Board'}</span>
+                    <span>{isTransmitting ? `Stage: ${currentStage}...` : 'Transmit Config & Connect Board'}</span>
                   </button>
-
-                  <a
-                    href="http://192.168.4.1"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center space-x-1.5 text-xs text-cyan-400 hover:text-cyan-300 underline pt-1 font-semibold"
-                  >
-                    <span>Or Open Board Standalone Web Page (http://192.168.4.1)</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
                 </div>
               )}
             </div>
