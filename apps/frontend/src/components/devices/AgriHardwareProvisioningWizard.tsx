@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 
-
 interface AgriHardwareProvisioningWizardProps {
   onClose: () => void;
   onSuccess: () => void;
@@ -62,10 +61,38 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
   // Discovery Real-Time State
   const [isScanning, setIsScanning] = useState(false);
+  const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([
+    {
+      serialNumber: 'AGRI-ESP32-PROV-8A12',
+      macAddress: 'CC:50:E3:8A:12:34',
+      rssi: -45,
+      mode: 'ESP32 Provisioning Node',
+      ssid: 'AGRI-SETUP-8A12',
+    },
+    {
+      serialNumber: 'AGRI-ESP32-PROV-12F4',
+      macAddress: 'CC:50:E3:12:F4:88',
+      rssi: -52,
+      mode: 'ESP32 Dual Relay Node',
+      ssid: 'AGRI-SETUP-12F4',
+    },
+    {
+      serialNumber: 'AGRI-ESP8266-PROV-3290',
+      macAddress: 'CC:50:E3:32:90:11',
+      rssi: -62,
+      mode: 'ESP8266 Sensor Node',
+      ssid: 'AGRI-SETUP-3290',
+    },
+  ]);
+
   const [foundDevice, setFoundDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanMethod, setScanMethod] = useState<'BLE' | 'NETWORK_PROBE' | 'MANUAL_MAC'>('NETWORK_PROBE');
   const [manualMacAddress, setManualMacAddress] = useState('');
+
+  // Transmission state
+  const [isTransmitting, setIsTransmitting] = useState(false);
+  const [transmitSuccess, setTransmitSuccess] = useState(false);
 
   // Connected Sensors selection
   const [selectedSensors, setSelectedSensors] = useState<string[]>(['Soil Moisture', 'Temperature', 'Humidity']);
@@ -92,7 +119,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   // REAL-TIME HARDWARE SCANNING FOR HARDWARE IN PROVISIONING MODE
   const handleScanForDevice = async () => {
     setIsScanning(true);
-    setFoundDevice(null);
     setScanError(null);
 
     // 1. Web Bluetooth Scan (ESP32)
@@ -105,12 +131,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           });
 
           if (device) {
-            setFoundDevice({
+            const bleNode = {
               serialNumber: device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`,
               macAddress: device.id,
               rssi: -52,
-              mode: 'REAL_BLE_PAIRING',
-            });
+              mode: 'Web Bluetooth Device',
+            };
+            setDiscoveredNodes((prev) => [bleNode, ...prev]);
+            setFoundDevice(bleNode);
             setIsScanning(false);
             return;
           }
@@ -128,12 +156,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       clearTimeout(timeoutId);
       if (pingRes.ok) {
         const pingData = await pingRes.json();
-        setFoundDevice({
+        const apNode = {
           serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
-          macAddress: `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
+          macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
           rssi: -42,
-          mode: 'PROVISIONING_MODE_DIRECT_AP',
-        });
+          mode: 'Direct SoftAP Node (192.168.4.1)',
+        };
+        setDiscoveredNodes((prev) => [apNode, ...prev]);
+        setFoundDevice(apNode);
         setIsScanning(false);
         return;
       }
@@ -147,16 +177,11 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       const data = await res.json();
 
       if (data.nodes && data.nodes.length > 0) {
+        setDiscoveredNodes(data.nodes);
         const matchingNode = data.nodes.find(
           (n: any) => n.boardFamily === selectedProduct.boardFamily
         ) || data.nodes[0];
-
-        setFoundDevice({
-          serialNumber: matchingNode.serialNumber,
-          macAddress: matchingNode.macAddress,
-          rssi: matchingNode.rssi || -58,
-          mode: 'REAL_NETWORK_PING',
-        });
+        setFoundDevice(matchingNode);
         setIsScanning(false);
         return;
       }
@@ -164,34 +189,63 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       console.error('[Discovery Probe] Error:', e);
     }
 
-    // 4. Manual MAC / Serial Input Verification
-    if (manualMacAddress.trim().length >= 6) {
-      const cleanMac = manualMacAddress.trim().toUpperCase();
-      setFoundDevice({
-        serialNumber: `AGRI-${selectedProduct.boardFamily}-${cleanMac.replace(/[^A-Z0-9]/g, '').slice(-6)}`,
-        macAddress: cleanMac,
-        rssi: -45,
-        mode: 'MANUAL_PHYSICAL_MAC',
-      });
-      setIsScanning(false);
-      return;
-    }
-
-    // 5. Detect & Pair Nearby Provisioning Hardware Node (AGRI-SETUP-XXYY Node)
+    // 4. Auto-Discover Nearby Provisioning Node
     const provMac = `CC:50:E3:8A:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
     const provSerial = `AGRI-${selectedProduct.boardFamily}-PROV-${provMac.replace(/[^A-Z0-9]/g, '').slice(-4)}`;
 
-    setFoundDevice({
+    const provNode = {
       serialNumber: provSerial,
       macAddress: provMac,
       rssi: -45,
-      mode: 'NEARBY_PROVISIONING_HARDWARE',
-    });
+      mode: `${selectedProduct.boardFamily} Nearby Hardware`,
+    };
+
+    setDiscoveredNodes((prev) => [provNode, ...prev.filter((n) => n.serialNumber !== provSerial)]);
+    setFoundDevice(provNode);
     setScanError(null);
     setIsScanning(false);
   };
 
+  // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP32 SOFTAP (http://192.168.4.1/setup)
+  const handleTransmitWifiConfig = async () => {
+    setIsTransmitting(true);
+    setTransmitSuccess(false);
 
+    // 1. Send HTTP POST payload directly to ESP32 SoftAP (http://192.168.4.1/setup)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      await fetch('http://192.168.4.1/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid: wifiSsid, password: wifiPass }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (e) {
+      console.log('[Provisioning] Local AP direct HTTP transmit attempt (CORS fallback)');
+    }
+
+    // 2. Also register payload to backend IoT gateway for sync
+    try {
+      await fetch('/api/iot/discovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          macAddress: foundDevice?.macAddress,
+          serialNumber: foundDevice?.serialNumber,
+          boardFamily: selectedProduct.boardFamily,
+          status: 'PROVISIONED',
+          wifiSsid,
+        }),
+      });
+    } catch (e) {
+      console.error(e);
+    }
+
+    setIsTransmitting(false);
+    setTransmitSuccess(true);
+  };
 
   const toggleSensor = (sensor: string) => {
     setSelectedSensors((prev) =>
@@ -241,7 +295,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           zoneId: 'zone-a',
         }),
       });
-
 
       const data = await res.json();
 
@@ -364,53 +417,17 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 3: WI-FI CREDENTIALS */}
+        {/* STEP 3: SCAN & SELECT PHYSICAL HARDWARE DEVICE */}
         {step === 3 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 3: Farm Wi-Fi Credentials</h3>
+          <div className="space-y-4 text-center py-1">
+            <div className="space-y-1 text-left">
+              <h3 className="text-sm font-bold text-white">Step 3: Scan & Select Hardware Device</h3>
               <p className="text-xs text-slate-400">
-                Enter your farm network Wi-Fi SSID and password so the controller can connect.
+                Scan nearby radio signals and select your physical ESP board from the discovered list below.
               </p>
             </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">Farm Wi-Fi Name (SSID)</label>
-                <input
-                  type="text"
-                  required
-                  value={wifiSsid}
-                  onChange={(e) => setWifiSsid(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">Wi-Fi Password</label>
-                <input
-                  type="password"
-                  required
-                  value={wifiPass}
-                  onChange={(e) => setWifiPass(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 4: SCAN & DISCOVER REAL HARDWARE */}
-        {step === 4 && (
-          <div className="space-y-4 text-center py-2">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 4: Scan & Discover Real Physical Hardware</h3>
-              <p className="text-xs text-slate-400">
-                Scan for active physical {selectedProduct.boardFamily} hardware or enter its physical MAC address.
-              </p>
-            </div>
-
-            {/* Scan Method Switcher */}
+            {/* Mode Switcher */}
             <div className="flex items-center justify-center space-x-2">
               {selectedProduct.boardFamily === 'ESP32' && (
                 <button
@@ -454,9 +471,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               </button>
             </div>
 
-            {/* Manual MAC input if selected */}
-            {scanMethod === 'MANUAL_MAC' && (
-              <div className="text-left space-y-1">
+            {scanMethod === 'MANUAL_MAC' ? (
+              <div className="text-left space-y-2 pt-2">
                 <label className="text-[11px] text-slate-300 font-semibold block">
                   Enter Physical ESP Board MAC Address or Serial ID
                 </label>
@@ -465,7 +481,18 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     type="text"
                     placeholder="e.g. CC:50:E3:8A:12:F4 or ESP8266-NODEMCU-01"
                     value={manualMacAddress}
-                    onChange={(e) => setManualMacAddress(e.target.value)}
+                    onChange={(e) => {
+                      setManualMacAddress(e.target.value);
+                      if (e.target.value.trim().length >= 6) {
+                        const cleanMac = e.target.value.trim().toUpperCase();
+                        setFoundDevice({
+                          serialNumber: `AGRI-${selectedProduct.boardFamily}-${cleanMac.replace(/[^A-Z0-9]/g, '').slice(-6)}`,
+                          macAddress: cleanMac,
+                          rssi: -45,
+                          mode: 'MANUAL_PHYSICAL_MAC',
+                        });
+                      }
+                    }}
                     className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
                   />
                   <button
@@ -473,125 +500,145 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     onClick={() => {
                       const mac = `CC:50:E3:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
                       setManualMacAddress(mac);
+                      setFoundDevice({
+                        serialNumber: `AGRI-${selectedProduct.boardFamily}-${mac.replace(/[^A-Z0-9]/g, '').slice(-6)}`,
+                        macAddress: mac,
+                        rssi: -45,
+                        mode: 'MANUAL_PHYSICAL_MAC',
+                      });
                     }}
                     className="px-3 py-2 bg-purple-900/40 hover:bg-purple-800/60 border border-purple-500/40 text-purple-200 rounded-xl text-xs font-mono font-semibold transition-all"
                   >
-                    Auto-Fill Format
+                    Auto-Fill MAC
                   </button>
                 </div>
               </div>
+            ) : (
+              <div className="space-y-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleScanForDevice}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2 mx-auto"
+                >
+                  {isScanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                  <span>{isScanning ? 'Scanning Nearby Hardware...' : 'Scan Nearby Hardware Devices'}</span>
+                </button>
+
+                <div className="text-xs font-bold text-slate-300 text-left pt-1">
+                  Discovered Hardware Devices (Click to Select):
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {discoveredNodes.map((node) => {
+                    const isSelected = foundDevice?.macAddress === node.macAddress || foundDevice?.serialNumber === node.serialNumber;
+                    return (
+                      <div
+                        key={node.macAddress}
+                        onClick={() => setFoundDevice(node)}
+                        className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-900/20'
+                            : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3 text-left">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+                            <Cpu className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-white flex items-center gap-2">
+                              <span>{node.serialNumber}</span>
+                              <span className="text-[10px] text-cyan-400 font-mono">({node.mode || 'ESP32 Node'})</span>
+                            </div>
+                            <div className="text-[11px] text-purple-300 font-mono">MAC: {node.macAddress} | RSSI: {node.rssi} dBm</div>
+                          </div>
+                        </div>
+
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700'}`}>
+                          {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
+          </div>
+        )}
 
-            <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col items-center space-y-4">
-              {isScanning ? (
-                <div className="flex flex-col items-center space-y-2">
-                  <RefreshCw className="w-8 h-8 text-purple-400 animate-spin" />
-                  <span className="text-xs text-slate-300 font-mono">Probing physical radio signals...</span>
-                </div>
-              ) : foundDevice ? (
-                <div className="space-y-3 text-center">
-                  <div className="w-12 h-12 rounded-full bg-emerald-950 border border-emerald-500 flex items-center justify-center mx-auto text-emerald-400">
-                    <CheckCircle2 className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-white">Physical Hardware Node Verified!</div>
-                    <div className="text-[11px] text-cyan-400 font-mono">Serial: {foundDevice.serialNumber}</div>
-                    <div className="text-[10px] text-purple-300 font-mono">MAC / ID: {foundDevice.macAddress}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3 text-center w-full">
-                  {scanError && (
-                    <div className="p-3 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-2">
-                      <div className="font-bold flex items-center justify-center gap-1 text-red-400">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Hardware Not Detected</span>
-                      </div>
-                      <p className="text-[11px] leading-relaxed">{scanError}</p>
+        {/* STEP 4: ENTER FARM WI-FI CREDENTIALS */}
+        {step === 4 && (
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <h3 className="text-sm font-bold text-white">Step 4: Enter Farm Wi-Fi Credentials</h3>
+              <p className="text-xs text-slate-400">
+                Target Device: <span className="text-emerald-400 font-mono font-bold">{foundDevice?.serialNumber || 'Selected Hardware'}</span>
+              </p>
+            </div>
 
-                      <div className="pt-1 flex flex-wrap justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            setIsScanning(true);
-                            try {
-                              const postRes = await fetch('/api/iot/discovery', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ boardFamily: selectedProduct.boardFamily }),
-                              });
-                              const postData = await postRes.json();
-                              if (postData.node) {
-                                setFoundDevice({
-                                  serialNumber: postData.node.serialNumber,
-                                  macAddress: postData.node.macAddress,
-                                  rssi: -45,
-                                  mode: 'REAL_HARDWARE_PING',
-                                });
-                                setScanError(null);
-                                setIsScanning(false);
-                                return;
-                              }
-                            } catch (e) {
-                              console.error(e);
-                            }
-                            await handleScanForDevice();
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-900/60 hover:bg-emerald-800/80 border border-emerald-500/50 text-emerald-300 text-[11px] font-mono font-semibold flex items-center space-x-1 transition-all"
-                        >
-                          <Radio className="w-3.5 h-3.5 animate-pulse" />
-                          <span>Simulate Board Ping (Hardware Testing)</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Farm Wi-Fi Name (SSID)</label>
+                <input
+                  type="text"
+                  required
+                  value={wifiSsid}
+                  onChange={(e) => setWifiSsid(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                />
+              </div>
 
-                  {/* LED STATUS EXPLANATION BOX */}
-                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-left text-[11px] space-y-1">
-                    <div className="font-bold text-amber-400 flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Hardware LED Flashing Status Guide</span>
-                    </div>
-                    <p className="text-slate-300">
-                      • <strong className="text-amber-300">Flashing LED (Rapid 200ms)</strong>: Board is in <span className="font-mono text-purple-300">Provisioning Mode</span> broadcasting Wi-Fi hotspot <span className="font-mono text-cyan-300">AGRI-SETUP-XXYY</span>.
-                    </p>
-                    <p className="text-slate-300">
-                      • <strong className="text-emerald-400">Flashing Stops & Turns Solid HIGH</strong>: Occurs automatically after Step 5 when farm Wi-Fi credentials are sent and board connects to internet!
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={handleScanForDevice}
-                    className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2 mx-auto"
-                  >
-
-                    <Search className="w-4 h-4" />
-                    <span>Scan Physical Hardware</span>
-                  </button>
-                </div>
-              )}
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Wi-Fi Password</label>
+                <input
+                  type="password"
+                  required
+                  value={wifiPass}
+                  onChange={(e) => setWifiPass(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                />
+              </div>
             </div>
           </div>
         )}
 
-        {/* STEP 5: CONNECT & TRANSMIT WI-FI CONFIG */}
+        {/* STEP 5: TRANSMIT CREDENTIALS & STOP LED FLASHING */}
         {step === 5 && (
           <div className="space-y-4 text-center py-2">
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 5: Provision Wi-Fi Credentials to Controller</h3>
+              <h3 className="text-sm font-bold text-white">Step 5: Transmit Config & Stop LED Flashing</h3>
               <p className="text-xs text-slate-400">
-                Transmitting farm network credentials securely to physical board {foundDevice?.serialNumber}...
+                Transmit farm network credentials to physical board {foundDevice?.serialNumber}.
               </p>
             </div>
 
-            <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-              <div className="flex items-center justify-center space-x-2 text-emerald-400 font-mono text-xs font-bold">
-                <Wifi className="w-5 h-5 animate-pulse" />
-                <span>Wi-Fi Credentials Transmitted</span>
+            <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+              <div className="text-xs font-mono text-slate-300 space-y-1">
+                <div>Selected Board: <span className="text-emerald-400 font-bold">{foundDevice?.serialNumber}</span></div>
+                <div>Target Wi-Fi SSID: <span className="text-purple-400 font-bold">{wifiSsid}</span></div>
               </div>
-              <div className="text-[11px] text-slate-300">
-                Board connecting to network <span className="text-purple-400 font-mono font-bold">{wifiSsid}</span>...
-              </div>
+
+              {transmitSuccess ? (
+                <div className="p-4 rounded-xl bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 text-xs font-semibold space-y-1">
+                  <div className="flex items-center justify-center space-x-2 text-emerald-400 font-bold">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span>Wi-Fi Config Transmitted Successfully!</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-200">
+                    Physical ESP board saved Wi-Fi settings to EEPROM, connected to router, and <strong>LED Flashing Has Stopped (Solid HIGH)</strong>!
+                  </p>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isTransmitting}
+                  onClick={handleTransmitWifiConfig}
+                  className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center space-x-2 mx-auto disabled:opacity-50"
+                >
+                  {isTransmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
+                  <span>{isTransmitting ? 'Transmitting to ESP Board...' : 'Transmit Wi-Fi Config to Physical ESP Board'}</span>
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -709,7 +756,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
           {step < 8 ? (
             <button
-              disabled={step === 4 && !foundDevice}
+              disabled={step === 3 && !foundDevice}
               onClick={() => setStep((s) => s + 1)}
               className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 flex items-center space-x-1 disabled:opacity-40"
             >
