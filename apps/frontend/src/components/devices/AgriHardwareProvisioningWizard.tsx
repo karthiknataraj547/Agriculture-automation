@@ -61,30 +61,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
   // Discovery Real-Time State
   const [isScanning, setIsScanning] = useState(false);
-  const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([
-    {
-      serialNumber: 'AGRI-ESP32-PROV-8A12',
-      macAddress: 'CC:50:E3:8A:12:34',
-      rssi: -45,
-      mode: 'ESP32 Provisioning Node',
-      ssid: 'AGRI-SETUP-8A12',
-    },
-    {
-      serialNumber: 'AGRI-ESP32-PROV-12F4',
-      macAddress: 'CC:50:E3:12:F4:88',
-      rssi: -52,
-      mode: 'ESP32 Dual Relay Node',
-      ssid: 'AGRI-SETUP-12F4',
-    },
-    {
-      serialNumber: 'AGRI-ESP8266-PROV-3290',
-      macAddress: 'CC:50:E3:32:90:11',
-      rssi: -62,
-      mode: 'ESP8266 Sensor Node',
-      ssid: 'AGRI-SETUP-3290',
-    },
-  ]);
-
+  const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([]);
   const [foundDevice, setFoundDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanMethod, setScanMethod] = useState<'BLE' | 'NETWORK_PROBE' | 'MANUAL_MAC'>('NETWORK_PROBE');
@@ -189,22 +166,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       console.error('[Discovery Probe] Error:', e);
     }
 
-    // 4. Auto-Discover Nearby Provisioning Node
-    const provMac = `CC:50:E3:8A:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
-    const provSerial = `AGRI-${selectedProduct.boardFamily}-PROV-${provMac.replace(/[^A-Z0-9]/g, '').slice(-4)}`;
-
-    const provNode = {
-      serialNumber: provSerial,
-      macAddress: provMac,
-      rssi: -45,
-      mode: `${selectedProduct.boardFamily} Nearby Hardware`,
-    };
-
-    setDiscoveredNodes((prev) => [provNode, ...prev.filter((n) => n.serialNumber !== provSerial)]);
-    setFoundDevice(provNode);
-    setScanError(null);
+    // 4. Strict Real-Time Scanning Failure (No Fake Hardware Generation)
     setIsScanning(false);
+    setFoundDevice(null);
+    setScanError(
+      `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your board is powered on or enter its MAC address / Serial below.`
+    );
   };
+
 
   // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP32 SOFTAP (http://192.168.4.1/setup)
   const handleTransmitWifiConfig = async () => {
@@ -529,38 +498,48 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 </div>
 
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {discoveredNodes.map((node) => {
-                    const isSelected = foundDevice?.macAddress === node.macAddress || foundDevice?.serialNumber === node.serialNumber;
-                    return (
-                      <div
-                        key={node.macAddress}
-                        onClick={() => setFoundDevice(node)}
-                        className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
-                          isSelected
-                            ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-900/20'
-                            : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3 text-left">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
-                            <Cpu className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-xs font-bold text-white flex items-center gap-2">
-                              <span>{node.serialNumber}</span>
-                              <span className="text-[10px] text-cyan-400 font-mono">({node.mode || 'ESP32 Node'})</span>
+                  {discoveredNodes.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-1">
+                      <div className="font-bold text-slate-300">No Nearby Hardware Discovered</div>
+                      <p className="text-[11px] leading-relaxed">
+                        Click <strong className="text-purple-300">"Scan Nearby Hardware Devices"</strong> above or enter your physical board MAC address in the <strong className="text-purple-300">"Manual Board MAC / Serial"</strong> tab.
+                      </p>
+                    </div>
+                  ) : (
+                    discoveredNodes.map((node) => {
+                      const isSelected = foundDevice?.macAddress === node.macAddress || foundDevice?.serialNumber === node.serialNumber;
+                      return (
+                        <div
+                          key={node.macAddress}
+                          onClick={() => setFoundDevice(node)}
+                          className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                            isSelected
+                              ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-900/20'
+                              : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3 text-left">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+                              <Cpu className="w-4 h-4" />
                             </div>
-                            <div className="text-[11px] text-purple-300 font-mono">MAC: {node.macAddress} | RSSI: {node.rssi} dBm</div>
+                            <div>
+                              <div className="text-xs font-bold text-white flex items-center gap-2">
+                                <span>{node.serialNumber}</span>
+                                <span className="text-[10px] text-cyan-400 font-mono">({node.mode || 'ESP32 Node'})</span>
+                              </div>
+                              <div className="text-[11px] text-purple-300 font-mono">MAC: {node.macAddress} | RSSI: {node.rssi} dBm</div>
+                            </div>
+                          </div>
+
+                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700'}`}>
+                            {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
                           </div>
                         </div>
-
-                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700'}`}>
-                          {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
+
               </div>
             )}
           </div>
