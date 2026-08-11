@@ -133,7 +133,8 @@ export const AdminHardwareProductsView: React.FC = () => {
   // GENERATE C++ ARDUINO CODE FOR ESP32 & ESP8266 FAMILIES
   const generateArduinoCode = (product: HardwareProduct, family: 'ESP32' | 'ESP8266') => {
     const isEsp8266 = family === 'ESP8266';
-    const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>\n#include <ESP8266HTTPClient.h>\n#include <ESP8266WebServer.h>' : '#include <WiFi.h>\n#include <HTTPClient.h>\n#include <WebServer.h>\n#include <NimBLEDevice.h>';
+    const wifiHeader = isEsp8266 ? '#include <ESP8266WiFi.h>\n#include <ESP8266WebServer.h>' : '#include <WiFi.h>\n#include <WebServer.h>\n#include <NimBLEDevice.h>';
+
 
     const prefHeader = isEsp8266 ? '#include <EEPROM.h>' : '#include <Preferences.h>';
     const ledPin = isEsp8266 ? '2' : '2'; // GPIO 2 (D4 on NodeMCU / GPIO 2 on ESP32)
@@ -298,11 +299,13 @@ void connectToWiFi() {
 }
 
 void pingDiscoveryGateway() {
-  HTTPClient http;
-  http.begin("https://agriculture-automation.vercel.app/api/iot/discovery");
-  http.addHeader("Content-Type", "application/json");
+  WiFiClient client;
+  if (!client.connect("agriculture-automation.vercel.app", 80)) {
+    Serial.println("[DISCOVERY PING] Connection failed");
+    return;
+  }
 
-  StaticJsonDocument<200> doc;
+  JsonDocument doc;
   doc["macAddress"] = macAddress;
   doc["serialNumber"] = deviceSerial;
   doc["boardFamily"] = "${family}";
@@ -312,10 +315,19 @@ void pingDiscoveryGateway() {
 
   String payload;
   serializeJson(doc, payload);
-  int code = http.POST(payload);
-  Serial.println("[DISCOVERY PING] HTTP Status: " + String(code));
-  http.end();
+
+  client.println("POST /api/iot/discovery HTTP/1.1");
+  client.println("Host: agriculture-automation.vercel.app");
+  client.println("Content-Type: application/json");
+  client.print("Content-Length: "); client.println(payload.length());
+  client.println("Connection: close");
+  client.println();
+  client.println(payload);
+
+  Serial.println("[DISCOVERY PING] Sent successfully");
+  client.stop();
 }
+
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String msg = "";

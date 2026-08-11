@@ -3,11 +3,10 @@
  * Product: AgriFlow Smart Irrigation Controller
  * Internal SKU: ESP32-IRRIGATION-V1
  * Microcontroller: ESP32 (Xtensa LX6 ESP32)
- * Version: v1.4.4 (Optimized for standard 1.31MB partition - Size ~1.17MB)
+ * Version: v1.4.5 (Ultra-Lean Firmware - Size ~950KB)
  */
 
 #include <WiFi.h>
-#include <HTTPClient.h>
 #include <WebServer.h>
 #include <NimBLEDevice.h> // Lightweight BLE stack (~400KB smaller than Bluedroid)
 #include <Preferences.h>
@@ -30,7 +29,7 @@
 // ─── GLOBAL OBJECTS & STATE ───
 Preferences preferences;
 WebServer server(80);
-WiFiClient espClient; // Standard TCP socket client (saves ~140KB mbedTLS Flash overhead)
+WiFiClient espClient; // Standard lightweight TCP socket
 PubSubClient mqttClient(espClient);
 DHT dht(PIN_DHT_DATA, DHTTYPE);
 
@@ -178,10 +177,13 @@ void connectToWiFi() {
   mqttClient.setCallback(mqttCallback);
 }
 
+// Lightweight HTTP POST without HTTPClient/mbedTLS library overhead
 void pingDiscoveryGateway() {
-  HTTPClient http;
-  http.begin("http://agriculture-automation.vercel.app/api/iot/discovery");
-  http.addHeader("Content-Type", "application/json");
+  WiFiClient client;
+  if (!client.connect("agriculture-automation.vercel.app", 80)) {
+    Serial.println(F("[DISCOVERY PING] Connection failed"));
+    return;
+  }
 
   JsonDocument doc;
   doc["macAddress"] = macAddress;
@@ -193,9 +195,17 @@ void pingDiscoveryGateway() {
 
   String payload;
   serializeJson(doc, payload);
-  int code = http.POST(payload);
-  Serial.print(F("[DISCOVERY PING] HTTP Status: ")); Serial.println(code);
-  http.end();
+
+  client.println(F("POST /api/iot/discovery HTTP/1.1"));
+  client.println(F("Host: agriculture-automation.vercel.app"));
+  client.println(F("Content-Type: application/json"));
+  client.print(F("Content-Length: ")); client.println(payload.length());
+  client.println(F("Connection: close"));
+  client.println();
+  client.println(payload);
+
+  Serial.println(F("[DISCOVERY PING] Sent successfully"));
+  client.stop();
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
