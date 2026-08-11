@@ -24,8 +24,9 @@ const seedDefaultUsers = (): GlobalUserRecord[] => {
   const initialAdminEmail = process.env.ADMIN_INITIAL_EMAIL || 'admin@agritech.com';
 
   const adminCreds = hashPassword(initialAdminPass);
-  const karthikCreds = hashPassword('password123');
+  const karthikCreds = hashPassword('karthik@547');
   const custCreds = hashPassword('password123');
+
 
   return [
     {
@@ -131,6 +132,33 @@ async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
         adminUser.mustChangePassword = false;
         needsSave = true;
       }
+    // Auto-heal / Ensure karthiknataraj547@gmail.com with karthik@547 exists & is valid
+    let karthikUser = usersCache.find((u) => u.email.toLowerCase() === 'karthiknataraj547@gmail.com');
+    if (!karthikUser) {
+      const kCreds = hashPassword('karthik@547');
+      karthikUser = {
+        id: 'usr-admin-01',
+        name: 'Karthik Nataraj',
+        email: 'karthiknataraj547@gmail.com',
+        passwordHash: kCreds.hash,
+        salt: kCreds.salt,
+        role: 'FARM_OWNER',
+        accountId: 'account-farm-alpha',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      };
+      usersCache.push(karthikUser);
+      needsSave = true;
+    } else {
+      const isMatch = verifyPassword('karthik@547', karthikUser.passwordHash, karthikUser.salt);
+      if (!isMatch || (karthikUser as any).password === 'karthik@547') {
+        const kCreds = hashPassword('karthik@547');
+        karthikUser.passwordHash = kCreds.hash;
+        karthikUser.salt = kCreds.salt;
+        karthikUser.status = 'ACTIVE';
+        delete (karthikUser as any).password;
+        needsSave = true;
+      }
     }
 
     if (needsSave) {
@@ -142,13 +170,35 @@ async function fetchUsersFromCloudDB(): Promise<GlobalUserRecord[]> {
   return usersCache;
 }
 
-// Reliable, Awaited Cloud Database Write
+// Reliable, Awaited Cloud Database Write with Account Synchronization
 async function saveUsersToCloudDB(users: GlobalUserRecord[]): Promise<boolean> {
   try {
     usersCache = users;
     const getRes = await fetch(CLOUD_DB_URL, { cache: 'no-store' });
     const existingJson = getRes.ok ? await getRes.json() : {};
     const existingData = existingJson?.data || {};
+    const existingAccounts: any[] = Array.isArray(existingData.accounts) ? existingData.accounts : [];
+
+    // Ensure an Account entry exists for every user
+    const updatedAccounts = [...existingAccounts];
+    for (const u of users) {
+      const accId = u.accountId || `account-${u.id}`;
+      const accExists = updatedAccounts.some((a) => a.id === accId);
+      if (!accExists) {
+        updatedAccounts.push({
+          id: accId,
+          name: `${u.name}'s Farm Enterprise`,
+          slug: u.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          ownerId: u.id,
+          status: 'ACTIVE',
+          maxDevices: 50,
+          maxUsers: 10,
+          maxTelemetryRate: 120,
+          createdAt: u.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
 
     const putRes = await fetch(CLOUD_DB_URL, {
       method: 'PUT',
@@ -158,6 +208,7 @@ async function saveUsersToCloudDB(users: GlobalUserRecord[]): Promise<boolean> {
         data: {
           ...existingData,
           users,
+          accounts: updatedAccounts,
         },
       }),
     });
@@ -168,6 +219,7 @@ async function saveUsersToCloudDB(users: GlobalUserRecord[]): Promise<boolean> {
     return false;
   }
 }
+
 
 export async function GET() {
   const users = await fetchUsersFromCloudDB();

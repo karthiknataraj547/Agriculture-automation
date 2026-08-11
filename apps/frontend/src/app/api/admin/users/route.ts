@@ -56,7 +56,8 @@ async function fetchUsers() {
       (u: any) => u.email?.toLowerCase() === seedUser.email.toLowerCase() || u.id === seedUser.id
     );
     if (!existing) {
-      const { hash, salt } = hashPassword('password123');
+      const defaultPass = seedUser.email === 'karthiknataraj547@gmail.com' ? 'karthik@547' : 'password123';
+      const { hash, salt } = hashPassword(defaultPass);
       users.push({
         ...seedUser,
         passwordHash: hash,
@@ -66,11 +67,23 @@ async function fetchUsers() {
     }
   }
 
+  const karthikUser = users.find((u: any) => u.email?.toLowerCase() === 'karthiknataraj547@gmail.com');
+  if (karthikUser) {
+    const { verifyPassword } = require('../../auth/crypto');
+    if (!verifyPassword('karthik@547', karthikUser.passwordHash, karthikUser.salt)) {
+      const { hash, salt } = hashPassword('karthik@547');
+      karthikUser.passwordHash = hash;
+      karthikUser.salt = salt;
+      needsSave = true;
+    }
+  }
+
   if (needsSave) {
     await saveUsers(users);
   }
 
   return users;
+
 }
 
 async function saveUsers(users: any[]) {
