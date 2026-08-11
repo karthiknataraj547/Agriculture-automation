@@ -88,13 +88,30 @@ void setupProvisioningMode() {
   Serial.print(F("[AP] Access Point Started: ")); Serial.println(apName);
   Serial.print(F("[AP] Connect & Visit IP: ")); Serial.println(WiFi.softAPIP().toString());
 
+  // 1. HTTP Endpoints
   server.on("/setup", HTTP_POST, handleProvisioningRequest);
   server.on("/ping", HTTP_GET, []() {
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\"}");
+    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\"}");
+  });
+  
+  // Standalone HTML Web Portal for direct browser connection (http://192.168.4.1)
+  server.on("/", HTTP_GET, []() {
+    String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
+                  "<style>body{font-family:sans-serif;background:#090d16;color:#fff;padding:20px;text-align:center;}"
+                  "input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:none;box-sizing:border-box;}"
+                  "input{background:#1e293b;color:#fff;}button{background:#10b981;color:#fff;font-weight:bold;cursor:pointer;}</style></head><body>"
+                  "<h2>🌾 AgriFlow Hardware Provisioning</h2>"
+                  "<p style='color:#a7f3d0;'>Device: <b>" + deviceSerial + "</b></p>"
+                  "<form action='/setup' method='POST'>"
+                  "<input type='text' name='ssid' placeholder='Farm Wi-Fi SSID' required><br>"
+                  "<input type='password' name='password' placeholder='Wi-Fi Password' required><br>"
+                  "<button type='submit'>Save Wi-Fi & Connect</button>"
+                  "</form></body></html>";
+    server.send(200, "text/html", html);
   });
   server.begin();
 
-  // Initialize NimBLE (Lightweight BLE stack)
+  // 2. Initialize NimBLE Bluetooth BLE stack
   NimBLEDevice::init(apName.c_str());
   NimBLEServer *pServer = NimBLEDevice::createServer();
   NimBLEService *pService = pServer->createService(SERVICE_UUID);
@@ -104,14 +121,43 @@ void setupProvisioningMode() {
   pAdv->start();
   Serial.println(F("[BLE] NimBLE Bluetooth Advertising Started!"));
 
-  // Loop in Setup Mode until Wi-Fi Config Received
+  unsigned long lastSerialPing = 0;
+
+  // 3. Loop in Setup Mode until Wi-Fi Config Received
   while (!isProvisioned) {
-    // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
     unsigned long currentMillis = millis();
+
+    // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
     if (currentMillis - lastLedToggle >= 200) {
       lastLedToggle = currentMillis;
       ledState = !ledState;
       digitalWrite(PIN_LED_INDICATOR, ledState);
+    }
+
+    // Broadcast USB Serial JSON Probe every 2s for Chrome Web Serial discovery
+    if (currentMillis - lastSerialPing >= 2000) {
+      lastSerialPing = currentMillis;
+      Serial.print(F("{\"event\":\"HARDWARE_PROBE\",\"serial\":\""));
+      Serial.print(deviceSerial);
+      Serial.print(F("\",\"mac\":\""));
+      Serial.print(macAddress);
+      Serial.println(F("\",\"chip\":\"ESP32\",\"mode\":\"PROVISIONING\"}"));
+    }
+
+    // Listen for incoming USB Serial JSON commands from Web Tool (115200 baud)
+    if (Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      input.trim();
+      if (input.startsWith("{") && input.endsWith("}")) {
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, input);
+        if (!err && doc.containsKey("ssid") && doc.containsKey("password")) {
+          wifiSsid = String((const char*)doc["ssid"]);
+          wifiPass = String((const char*)doc["password"]);
+          isProvisioned = true;
+          Serial.println(F("{\"event\":\"CONFIG_RECEIVED\",\"status\":\"SUCCESS\"}"));
+        }
+      }
     }
 
     server.handleClient();
@@ -129,6 +175,7 @@ void setupProvisioningMode() {
   delay(2000);
   ESP.restart();
 }
+
 
 void handleProvisioningRequest() {
   if (server.hasArg("plain")) {
