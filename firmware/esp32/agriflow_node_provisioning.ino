@@ -111,15 +111,42 @@ void setupProvisioningMode() {
   });
   server.begin();
 
-  // 2. Initialize NimBLE Bluetooth BLE stack
+  // 2. Initialize NimBLE Bluetooth BLE GATT Provisioning Stack
   NimBLEDevice::init(apName.c_str());
   NimBLEServer *pServer = NimBLEDevice::createServer();
   NimBLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // GATT Char 1: Device Info JSON (READ)
+  NimBLECharacteristic *pCharInfo = pService->createCharacteristic(
+    "0000ffe1-0000-1000-8000-00805f9b34fb",
+    NIMBLE_PROPERTY::READ
+  );
+  String infoJson = "{\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\",\"chip\":\"ESP32\"}";
+  pCharInfo->setValue(infoJson.c_str());
+
+  // GATT Char 2: Wi-Fi SSID (WRITE)
+  NimBLECharacteristic *pCharSsid = pService->createCharacteristic(
+    "0000ffe2-0000-1000-8000-00805f9b34fb",
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+
+  // GATT Char 3: Wi-Fi Password (WRITE)
+  NimBLECharacteristic *pCharPass = pService->createCharacteristic(
+    "0000ffe3-0000-1000-8000-00805f9b34fb",
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+  );
+
+  // GATT Char 4: Provision Trigger Command (WRITE / READ)
+  NimBLECharacteristic *pCharCmd = pService->createCharacteristic(
+    "0000ffe4-0000-1000-8000-00805f9b34fb",
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ
+  );
+
   pService->start();
   NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
   pAdv->addServiceUUID(SERVICE_UUID);
   pAdv->start();
-  Serial.println(F("[BLE] NimBLE Bluetooth Advertising Started!"));
+  Serial.println(F("[BLE] NimBLE GATT Provisioning Service & Characteristics Started!"));
 
   unsigned long lastSerialPing = 0;
 
@@ -127,12 +154,25 @@ void setupProvisioningMode() {
   while (!isProvisioned) {
     unsigned long currentMillis = millis();
 
+    // Check BLE GATT Characteristic Writes from Web Tool
+    if (pCharSsid->getValue().length() > 0) {
+      wifiSsid = pCharSsid->getValue().c_str();
+    }
+    if (pCharPass->getValue().length() > 0) {
+      wifiPass = pCharPass->getValue().c_str();
+    }
+    if (pCharCmd->getValue() == "CONNECT" && wifiSsid.length() > 0) {
+      isProvisioned = true;
+      Serial.println(F("[BLE] Wi-Fi Credentials Received via BLE GATT! Connecting..."));
+    }
+
     // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
     if (currentMillis - lastLedToggle >= 200) {
       lastLedToggle = currentMillis;
       ledState = !ledState;
       digitalWrite(PIN_LED_INDICATOR, ledState);
     }
+
 
     // Broadcast USB Serial JSON Probe every 2s for Chrome Web Serial discovery
     if (currentMillis - lastSerialPing >= 2000) {

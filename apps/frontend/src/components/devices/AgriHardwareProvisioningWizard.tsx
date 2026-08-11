@@ -53,12 +53,13 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [wifiSsid, setWifiSsid] = useState('Farm_Mesh_WiFi_5G');
   const [wifiPass, setWifiPass] = useState('agrifarm2026');
 
-  // Unified Discovery Real-Time State (Merged BLE & Wi-Fi)
+  // Discovery Real-Time State
   const [isScanning, setIsScanning] = useState(false);
   const [scanCountdown, setScanCountdown] = useState<number>(0);
   const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([]);
   const [foundDevice, setFoundDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [bleServer, setBleServer] = useState<any>(null);
 
   // Transmission state
   const [isTransmitting, setIsTransmitting] = useState(false);
@@ -86,37 +87,56 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       .catch(() => {});
   }, []);
 
-  // MERGED SIMULTANEOUS BLE AND WI-FI REAL-TIME HARDWARE SCANNING
+  // MERGED SIMULTANEOUS BLE GATT & WI-FI SCANNING
   const handleScanForDevice = async () => {
     setIsScanning(true);
     setScanError(null);
     setFoundDevice(null);
     setScanCountdown(10);
 
-    // 1. Trigger Web Bluetooth BLE Scan simultaneously if supported
+    // 1. Web Bluetooth GATT Provisioning Connection
     if (typeof window !== 'undefined' && (navigator as any).bluetooth) {
-      (navigator as any).bluetooth
-        .requestDevice({
+      try {
+        const device = await (navigator as any).bluetooth.requestDevice({
           filters: [{ namePrefix: 'AGRI' }],
           optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
-        })
-        .then((device: any) => {
-          if (device) {
-            const bleNode = {
-              serialNumber: device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`,
-              macAddress: device.id,
-              rssi: -45,
-              mode: 'Bluetooth BLE Hardware',
-            };
-            setDiscoveredNodes((prev) => [bleNode, ...prev]);
-            setFoundDevice(bleNode);
-            setIsScanning(false);
-            setScanCountdown(0);
-          }
-        })
-        .catch((err: any) => {
-          console.warn('[BLE Scan] Device scan prompt closed or out of range:', err);
         });
+
+        if (device && device.gatt) {
+          const server = await device.gatt.connect();
+          setBleServer(server);
+
+          let serialName = device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`;
+          let macAddr = device.id;
+
+          try {
+            const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
+            const infoChar = await service.getCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb');
+            const valBuf = await infoChar.readValue();
+            const infoText = new TextDecoder().decode(valBuf);
+            const parsed = JSON.parse(infoText);
+            if (parsed.serial) serialName = parsed.serial;
+            if (parsed.mac) macAddr = parsed.mac;
+          } catch (e) {
+            console.log('[GATT Info Read Warning]', e);
+          }
+
+          const bleNode = {
+            serialNumber: serialName,
+            macAddress: macAddr,
+            rssi: -42,
+            mode: 'Bluetooth BLE Hardware (GATT Connected)',
+          };
+
+          setDiscoveredNodes((prev) => [bleNode, ...prev]);
+          setFoundDevice(bleNode);
+          setIsScanning(false);
+          setScanCountdown(0);
+          return;
+        }
+      } catch (err: any) {
+        console.warn('[BLE GATT Scan] Prompt closed or device out of range:', err);
+      }
     }
 
     // 2. Active 10-Second Wi-Fi & Cloud Network Probing Loop
@@ -125,7 +145,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       secondsLeft -= 1;
       setScanCountdown(secondsLeft);
 
-      // Probe Cloud IoT Gateway (/api/iot/discovery)
+      // Probe Cloud Gateway (/api/iot/discovery)
       try {
         const res = await fetch('/api/iot/discovery');
         const data = await res.json();
@@ -178,12 +198,35 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     }, 1000);
   };
 
-  // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP BOARD
+  // TRANSMIT WI-FI CONFIG DIRECTLY TO ESP BOARD VIA BLE GATT OR HTTP
   const handleTransmitWifiConfig = async () => {
     setIsTransmitting(true);
     setTransmitSuccess(false);
 
-    // 1. Send HTTP POST payload directly to ESP SoftAP (http://192.168.4.1/setup) if running on HTTP
+    // 1. Transmit via Bluetooth BLE GATT Characteristics if connected
+    if (bleServer && bleServer.connected) {
+      try {
+        const service = await bleServer.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
+        
+        // Write SSID to GATT Char 0000ffe2
+        const ssidChar = await service.getCharacteristic('0000ffe2-0000-1000-8000-00805f9b34fb');
+        await ssidChar.writeValue(new TextEncoder().encode(wifiSsid));
+
+        // Write Password to GATT Char 0000ffe3
+        const passChar = await service.getCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb');
+        await passChar.writeValue(new TextEncoder().encode(wifiPass));
+
+        // Trigger CONNECT command on GATT Char 0000ffe4
+        const cmdChar = await service.getCharacteristic('0000ffe4-0000-1000-8000-00805f9b34fb');
+        await cmdChar.writeValue(new TextEncoder().encode('CONNECT'));
+
+        console.log('[BLE GATT Transmit] Wi-Fi credentials sent directly to ESP32 chip over Bluetooth!');
+      } catch (e) {
+        console.error('[BLE GATT Transmit Error]', e);
+      }
+    }
+
+    // 2. Transmit via Direct SoftAP HTTP (http://192.168.4.1/setup) if running on HTTP
     if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
       try {
         const controller = new AbortController();
@@ -200,7 +243,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     }
 
-    // 2. Register payload to backend IoT gateway for sync
+    // 3. Register payload to backend IoT gateway for sync
     try {
       await fetch('/api/iot/discovery', {
         method: 'POST',
@@ -390,13 +433,13 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 3: UNIFIED BLE AND WI-FI HARDWARE DISCOVERY */}
+        {/* STEP 3: UNIFIED BLE GATT AND WI-FI HARDWARE DISCOVERY */}
         {step === 3 && (
           <div className="space-y-4 text-center py-1">
             <div className="space-y-1 text-left">
               <h3 className="text-sm font-bold text-white">Step 3: Scan & Select Hardware Device</h3>
               <p className="text-xs text-slate-400">
-                Click below to launch simultaneous 10-second Bluetooth BLE & Wi-Fi signal scanning for nearby physical ESP hardware.
+                Click below to launch simultaneous 10-second Bluetooth BLE GATT & Wi-Fi signal scanning for nearby physical ESP hardware.
               </p>
             </div>
 
@@ -412,7 +455,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                   <div className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Bluetooth className="w-3.5 h-3.5 text-purple-400" />
                     <Radio className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Scanning Bluetooth BLE & Wi-Fi Hardware...</span>
+                    <span>Scanning Bluetooth BLE GATT & Wi-Fi Hardware...</span>
                   </div>
                   <div className="text-[11px] text-purple-300 font-mono">
                     Probing Nearby Signals ({scanCountdown}s remaining)
