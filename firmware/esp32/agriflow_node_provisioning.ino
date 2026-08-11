@@ -173,38 +173,12 @@ void setupProvisioningMode() {
       digitalWrite(PIN_LED_INDICATOR, ledState);
     }
 
-
-    // Broadcast USB Serial JSON Probe every 2s for Chrome Web Serial discovery
-    if (currentMillis - lastSerialPing >= 2000) {
-      lastSerialPing = currentMillis;
-      Serial.print(F("{\"event\":\"HARDWARE_PROBE\",\"serial\":\""));
-      Serial.print(deviceSerial);
-      Serial.print(F("\",\"mac\":\""));
-      Serial.print(macAddress);
-      Serial.println(F("\",\"chip\":\"ESP32\",\"mode\":\"PROVISIONING\"}"));
-    }
-
-    // Listen for incoming USB Serial JSON commands from Web Tool (115200 baud)
-    if (Serial.available()) {
-      String input = Serial.readStringUntil('\n');
-      input.trim();
-      if (input.startsWith("{") && input.endsWith("}")) {
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, input);
-        if (!err && doc.containsKey("ssid") && doc.containsKey("password")) {
-          wifiSsid = String((const char*)doc["ssid"]);
-          wifiPass = String((const char*)doc["password"]);
-          isProvisioned = true;
-          Serial.println(F("{\"event\":\"CONFIG_RECEIVED\",\"status\":\"SUCCESS\"}"));
-        }
-      }
-    }
-
     server.handleClient();
   }
 
   // De-initialize BLE stack to release memory once setup completes
   NimBLEDevice::deinit(true);
+
 
   preferences.putString("ssid", wifiSsid);
   preferences.putString("pass", wifiPass);
