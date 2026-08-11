@@ -104,9 +104,28 @@ void setDeviceState(DeviceState newState, String errorMsg = "") {
   }
 }
 
+class ServerCallbacks: public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer* pServer) {
+      Serial.println(F("[BLE GATT] Client Connected!"));
+      setDeviceState(STATE_BLE_CONNECTED);
+    };
+
+    void onDisconnect(NimBLEServer* pServer) {
+      Serial.println(F("[BLE GATT] Client Disconnected. Restarting Advertising..."));
+      if (currentState == STATE_BLE_CONNECTED) {
+        setDeviceState(STATE_PROVISIONING);
+      }
+      NimBLEDevice::startAdvertising();
+    }
+};
+
 void setupNimBLEGATT(const String& apName) {
   NimBLEDevice::init(apName.c_str());
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9); // Maximum TX Power for max range
+
   NimBLEServer *pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(new ServerCallbacks());
+
   NimBLEService *pService = pServer->createService(SERVICE_UUID);
 
   // GATT 1: Device Info JSON
@@ -134,8 +153,11 @@ void setupNimBLEGATT(const String& apName) {
   pService->start();
   NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
   pAdv->addServiceUUID(SERVICE_UUID);
+  pAdv->setScanResponse(true);
+  pAdv->setMinPreferred(0x06);
+  pAdv->setMinPreferred(0x12);
   pAdv->start();
-  Serial.println(F("[BLE] NimBLE GATT Provisioning Service & Characteristics Initialized!"));
+  Serial.println(F("[BLE] NimBLE GATT Provisioning Service & Characteristics Initialized (Max Power P9)!"));
 }
 
 void startProvisioningMode() {

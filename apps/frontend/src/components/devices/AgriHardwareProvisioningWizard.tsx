@@ -122,7 +122,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     if (selectedProduct.boardFamily === 'ESP32' && isBluetoothSupported) {
       try {
         const device = await (navigator as any).bluetooth.requestDevice({
-          filters: [{ namePrefix: 'AGRI' }],
+          filters: [
+            { namePrefix: 'AGRI' },
+            { services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] },
+          ],
           optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
         });
 
