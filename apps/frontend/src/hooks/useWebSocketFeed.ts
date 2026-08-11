@@ -195,19 +195,28 @@ export function useWebSocketFeed() {
     const cloudSyncInterval = setInterval(pollAccountCloudState, 1000);
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
-      socket = io(backendUrl, { transports: ['websocket', 'polling'] });
-      socket.on('connect', () => {
-        console.log('[WebSocket Client] Connected to local gateway');
-      });
-      socket.on('telemetry:stream', (reading: TelemetryReading) => {
-        const deletedIds = new Set(useSpatialStore.getState().deletedDeviceIds || []);
-        if (!deletedIds.has(reading.deviceId)) {
-          useSpatialStore.setState({ isZeroDataMode: false });
-          updateTelemetryStream(reading);
-        }
-      });
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+      const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+      if (backendUrl || isLocalhost) {
+        socket = io(backendUrl || 'http://localhost:4000', {
+          transports: ['websocket', 'polling'],
+          autoConnect: true,
+          reconnectionAttempts: 2,
+        });
+        socket.on('connect', () => {
+          console.log('[WebSocket Client] Connected to local gateway');
+        });
+        socket.on('telemetry:stream', (reading: TelemetryReading) => {
+          const deletedIds = new Set(useSpatialStore.getState().deletedDeviceIds || []);
+          if (!deletedIds.has(reading.deviceId)) {
+            useSpatialStore.setState({ isZeroDataMode: false });
+            updateTelemetryStream(reading);
+          }
+        });
+      }
     } catch {}
+
 
     return () => {
       clearInterval(interval);

@@ -125,27 +125,29 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     }
 
-    // 2. Direct HTTP Ping to SoftAP (192.168.4.1/ping) for ESP in Provisioning Mode
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (pingRes.ok) {
-        const pingData = await pingRes.json();
-        const apNode = {
-          serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
-          macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
-          rssi: -42,
-          mode: 'Direct SoftAP Node (192.168.4.1)',
-        };
-        setDiscoveredNodes((prev) => [apNode, ...prev]);
-        setFoundDevice(apNode);
-        setIsScanning(false);
-        return;
+    // 2. Direct HTTP Ping to SoftAP (192.168.4.1/ping) for ESP in Provisioning Mode (Only on HTTP)
+    if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (pingRes.ok) {
+          const pingData = await pingRes.json();
+          const apNode = {
+            serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-PROV-01`,
+            macAddress: pingData.mac || `CC:50:E3:8A:12:${selectedProduct.boardFamily === 'ESP8266' ? '86' : '32'}`,
+            rssi: -42,
+            mode: 'Direct SoftAP Node (192.168.4.1)',
+          };
+          setDiscoveredNodes((prev) => [apNode, ...prev]);
+          setFoundDevice(apNode);
+          setIsScanning(false);
+          return;
+        }
+      } catch (e) {
+        // Direct AP HTTP request (CORS/offline) ignored
       }
-    } catch (e) {
-      // Direct AP HTTP request (CORS/offline) ignored
     }
 
     // 3. Real Backend Network Probe for Physical Pings
@@ -180,20 +182,23 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setIsTransmitting(true);
     setTransmitSuccess(false);
 
-    // 1. Send HTTP POST payload directly to ESP32 SoftAP (http://192.168.4.1/setup)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-      await fetch('http://192.168.4.1/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ssid: wifiSsid, password: wifiPass }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-    } catch (e) {
-      console.log('[Provisioning] Local AP direct HTTP transmit attempt (CORS fallback)');
+    // 1. Send HTTP POST payload directly to ESP32 SoftAP (http://192.168.4.1/setup) if running on HTTP
+    if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        await fetch('http://192.168.4.1/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ssid: wifiSsid, password: wifiPass }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+      } catch (e) {
+        console.log('[Provisioning] Local AP direct HTTP transmit attempt');
+      }
     }
+
 
     // 2. Also register payload to backend IoT gateway for sync
     try {
