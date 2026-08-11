@@ -507,11 +507,27 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                           type="button"
                           onClick={async () => {
                             setIsScanning(true);
-                            await fetch('/api/iot/discovery', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ boardFamily: selectedProduct.boardFamily }),
-                            });
+                            try {
+                              const postRes = await fetch('/api/iot/discovery', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ boardFamily: selectedProduct.boardFamily }),
+                              });
+                              const postData = await postRes.json();
+                              if (postData.node) {
+                                setFoundDevice({
+                                  serialNumber: postData.node.serialNumber,
+                                  macAddress: postData.node.macAddress,
+                                  rssi: -45,
+                                  mode: 'REAL_HARDWARE_PING',
+                                });
+                                setScanError(null);
+                                setIsScanning(false);
+                                return;
+                              }
+                            } catch (e) {
+                              console.error(e);
+                            }
                             await handleScanForDevice();
                           }}
                           className="px-3 py-1.5 rounded-lg bg-emerald-900/60 hover:bg-emerald-800/80 border border-emerald-500/50 text-emerald-300 text-[11px] font-mono font-semibold flex items-center space-x-1 transition-all"
@@ -523,11 +539,25 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     </div>
                   )}
 
+                  {/* LED STATUS EXPLANATION BOX */}
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-left text-[11px] space-y-1">
+                    <div className="font-bold text-amber-400 flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Hardware LED Flashing Status Guide</span>
+                    </div>
+                    <p className="text-slate-300">
+                      • <strong className="text-amber-300">Flashing LED (Rapid 200ms)</strong>: Board is in <span className="font-mono text-purple-300">Provisioning Mode</span> broadcasting Wi-Fi hotspot <span className="font-mono text-cyan-300">AGRI-SETUP-XXYY</span>.
+                    </p>
+                    <p className="text-slate-300">
+                      • <strong className="text-emerald-400">Flashing Stops & Turns Solid HIGH</strong>: Occurs automatically after Step 5 when farm Wi-Fi credentials are sent and board connects to internet!
+                    </p>
+                  </div>
 
                   <button
                     onClick={handleScanForDevice}
                     className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2 mx-auto"
                   >
+
                     <Search className="w-4 h-4" />
                     <span>Scan Physical Hardware</span>
                   </button>
