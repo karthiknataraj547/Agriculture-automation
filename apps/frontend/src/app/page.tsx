@@ -25,6 +25,7 @@ import { RulesPanel } from '../components/rules/RulesPanel';
 import { PumpControlPanel } from '../components/pumps/PumpControlPanel';
 import { SchedulePanel } from '../components/schedules/SchedulePanel';
 import { MotionAlertBanner } from '../components/alerts/MotionAlertBanner';
+import { NativeAppInstallBanner } from '../components/common/NativeAppInstallBanner';
 
 // Diagnostics Panels
 import { IoTDiagnosticsPanel } from '../components/diagnostics/IoTDiagnosticsPanel';
@@ -115,6 +116,7 @@ export default function DashboardPage() {
 
   return (
     <>
+      <NativeAppInstallBanner />
       <SpatialShell onOpenCommandPalette={() => setCommandPaletteOpen(true)}>
         {/* ─── SPATIAL 3D VIEW ─── */}
         {activeView === 'SPATIAL_3D' && (
