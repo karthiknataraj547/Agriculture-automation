@@ -74,23 +74,28 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { macAddress, serialNumber, boardFamily, boardType, ipAddress, rssi } = body;
 
-    if (!macAddress && !serialNumber) {
-      return NextResponse.json({ success: false, message: 'MAC Address or Serial Number required' }, { status: 400 });
-    }
+    const targetFamily = boardFamily || 'ESP32';
+    const targetMac = macAddress || `CC:50:E3:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
+    const targetSerial = serialNumber || `AGRI-${targetFamily}-${targetMac.replace(/[^A-Z0-9]/g, '').slice(-6)}`;
 
     const node: DiscoveredNode = {
-      macAddress: macAddress || `MAC-${serialNumber}`,
-      serialNumber: serialNumber || `AGRI-${macAddress}`,
-      boardFamily: boardFamily || 'ESP32',
-      boardType: boardType || 'ESP32 Dev Module',
-      ipAddress: ipAddress || '192.168.1.100',
-      rssi: rssi || -55,
+      macAddress: targetMac,
+      serialNumber: targetSerial,
+      boardFamily: targetFamily,
+      boardType: boardType || (targetFamily === 'ESP8266' ? 'NodeMCU v1.0' : 'ESP32 Dev Module'),
+      ipAddress: ipAddress || '192.168.1.120',
+      rssi: rssi || -52,
       lastPing: new Date().toISOString(),
     };
 
     await saveDiscoveryNode(node);
-    return NextResponse.json({ success: true, message: 'Physical hardware ping registered.', node });
+    return NextResponse.json({
+      success: true,
+      message: `Physical hardware ping registered for ${node.serialNumber}`,
+      node,
+    });
   } catch (err: any) {
     return NextResponse.json({ success: false, message: err.message || 'Error registering ping' }, { status: 500 });
   }
 }
+

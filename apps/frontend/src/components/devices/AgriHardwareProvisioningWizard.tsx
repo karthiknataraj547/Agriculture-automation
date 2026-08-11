@@ -449,17 +449,29 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
             {/* Manual MAC input if selected */}
             {scanMethod === 'MANUAL_MAC' && (
-              <div className="text-left">
-                <label className="text-[11px] text-slate-300 font-semibold block mb-1">
+              <div className="text-left space-y-1">
+                <label className="text-[11px] text-slate-300 font-semibold block">
                   Enter Physical ESP Board MAC Address or Serial ID
                 </label>
-                <input
-                  type="text"
-                  placeholder="e.g. CC:50:E3:8A:12:F4 or ESP8266-NODEMCU-01"
-                  value={manualMacAddress}
-                  onChange={(e) => setManualMacAddress(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. CC:50:E3:8A:12:F4 or ESP8266-NODEMCU-01"
+                    value={manualMacAddress}
+                    onChange={(e) => setManualMacAddress(e.target.value)}
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const mac = `CC:50:E3:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
+                      setManualMacAddress(mac);
+                    }}
+                    className="px-3 py-2 bg-purple-900/40 hover:bg-purple-800/60 border border-purple-500/40 text-purple-200 rounded-xl text-xs font-mono font-semibold transition-all"
+                  >
+                    Auto-Fill Format
+                  </button>
+                </div>
               </div>
             )}
 
@@ -483,14 +495,34 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               ) : (
                 <div className="space-y-3 text-center w-full">
                   {scanError && (
-                    <div className="p-3 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-1">
+                    <div className="p-3 rounded-xl bg-red-950/70 border border-red-800/80 text-red-300 text-xs font-medium space-y-2">
                       <div className="font-bold flex items-center justify-center gap-1 text-red-400">
                         <AlertCircle className="w-4 h-4" />
                         <span>Hardware Not Detected</span>
                       </div>
                       <p className="text-[11px] leading-relaxed">{scanError}</p>
+
+                      <div className="pt-1 flex flex-wrap justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setIsScanning(true);
+                            await fetch('/api/iot/discovery', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ boardFamily: selectedProduct.boardFamily }),
+                            });
+                            await handleScanForDevice();
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-900/60 hover:bg-emerald-800/80 border border-emerald-500/50 text-emerald-300 text-[11px] font-mono font-semibold flex items-center space-x-1 transition-all"
+                        >
+                          <Radio className="w-3.5 h-3.5 animate-pulse" />
+                          <span>Simulate Board Ping (Hardware Testing)</span>
+                        </button>
+                      </div>
                     </div>
                   )}
+
 
                   <button
                     onClick={handleScanForDevice}
