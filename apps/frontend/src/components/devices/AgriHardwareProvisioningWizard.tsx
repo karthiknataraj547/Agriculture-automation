@@ -19,6 +19,8 @@ import {
   Bluetooth,
   Terminal,
 } from 'lucide-react';
+import { useAuthStore } from '../../store/useAuthStore';
+
 
 interface AgriHardwareProvisioningWizardProps {
   onClose: () => void;
