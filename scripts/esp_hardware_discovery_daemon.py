@@ -109,6 +109,8 @@ def scan_usb_serial_ports():
         return esp_found
     except ImportError:
         pass
+    return False
+
 class LocalDiscoveryProxyHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass # Suppress standard access logging to keep console clean

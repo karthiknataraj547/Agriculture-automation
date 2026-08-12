@@ -434,7 +434,7 @@ void setupSoftAP(const String& apName) {
     server.send(204);
   });
 
-  // POST /setup
+  // POST /setup — receive Wi-Fi credentials and start connection
   server.on("/setup", HTTP_POST, []() {
     String ssid = "";
     String pass = "";
@@ -460,15 +460,58 @@ void setupSoftAP(const String& apName) {
       preferences.putString("pass", wifiPass);
       preferences.end();
 
+      Serial.print(F("[SETUP] Credentials saved! SSID: ")); Serial.println(wifiSsid);
+
       server.sendHeader("Access-Control-Allow-Origin", "*");
       server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials saved. Reconnecting...\"}");
       
-      delay(500);
+      // Ensure the response is fully flushed to the client before switching modes
+      delay(200);
+      server.client().flush();
+      delay(300);
+      
       WiFi.mode(WIFI_AP_STA);
       WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
       setDeviceState(STATE_WIFI_CONNECTING);
       return;
     }
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID and Password are required.\"}");
+  });
+
+  // GET /setup — same logic, allows credentials via query parameters from the proxy
+  server.on("/setup", HTTP_GET, []() {
+    String ssid = "";
+    String pass = "";
+
+    if (server.hasArg("ssid") && server.hasArg("password")) {
+      ssid = server.arg("ssid");
+      pass = server.arg("password");
+    }
+
+    if (ssid.length() > 0) {
+      wifiSsid = ssid;
+      wifiPass = pass;
+
+      preferences.begin("agri-node", false);
+      preferences.putString("ssid", wifiSsid);
+      preferences.putString("pass", wifiPass);
+      preferences.end();
+
+      Serial.print(F("[SETUP-GET] Credentials saved! SSID: ")); Serial.println(wifiSsid);
+
+      server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials saved. Reconnecting...\"}");
+      
+      delay(200);
+      server.client().flush();
+      delay(300);
+      
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+      setDeviceState(STATE_WIFI_CONNECTING);
+      return;
+    }
+    server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID and Password are required.\"}");
   });
 
@@ -647,7 +690,9 @@ void loop() {
       server.handleClient();
       break;
 
+    // Keep SoftAP web server alive during WiFi connection so proxy can poll /status
     case STATE_WIFI_CONNECTING: {
+      server.handleClient();
       static unsigned long connectTimeout = millis();
       if (WiFi.status() == WL_CONNECTED) {
         Serial.print(F("\n[WiFi OK] Local IP: ")); Serial.println(WiFi.localIP());

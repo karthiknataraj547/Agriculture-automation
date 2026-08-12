@@ -154,39 +154,33 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setIsScanning(true);
     setScanError(null);
 
-    // 1. Probe direct SoftAP Wi-Fi via image probe to bypass Mixed Content blocks on HTTPS
-    const probeImage = new Promise<any>((resolve, reject) => {
-      const img = new Image();
-      img.src = 'http://192.168.4.1/ping-image.jpg?t=' + Date.now();
-      img.onload = () => {
-        resolve({
-          serialNumber: `AGRI-SETUP-HOTSPOT`,
-          macAddress: 'CC:50:E3:8A:12:34',
+    // 1. Probe SoftAP via local proxy (port 4001) — this bypasses HTTPS Mixed Content blocks
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const pingRes = await fetch('http://localhost:4001/ping', { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (pingRes.ok) {
+        const pingData = await pingRes.json();
+        const apNode = {
+          serialNumber: pingData.serial || 'AGRI-SETUP-HOTSPOT',
+          macAddress: pingData.mac || 'CC:50:E3:8A:12:34',
           boardFamily: selectedProduct.boardFamily,
           rssi: -30,
-          mode: 'Wi-Fi Hotspot Mode (192.168.4.1)',
+          mode: 'Wi-Fi SoftAP (via Local Proxy)',
           isSoftAP: true,
-          productName: selectedProduct.customerProductName
-        });
-      };
-      img.onerror = () => {
-        reject(new Error('Hotspot ping-image offline'));
-      };
-      // Timeout after 1.5s
-      setTimeout(() => reject(new Error('Hotspot ping-image timeout')), 1500);
-    });
-
-    try {
-      const apNode = await probeImage;
-      setDiscoveredDevices([apNode]);
-      setSelectedDevice(apNode);
-      setIsScanning(false);
-      return;
+          productName: selectedProduct.customerProductName || 'AgriFlow Smart Irrigation Controller'
+        };
+        setDiscoveredDevices([apNode]);
+        setSelectedDevice(apNode);
+        setIsScanning(false);
+        return;
+      }
     } catch (e) {
-      console.log('[Mixed-Content SoftAP image probe failed, trying standard fetch...]', e);
+      console.log('[Local proxy SoftAP probe failed]', e);
     }
 
-    // 2. Probe direct SoftAP Wi-Fi via fetch
+    // 2. Direct SoftAP probe (only works when NOT on HTTPS — e.g. localhost dev server)
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1500);
@@ -199,7 +193,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           macAddress: pingData.mac || 'CC:50:E3:8A:12:34',
           boardFamily: selectedProduct.boardFamily,
           rssi: -35,
-          mode: 'Wi-Fi Hotspot (192.168.4.1)',
+          mode: 'Wi-Fi SoftAP Direct (192.168.4.1)',
           isSoftAP: true,
           productName: 'AgriFlow Smart Irrigation Controller'
         };
@@ -336,45 +330,19 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         clearTimeout(timeoutId);
         console.log('[SoftAP fetch transmit ok]');
       } catch (e) {
-        console.warn('[SoftAP fetch transmit failed or blocked, falling back to form post]', e);
+        console.warn('[SoftAP credential transmit failed]', e);
+        // Retry once more through the proxy with a longer timeout
         try {
-          const iframeName = 'hidden_prov_iframe';
-          let iframe = document.getElementById(iframeName) as HTMLIFrameElement;
-          if (!iframe) {
-            iframe = document.createElement('iframe');
-            iframe.id = iframeName;
-            iframe.name = iframeName;
-            iframe.style.display = 'none';
-            document.body.appendChild(iframe);
-          }
-
-          const form = document.createElement('form');
-          form.action = `http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`;
-          form.method = 'POST';
-          form.target = iframeName;
-
-          const ssidInput = document.createElement('input');
-          ssidInput.type = 'hidden';
-          ssidInput.name = 'ssid';
-          ssidInput.value = wifiSsid;
-          form.appendChild(ssidInput);
-
-          const passInput = document.createElement('input');
-          passInput.type = 'hidden';
-          passInput.name = 'password';
-          passInput.value = wifiPass;
-          form.appendChild(passInput);
-
-          document.body.appendChild(form);
-          form.submit();
-
-          setTimeout(() => {
-            if (document.body.contains(form)) {
-              document.body.removeChild(form);
-            }
-          }, 1000);
-        } catch (err) {
-          console.error('[SoftAP Form Transmit Error]', err);
+          const retry = new AbortController();
+          const retryTimeout = setTimeout(() => retry.abort(), 5000);
+          await fetch(
+            `http://localhost:4001/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
+            { method: 'POST', mode: 'cors', signal: retry.signal }
+          );
+          clearTimeout(retryTimeout);
+          console.log('[SoftAP credential retry via proxy ok]');
+        } catch (retryErr) {
+          console.error('[SoftAP credential push failed completely]', retryErr);
         }
       }
     }
