@@ -1,15 +1,13 @@
 /*
- * Commercial Smart Agriculture Node Firmware (Non-Blocking FSM + GATT Provisioning + Telemetry)
+ * Commercial Smart Agriculture Node Firmware (Non-Blocking FSM + Espressif WiFiProv SoftAP + Telemetry)
  * Product: AgriFlow Smart Irrigation Controller
  * Internal SKU: AGRIFLOW-IRRIGATION-V1
  * Microcontroller: ESP32 (Xtensa LX6 ESP32)
- * Version: v2.0.0 (Master Production Firmware)
+ * Version: v3.0.0 (Master Production Firmware)
  */
 
 #include <WiFi.h>
-#include <WebServer.h>
-#include <NimBLEDevice.h>
-#include <Preferences.h>
+#include <WiFiProv.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
@@ -24,20 +22,10 @@
 #define PIN_FLOW_RATE      27   // Pulse Water Flow Sensor
 #define DHTTYPE            DHT11
 
-// ─── FIXED GATT PROVISIONING SERVICE & CHARACTERISTIC UUIDS ───
-#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
-#define CHAR_INFO_UUID      "0000ffe1-0000-1000-8000-00805f9b34fb" // READ: Device Info JSON
-#define CHAR_SSID_UUID      "0000ffe2-0000-1000-8000-00805f9b34fb" // WRITE: Wi-Fi SSID
-#define CHAR_PASS_UUID      "0000ffe3-0000-1000-8000-00805f9b34fb" // WRITE: Wi-Fi Password
-#define CHAR_CMD_UUID       "0000ffe4-0000-1000-8000-00805f9b34fb" // WRITE: Command ("CONNECT")
-#define CHAR_STATUS_UUID   "0000ffe5-0000-1000-8000-00805f9b34fb" // READ+NOTIFY: FSM Status
-#define CHAR_ERROR_UUID    "0000ffe6-0000-1000-8000-00805f9b34fb" // READ+NOTIFY: Error Reason
-
 // ─── NON-BLOCKING FINITE STATE MACHINE ───
 enum DeviceState {
   STATE_BOOT,
   STATE_PROVISIONING,
-  STATE_BLE_CONNECTED,
   STATE_CONNECTING_WIFI,
   STATE_WIFI_CONNECTED,
   STATE_REGISTERING_CLOUD,
@@ -50,19 +38,9 @@ DeviceState currentState = STATE_BOOT;
 String lastErrorReason = "";
 
 // ─── GLOBAL OBJECTS ───
-Preferences preferences;
-WebServer server(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 DHT dht(PIN_DHT_DATA, DHTTYPE);
-
-// GATT Characteristics Pointers
-NimBLECharacteristic *pCharInfo = nullptr;
-NimBLECharacteristic *pCharSsid = nullptr;
-NimBLECharacteristic *pCharPass = nullptr;
-NimBLECharacteristic *pCharCmd = nullptr;
-NimBLECharacteristic *pCharStatus = nullptr;
-NimBLECharacteristic *pCharError = nullptr;
 
 String wifiSsid = "";
 String wifiPass = "";
@@ -84,7 +62,6 @@ void setDeviceState(DeviceState newState, String errorMsg = "") {
   switch(newState) {
     case STATE_BOOT: stateStr = "BOOT"; break;
     case STATE_PROVISIONING: stateStr = "PROVISIONING"; break;
-    case STATE_BLE_CONNECTED: stateStr = "BLE_CONNECTED"; break;
     case STATE_CONNECTING_WIFI: stateStr = "CONNECTING_WIFI"; break;
     case STATE_WIFI_CONNECTED: stateStr = "WIFI_CONNECTED"; break;
     case STATE_REGISTERING_CLOUD: stateStr = "REGISTERING_CLOUD"; break;
@@ -94,113 +71,6 @@ void setDeviceState(DeviceState newState, String errorMsg = "") {
   }
 
   Serial.print(F("[FSM STATE] -> ")); Serial.println(stateStr);
-  if (pCharStatus) {
-    pCharStatus->setValue(stateStr.c_str());
-    pCharStatus->notify();
-  }
-  if (errorMsg.length() > 0 && pCharError) {
-    pCharError->setValue(errorMsg.c_str());
-    pCharError->notify();
-  }
-}
-
-class ServerCallbacks: public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) {
-      Serial.println(F("[BLE GATT] Client Connected!"));
-      setDeviceState(STATE_BLE_CONNECTED);
-    };
-
-    void onDisconnect(NimBLEServer* pServer) {
-      Serial.println(F("[BLE GATT] Client Disconnected. Restarting Advertising..."));
-      if (currentState == STATE_BLE_CONNECTED) {
-        setDeviceState(STATE_PROVISIONING);
-      }
-      NimBLEDevice::startAdvertising();
-    }
-};
-
-void setupNimBLEGATT(const String& apName) {
-  NimBLEDevice::init(apName.c_str());
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9); // Maximum TX Power for max range
-
-  NimBLEServer *pServer = NimBLEDevice::createServer();
-  pServer->setCallbacks(new ServerCallbacks());
-
-  NimBLEService *pService = pServer->createService(SERVICE_UUID);
-
-  // GATT 1: Device Info JSON
-  pCharInfo = pService->createCharacteristic(CHAR_INFO_UUID, NIMBLE_PROPERTY::READ);
-  String infoJson = "{\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\",\"productId\":\"AGRIFLOW-IRRIGATION-V1\",\"productName\":\"AgriFlow Smart Irrigation Controller\"}";
-  pCharInfo->setValue(infoJson.c_str());
-
-  // GATT 2: Wi-Fi SSID
-  pCharSsid = pService->createCharacteristic(CHAR_SSID_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-
-  // GATT 3: Wi-Fi Password
-  pCharPass = pService->createCharacteristic(CHAR_PASS_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-
-  // GATT 4: Command Trigger
-  pCharCmd = pService->createCharacteristic(CHAR_CMD_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::READ);
-
-  // GATT 5: Provisioning Status
-  pCharStatus = pService->createCharacteristic(CHAR_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  pCharStatus->setValue("PROVISIONING");
-
-  // GATT 6: Error Status
-  pCharError = pService->createCharacteristic(CHAR_ERROR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  pCharError->setValue("NONE");
-
-  pService->start();
-  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
-  pAdv->addServiceUUID(SERVICE_UUID);
-  pAdv->setScanResponse(true);
-  pAdv->setMinPreferred(0x06);
-  pAdv->setMinPreferred(0x12);
-  pAdv->start();
-  Serial.println(F("[BLE] NimBLE GATT Provisioning Service & Characteristics Initialized (Max Power P9)!"));
-}
-
-void startProvisioningMode() {
-  String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
-  WiFi.softAP(apName.c_str(), "agrifarm2026");
-
-  server.on("/setup", HTTP_POST, []() {
-    if (server.hasArg("plain")) {
-      JsonDocument doc;
-      DeserializationError err = deserializeJson(doc, server.arg("plain"));
-      if (!err && doc.containsKey("ssid") && doc.containsKey("password")) {
-        wifiSsid = String((const char*)doc["ssid"]);
-        wifiPass = String((const char*)doc["password"]);
-        server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi Config Received! Connecting...\"}");
-        setDeviceState(STATE_CONNECTING_WIFI);
-        return;
-      }
-    }
-    server.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid payload\"}");
-  });
-
-  server.on("/ping", HTTP_GET, []() {
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\"}");
-  });
-
-  server.on("/", HTTP_GET, []() {
-    String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
-                  "<style>body{font-family:sans-serif;background:#090d16;color:#fff;padding:20px;text-align:center;}"
-                  "input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:none;box-sizing:border-box;}"
-                  "input{background:#1e293b;color:#fff;}button{background:#10b981;color:#fff;font-weight:bold;cursor:pointer;}</style></head><body>"
-                  "<h2>🌾 AgriFlow Hardware Provisioning</h2>"
-                  "<p style='color:#a7f3d0;'>Device: <b>" + deviceSerial + "</b></p>"
-                  "<form action='/setup' method='POST'>"
-                  "<input type='text' name='ssid' placeholder='Farm Wi-Fi SSID' required><br>"
-                  "<input type='password' name='password' placeholder='Wi-Fi Password' required><br>"
-                  "<button type='submit'>Save Wi-Fi & Connect</button>"
-                  "</form></body></html>";
-    server.send(200, "text/html", html);
-  });
-  server.begin();
-
-  setupNimBLEGATT(apName);
-  setDeviceState(STATE_PROVISIONING);
 }
 
 void registerDeviceWithCloud() {
@@ -215,7 +85,7 @@ void registerDeviceWithCloud() {
   doc["boardFamily"] = "ESP32";
   doc["boardType"] = "ESP32 Dev Module";
   doc["productId"] = "AGRIFLOW-IRRIGATION-V1";
-  doc["firmwareVersion"] = "2.0.0";
+  doc["firmwareVersion"] = "3.0.0";
   doc["wifiSsid"] = wifiSsid;
 
   String body;
@@ -266,16 +136,69 @@ void updateLedPattern() {
   }
 }
 
+// System Event Handler for WiFiProv callbacks
+void SysProvEvent(arduino_event_t *sys_event) {
+  switch (sys_event->event_id) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Serial.print(F("\n[WiFiProv OK] Got IP: "));
+      Serial.println(IPAddress(sys_event->event_info.got_ip.ip_info.ip.addr));
+      setDeviceState(STATE_WIFI_CONNECTED);
+      registerDeviceWithCloud();
+      break;
+    case ARDUINO_EVENT_PROV_START:
+      Serial.println(F("[WiFiProv] Provisioning Started"));
+      break;
+    case ARDUINO_EVENT_PROV_CRED_RECV:
+      Serial.println(F("[WiFiProv] Wi-Fi Credentials Received over SoftAP"));
+      wifiSsid = String((const char*)sys_event->event_info.prov_cred_recv.ssid);
+      wifiPass = String((const char*)sys_event->event_info.prov_cred_recv.password);
+      setDeviceState(STATE_CONNECTING_WIFI);
+      break;
+    case ARDUINO_EVENT_PROV_CRED_FAIL:
+      Serial.println(F("[WiFiProv] Connection Failed: Invalid Credentials"));
+      setDeviceState(STATE_ERROR, "WIFI_CREDENTIAL_FAILED");
+      break;
+    case ARDUINO_EVENT_PROV_END:
+      Serial.println(F("[WiFiProv] Provisioning Ended"));
+      break;
+    default:
+      break;
+  }
+}
+
+void startProvisioningMode() {
+  setDeviceState(STATE_PROVISIONING);
+  String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  apName.toUpperCase();
+
+  WiFi.onEvent(SysProvEvent);
+
+  // Start software Access Point (SoftAP) for provisioning mode
+  // Scheme: WIFI_PROV_SCHEME_SOFTAP
+  // Scheme handler: WIFI_PROV_SCHEME_HANDLER_NONE
+  // Security: WIFI_PROV_SECURITY_0 (Open Network for easiest browser config transmission)
+  WiFiProv.beginProvision(
+    WIFI_PROV_SCHEME_SOFTAP, 
+    WIFI_PROV_SCHEME_HANDLER_NONE, 
+    WIFI_PROV_SECURITY_0, 
+    nullptr, 
+    apName.c_str()
+  );
+
+  Serial.print(F("[AP] SoftAP Provisioning Hotspot Started: ")); Serial.println(apName);
+}
+
 void checkResetButton() {
   if (digitalRead(PIN_BUTTON_RESET) == LOW) {
     if (!buttonHeld) {
       buttonHeld = true;
       buttonPressStart = millis();
     } else if (millis() - buttonPressStart >= 5000) {
-      Serial.println(F("\n[RESET BUTTON] 5-second Hold Detected! Clearing Wi-Fi credentials & Resetting..."));
-      preferences.begin("agri-node", false);
-      preferences.clear();
-      preferences.end();
+      Serial.println(F("\n[RESET BUTTON] 5-second Hold Detected! Resetting Wi-Fi & re-entering setup..."));
+      
+      // Reset Wi-Fi configuration saved in NVS memory
+      WiFi.disconnect(true, true);
+      
       digitalWrite(PIN_LED_INDICATOR, LOW);
       delay(500);
       ESP.restart();
@@ -303,17 +226,17 @@ void setup() {
   Serial.print(F(" MAC Address:   ")); Serial.println(macAddress);
   Serial.println(F("=========================================="));
 
-  preferences.begin("agri-node", false);
-  wifiSsid = preferences.getString("ssid", "");
-  wifiPass = preferences.getString("pass", "");
-  preferences.end();
+  bool provisioned = false;
+  WiFiProv.isProvisioned(&provisioned);
 
-  if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
-    startProvisioningMode();
-  } else {
+  if (provisioned) {
+    Serial.println(F("[WiFiProv] Stored credentials found. Connecting to Wi-Fi..."));
+    WiFi.onEvent(SysProvEvent);
+    WiFiProv.connectToSavedWifi();
     setDeviceState(STATE_CONNECTING_WIFI);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  } else {
+    Serial.println(F("[WiFiProv] No credentials found. Launching SoftAP Setup..."));
+    startProvisioningMode();
   }
 }
 
@@ -323,36 +246,14 @@ void loop() {
 
   // NON-BLOCKING FINITE STATE MACHINE EXECUTOR
   switch(currentState) {
-    case STATE_PROVISIONING: {
-      server.handleClient();
-
-      // Check GATT characteristic writes from Web Tool
-      if (pCharSsid && pCharSsid->getValue().length() > 0) {
-        wifiSsid = pCharSsid->getValue().c_str();
-      }
-      if (pCharPass && pCharPass->getValue().length() > 0) {
-        wifiPass = pCharPass->getValue().c_str();
-      }
-      if (pCharCmd && pCharCmd->getValue() == "CONNECT" && wifiSsid.length() > 0) {
-        preferences.begin("agri-node", false);
-        preferences.putString("ssid", wifiSsid);
-        preferences.putString("pass", wifiPass);
-        preferences.end();
-
-        NimBLEDevice::deinit(true);
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-        setDeviceState(STATE_CONNECTING_WIFI);
-      }
+    case STATE_PROVISIONING:
+      // WiFiProv library handles incoming client connections internally
       break;
-    }
 
     case STATE_CONNECTING_WIFI: {
       static unsigned long wifiStart = millis();
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.print(F("\n[WiFi OK] IP: ")); Serial.println(WiFi.localIP());
-        setDeviceState(STATE_WIFI_CONNECTED);
-        registerDeviceWithCloud();
+        // Already handled by got_ip event callback
       } else if (millis() - wifiStart > 20000) {
         Serial.println(F("\n[WiFi FAIL] Connection Timeout!"));
         setDeviceState(STATE_ERROR, "WIFI_CONNECTION_FAILED");
@@ -395,10 +296,8 @@ void loop() {
       break;
     }
 
-    case STATE_ERROR: {
-      // Allow user to trigger provisioning re-entry by holding GPIO 0 for 5s
+    case STATE_ERROR:
       break;
-    }
 
     default:
       break;
