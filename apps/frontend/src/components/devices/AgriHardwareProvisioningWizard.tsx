@@ -578,10 +578,18 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             <div className="p-5 rounded-2xl bg-slate-950/50 border border-purple-500/20 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-purple-500"></span>
-                  Auto Scanning
+                  <span className="w-2 h-2 rounded-full bg-purple-500 animate-ping"></span>
+                  Auto Scanning (BLE & Wi-Fi)
                 </span>
-                {isScanning && <RefreshCw className="w-3.5 h-3.5 text-purple-400 animate-spin" />}
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] bg-purple-950/60 border border-purple-500/30 text-purple-300 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                    <Bluetooth className="w-3 h-3 text-purple-400" /> BLE
+                  </span>
+                  <span className="text-[10px] bg-indigo-950/60 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                    <Wifi className="w-3 h-3 text-indigo-400" /> Wi-Fi
+                  </span>
+                  {isScanning && <RefreshCw className="w-3.5 h-3.5 text-purple-400 animate-spin" />}
+                </div>
               </div>
 
               {discoveredDevices.length > 0 ? (
@@ -631,10 +639,12 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     <button
                       type="button"
                       onClick={handleExplicitBleScan}
-                      className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center justify-center gap-1.5 mx-auto"
+                      className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center justify-center gap-2.5 mx-auto"
                     >
-                      <Bluetooth className="w-4 h-4" />
-                      <span>Scan Devices</span>
+                      <Bluetooth className="w-4 h-4 text-purple-200" />
+                      <span className="text-purple-400 font-normal">|</span>
+                      <Wifi className="w-4 h-4 text-indigo-200" />
+                      <span>Scan BLE & Wi-Fi Devices</span>
                     </button>
                   </div>
                 </div>
