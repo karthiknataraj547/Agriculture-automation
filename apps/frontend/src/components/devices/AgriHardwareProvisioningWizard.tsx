@@ -638,6 +638,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                       <li>Verify your physical board is powered on.</li>
                       <li>Check status LED: It should **blink rapidly** (200ms).</li>
                       <li>If the LED is solid or off, **hold the Boot/Flash button on the board for 5 seconds** until the LED flashes to enter Setup Mode.</li>
+                      <li>If connecting via Wi-Fi, **connect your computer/phone to the AGRI-SETUP-XXXX hotspot (Password: agrifarm2026)** to scan and provision it.</li>
                       <li>Ensure your computer/phone's wireless systems (Wi-Fi & Bluetooth) are enabled.</li>
                     </ul>
                   </div>
