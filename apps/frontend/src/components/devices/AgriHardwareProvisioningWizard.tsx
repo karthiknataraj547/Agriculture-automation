@@ -588,28 +588,19 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                       <li>Verify your physical board is powered on.</li>
                       <li>Check status LED: It should **blink rapidly** (200ms).</li>
                       <li>If the LED is solid or off, **hold the Boot/Flash button on the board for 5 seconds** until the LED flashes to enter Setup Mode.</li>
-                      <li>Ensure your computer/phone's **Bluetooth is turned ON**.</li>
+                      <li>Ensure your computer/phone's wireless systems (Wi-Fi & Bluetooth) are enabled.</li>
                     </ul>
                   </div>
 
-                  <div className="flex justify-center gap-2 pt-1">
+                  <div className="pt-1">
                     <button
                       type="button"
                       onClick={handleExplicitBleScan}
-                      className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center gap-1.5"
+                      className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center justify-center gap-1.5 mx-auto"
                     >
                       <Bluetooth className="w-4 h-4" />
-                      <span>Scan BLE</span>
+                      <span>Scan Devices</span>
                     </button>
-                    <a
-                      href="http://192.168.4.1"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-4 py-2 rounded-xl bg-slate-850 hover:bg-slate-750 text-slate-300 text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-700"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>Use Wi-Fi Hotspot</span>
-                    </a>
                   </div>
                 </div>
               )}
