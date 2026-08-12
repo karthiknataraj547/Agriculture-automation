@@ -353,6 +353,34 @@ void setupSoftAP(const String& apName) {
     server.send(200, "application/json", info);
   });
 
+  // GET /status
+  server.on("/status", HTTP_GET, []() {
+    String stateStr = "SETUP";
+    switch(currentState) {
+      case STATE_SETUP: stateStr = "SETUP"; break;
+      case STATE_DISCOVERABLE: stateStr = "DISCOVERABLE"; break;
+      case STATE_PAIRING: stateStr = "PAIRING"; break;
+      case STATE_WIFI_PROVISIONING: stateStr = "WIFI_PROVISIONING"; break;
+      case STATE_WIFI_CONNECTING: stateStr = "WIFI_CONNECTING"; break;
+      case STATE_WIFI_CONNECTED: stateStr = "WIFI_CONNECTED"; break;
+      case STATE_CLOUD_REGISTERING: stateStr = "CLOUD_REGISTERING"; break;
+      case STATE_MQTT_CONNECTING: stateStr = "MQTT_CONNECTING"; break;
+      case STATE_ONLINE: stateStr = "ONLINE"; break;
+      case STATE_ERROR: stateStr = "ERROR"; break;
+      default: stateStr = "UNKNOWN";
+    }
+
+    JsonDocument doc;
+    doc["status"] = stateStr;
+    doc["wifiStatus"] = (int)WiFi.status();
+    doc["error"] = lastErrorReason;
+
+    String response;
+    serializeJson(doc, response);
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", response);
+  });
+
   // POST /setup
   server.on("/setup", HTTP_POST, []() {
     String ssid = "";
@@ -383,7 +411,7 @@ void setupSoftAP(const String& apName) {
       server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials saved. Reconnecting...\"}");
       
       delay(500);
-      WiFi.mode(WIFI_STA);
+      WiFi.mode(WIFI_AP_STA);
       WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
       setDeviceState(STATE_WIFI_CONNECTING);
       return;
@@ -575,6 +603,7 @@ void loop() {
         // Shut down setup WebServer and softAP hotspot to transition into normal Station Mode
         server.stop();
         WiFi.softAPdisconnect(true);
+        WiFi.mode(WIFI_STA);
         
         registerDeviceWithCloud();
       } else if (millis() - connectTimeout > 15000) {

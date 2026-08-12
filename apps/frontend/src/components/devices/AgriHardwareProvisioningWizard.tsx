@@ -243,29 +243,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setStep(3); // Connection progress step
     setConnectionStage('PAIRING');
     setConnectionProgress(10);
-
-    // Simulated progress countdown that completes milestones in real-time
-    const interval = setInterval(async () => {
-      setConnectionProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setConnectionStage('SUCCESS');
-          setTimeout(() => {
-            setStep(4); // Configuration / naming step
-          }, 1000);
-          return 100;
-        }
-
-        const nextProgress = prev + 5;
-        if (nextProgress === 35) {
-          setConnectionStage('CLOUD');
-        } else if (nextProgress === 70) {
-          setConnectionStage('MQTT');
-        }
-
-        return nextProgress;
-      });
-    }, 200);
+    setFeedback(null);
 
     // 1. Transmit via BLE
     if (bleServer && bleServer.connected) {
@@ -278,7 +256,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         const cmdChar = await service.getCharacteristic('0000ffe9-0000-1000-8000-00805f9b34fb');
         await cmdChar.writeValue(new TextEncoder().encode('CONNECT'));
       } catch (e) {
-        console.error(e);
+        console.error('[BLE Transmit Error]', e);
       }
     }
 
@@ -321,26 +299,121 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           }
         }, 1000);
       } catch (e) {
-        console.error(e);
+        console.error('[SoftAP Transmit Error]', e);
       }
     }
 
-    // Register securely on Cloud
-    try {
-      await fetch('/api/iot/devices/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          serialNumber: selectedDevice?.serialNumber || `AGRI-${selectedProduct.boardFamily}-DEVICE`,
-          macAddress: selectedDevice?.macAddress || 'CC:50:E3:8A:12:34',
-          boardFamily: selectedProduct.boardFamily,
-          productId: selectedProduct.id,
-          firmwareVersion: '3.2.0',
-          wifiSsid,
-          claimSessionId,
-        }),
-      });
-    } catch (e) {}
+    // Start status polling loop
+    let pollInterval: any;
+    let localProgress = 10;
+    const maxPollTime = 30000;
+    const pollStartTime = Date.now();
+
+    pollInterval = setInterval(async () => {
+      // Check for timeout
+      if (Date.now() - pollStartTime > maxPollTime) {
+        clearInterval(pollInterval);
+        setConnectionStage('FAILED');
+        setFeedback({ type: 'error', message: 'Connection timed out. Please verify your Wi-Fi router is on and range is sufficient.' });
+        setStep(2); // Go back to credentials entry
+        return;
+      }
+
+      let currentDeviceState = 'WIFI_CONNECTING';
+      let errorReason = 'NONE';
+
+      // A. Polling via BLE GATT characteristics
+      if (bleServer && bleServer.connected) {
+        try {
+          const service = await bleServer.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
+          
+          const statusChar = await service.getCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb');
+          const valBuf = await statusChar.readValue();
+          currentDeviceState = new TextDecoder().decode(valBuf);
+
+          const errChar = await service.getCharacteristic('0000ffea-0000-1000-8000-00805f9b34fb');
+          const errBuf = await errChar.readValue();
+          errorReason = new TextDecoder().decode(errBuf);
+        } catch (e) {
+          console.warn('[BLE status poll failed]', e);
+        }
+      }
+      // B. Polling via SoftAP Web Server endpoint
+      else if (selectedDevice?.isSoftAP) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 1200);
+          const statusRes = await fetch('http://192.168.4.1/status', { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (statusRes.ok) {
+            const data = await statusRes.json();
+            currentDeviceState = data.status || 'WIFI_CONNECTING';
+            errorReason = data.error || 'NONE';
+          }
+        } catch (e) {
+          // If the network switches or SoftAP turns off, check if backend cloud discovery registers the node
+          console.warn('[SoftAP connection dropped, polling database discovery as fallback...]', e);
+        }
+      }
+
+      // Handle Wi-Fi authentication/connection failure
+      if (errorReason === 'WIFI_AUTH_FAILED' || currentDeviceState === 'ERROR') {
+        clearInterval(pollInterval);
+        setConnectionStage('FAILED');
+        setFeedback({
+          type: 'error',
+          message: 'Wi-Fi connection failed. Please verify your SSID network name and security password and try again.'
+        });
+        setStep(2); // Bounce back to step 2 with inputs preserved
+        return;
+      }
+
+      // Handle progress FSM states
+      if (currentDeviceState === 'WIFI_CONNECTING') {
+        localProgress = Math.min(localProgress + 4, 45); // smoothly creep up to 45%
+        setConnectionProgress(localProgress);
+        setConnectionStage('PAIRING');
+      } else if (currentDeviceState === 'WIFI_CONNECTED' || currentDeviceState === 'CLOUD_REGISTERING') {
+        localProgress = Math.min(localProgress + 6, 75); // smoothly creep up to 75%
+        setConnectionProgress(localProgress);
+        setConnectionStage('CLOUD');
+      } else if (currentDeviceState === 'MQTT_CONNECTING' || currentDeviceState === 'ONLINE') {
+        clearInterval(pollInterval);
+        
+        // Register securely on Cloud API
+        try {
+          await fetch('/api/iot/devices/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              serialNumber: selectedDevice?.serialNumber || `AGRI-${selectedProduct.boardFamily}-DEVICE`,
+              macAddress: selectedDevice?.macAddress || 'CC:50:E3:8A:12:34',
+              boardFamily: selectedProduct.boardFamily,
+              productId: selectedProduct.id,
+              firmwareVersion: '3.2.0',
+              wifiSsid,
+              claimSessionId,
+            }),
+          });
+        } catch (e) {}
+
+        // Animate smoothly to 100% success state
+        let finalProg = localProgress;
+        const finalInterval = setInterval(() => {
+          finalProg += 5;
+          if (finalProg >= 100) {
+            clearInterval(finalInterval);
+            setConnectionProgress(100);
+            setConnectionStage('SUCCESS');
+            setTimeout(() => {
+              setStep(4); // Advance to configuration step
+            }, 1000);
+          } else {
+            setConnectionProgress(finalProg);
+          }
+        }, 50);
+      }
+    }, 1500);
   };
 
   // FINAL SETUP COMPLETE SUBMISSION
