@@ -263,43 +263,60 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     // 2. Transmit via SoftAP
     if (selectedDevice?.isSoftAP) {
       try {
-        const iframeName = 'hidden_prov_iframe';
-        let iframe = document.getElementById(iframeName) as HTMLIFrameElement;
-        if (!iframe) {
-          iframe = document.createElement('iframe');
-          iframe.id = iframeName;
-          iframe.name = iframeName;
-          iframe.style.display = 'none';
-          document.body.appendChild(iframe);
-        }
-
-        const form = document.createElement('form');
-        form.action = 'http://192.168.4.1/setup';
-        form.method = 'POST';
-        form.target = iframeName;
-
-        const ssidInput = document.createElement('input');
-        ssidInput.type = 'hidden';
-        ssidInput.name = 'ssid';
-        ssidInput.value = wifiSsid;
-        form.appendChild(ssidInput);
-
-        const passInput = document.createElement('input');
-        passInput.type = 'hidden';
-        passInput.name = 'password';
-        passInput.value = wifiPass;
-        form.appendChild(passInput);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        setTimeout(() => {
-          if (document.body.contains(form)) {
-            document.body.removeChild(form);
+        // Send via URL query parameters in direct fetch (highly robust bypass for JSON parser CORS issues on ESP web server)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        await fetch(
+          `http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
+          {
+            method: 'POST',
+            mode: 'cors',
+            signal: controller.signal
           }
-        }, 1000);
+        );
+        clearTimeout(timeoutId);
+        console.log('[SoftAP fetch transmit ok]');
       } catch (e) {
-        console.error('[SoftAP Transmit Error]', e);
+        console.warn('[SoftAP fetch transmit failed or blocked, falling back to form post]', e);
+        try {
+          const iframeName = 'hidden_prov_iframe';
+          let iframe = document.getElementById(iframeName) as HTMLIFrameElement;
+          if (!iframe) {
+            iframe = document.createElement('iframe');
+            iframe.id = iframeName;
+            iframe.name = iframeName;
+            iframe.style.display = 'none';
+            document.body.appendChild(iframe);
+          }
+
+          const form = document.createElement('form');
+          form.action = `http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`;
+          form.method = 'POST';
+          form.target = iframeName;
+
+          const ssidInput = document.createElement('input');
+          ssidInput.type = 'hidden';
+          ssidInput.name = 'ssid';
+          ssidInput.value = wifiSsid;
+          form.appendChild(ssidInput);
+
+          const passInput = document.createElement('input');
+          passInput.type = 'hidden';
+          passInput.name = 'password';
+          passInput.value = wifiPass;
+          form.appendChild(passInput);
+
+          document.body.appendChild(form);
+          form.submit();
+
+          setTimeout(() => {
+            if (document.body.contains(form)) {
+              document.body.removeChild(form);
+            }
+          }, 1000);
+        } catch (err) {
+          console.error('[SoftAP Form Transmit Error]', err);
+        }
       }
     }
 
