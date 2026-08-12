@@ -235,6 +235,33 @@ void setupSoftAP(const String& apName) {
     server.send(200, "application/json", response);
   });
 
+  // GET /wifi-scan
+  server.on("/wifi-scan", HTTP_GET, []() {
+    Serial.println(F("[WIFI SCAN] Scanning nearby networks..."));
+    int n = WiFi.scanNetworks();
+    JsonDocument doc;
+    JsonArray networks = doc.to<JsonArray>();
+
+    for (int i = 0; i < n; ++i) {
+      JsonObject net = networks.createNestedObject();
+      net["ssid"] = WiFi.SSID(i);
+      net["rssi"] = WiFi.RSSI(i);
+      net["secure"] = WiFi.encryptionType(i) != ENC_TYPE_NONE;
+    }
+
+    String response;
+    serializeJson(doc, response);
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", response);
+  });
+
+  server.on("/wifi-scan", HTTP_OPTIONS, []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.send(204);
+  });
+
   // POST /setup
   server.on("/setup", HTTP_POST, []() {
     String ssid = "";

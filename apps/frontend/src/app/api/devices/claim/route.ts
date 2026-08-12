@@ -93,6 +93,29 @@ export async function POST(req: Request) {
 
     await saveStateToCloudDB(data);
 
+    // Sync with Express backend device manager on port 4000
+    try {
+      await fetch('http://localhost:4000/api/v1/devices/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uuid: newDeviceId,
+          serialNumber: physicalSerial,
+          macAddress: newDevice.macAddress,
+          boardFamily: newDevice.boardFamily,
+          boardType: newDevice.boardType,
+          productId: newDevice.productId,
+          firmwareVersion: newDevice.firmwareVersion,
+          status: 'ONLINE',
+          name: newDevice.name,
+          farmId: newDevice.farmId,
+          zoneId: newDevice.zoneId,
+        }),
+      });
+    } catch (e) {
+      console.warn('[Claim sync with local backend failed]', e);
+    }
+
     return NextResponse.json({
       success: true,
       message: `Physical Hardware '${newDevice.name}' (${newDevice.serialNumber}) successfully claimed into account!`,

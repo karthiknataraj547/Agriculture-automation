@@ -254,8 +254,8 @@ export function DeviceGrid() {
         }),
       });
       const data = await res.json();
-      if (data.code) {
-        const blob = new Blob([data.code], { type: 'text/plain' });
+      if (data.cppCode) {
+        const blob = new Blob([data.cppCode], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;

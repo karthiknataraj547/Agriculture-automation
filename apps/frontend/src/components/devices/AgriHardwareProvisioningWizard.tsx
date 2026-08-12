@@ -68,6 +68,41 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [bleServer, setBleServer] = useState<any>(null);
   const [claimSessionId, setClaimSessionId] = useState<string>('');
 
+  // Local Wi-Fi networks scanned from the hardware
+  const [scannedSsids, setScannedSsids] = useState<string[]>([]);
+  const [isLoadingSsids, setIsLoadingSsids] = useState<boolean>(false);
+  const [isManualSsid, setIsManualSsid] = useState<boolean>(false);
+
+  // Poll available SSIDs from the hardware when Step 2 is entered
+  useEffect(() => {
+    if (step === 2 && selectedDevice?.isSoftAP) {
+      setIsLoadingSsids(true);
+      setScannedSsids([]);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      fetch('http://192.168.4.1/wifi-scan', { signal: controller.signal })
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data)) {
+            const ssids = data.map((n: any) => n.ssid).filter(Boolean);
+            setScannedSsids(Array.from(new Set(ssids)));
+            if (ssids.length > 0) {
+              setWifiSsid(ssids[0]);
+              setIsManualSsid(false);
+            } else {
+              setIsManualSsid(true);
+            }
+          }
+          setIsLoadingSsids(false);
+        })
+        .catch((err) => {
+          console.warn('[WiFi scan endpoint offline or blocked]', err);
+          setIsLoadingSsids(false);
+          setIsManualSsid(true);
+        });
+    }
+  }, [step, selectedDevice]);
+
   // Circular connection progress
   const [connectionProgress, setConnectionProgress] = useState<number>(0);
   const [connectionStage, setConnectionStage] = useState<'IDLE' | 'PAIRING' | 'CLOUD' | 'MQTT' | 'SUCCESS' | 'FAILED'>('IDLE');
@@ -655,14 +690,59 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
             <div className="space-y-3.5 pt-1">
               <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">SSID</label>
-                <input
-                  type="text"
-                  required
-                  value={wifiSsid}
-                  onChange={(e) => setWifiSsid(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
-                />
+                <label className="text-xs font-medium text-slate-300 block mb-1">
+                  SSID {isLoadingSsids && <span className="text-[10px] text-purple-400 font-bold animate-pulse ml-1.5">(Scanning nearby networks...)</span>}
+                </label>
+                
+                {scannedSsids.length > 0 && !isManualSsid ? (
+                  <div className="relative">
+                    <select
+                      value={wifiSsid}
+                      onChange={(e) => {
+                        if (e.target.value === '__manual__') {
+                          setIsManualSsid(true);
+                          setWifiSsid('');
+                        } else {
+                          setWifiSsid(e.target.value);
+                        }
+                      }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono appearance-none"
+                    >
+                      {scannedSsids.map((ssid) => (
+                        <option key={ssid} value={ssid}>
+                          {ssid}
+                        </option>
+                      ))}
+                      <option value="__manual__">-- Type SSID Manually --</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
+                      <ChevronRight className="w-4 h-4 transform rotate-90" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <input
+                      type="text"
+                      required
+                      value={wifiSsid}
+                      onChange={(e) => setWifiSsid(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                      placeholder="Enter Wi-Fi network SSID"
+                    />
+                    {scannedSsids.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsManualSsid(false);
+                          setWifiSsid(scannedSsids[0]);
+                        }}
+                        className="text-[10px] text-purple-400 hover:text-purple-300 font-bold hover:underline"
+                      >
+                        ← Back to scanned networks list
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>

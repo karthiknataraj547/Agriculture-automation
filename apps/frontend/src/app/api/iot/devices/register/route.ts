@@ -58,6 +58,26 @@ export async function POST(req: Request) {
       }),
     });
 
+    // Sync with Express backend device manager on port 4000
+    try {
+      await fetch('http://localhost:4000/api/v1/devices/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uuid: deviceId,
+          serialNumber,
+          macAddress,
+          boardFamily: boardFamily || 'ESP32',
+          boardType: boardType || 'ESP32 Dev Module',
+          productId: productId || 'AGRIFLOW-IRRIGATION-V1',
+          firmwareVersion: firmwareVersion || '3.2.0',
+          status: 'ONLINE',
+        }),
+      });
+    } catch (e) {
+      console.warn('[Register sync with local backend failed]', e);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Device successfully registered and provisioned on cloud backend',
