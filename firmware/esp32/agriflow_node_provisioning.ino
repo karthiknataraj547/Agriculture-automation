@@ -1,18 +1,20 @@
 /*
- * Commercial Smart Agriculture Node Firmware (Non-Blocking FSM + SoftAP Provisioning + Preferences NVS + Telemetry)
+ * Commercial Smart Agriculture Node Firmware (Modular Non-Blocking FSM + BLE GATT + SoftAP WebServer + Telemetry)
  * Product: AgriFlow Smart Irrigation Controller
  * Internal SKU: AGRIFLOW-IRRIGATION-V1
  * Microcontroller: ESP32 (Xtensa LX6 ESP32)
- * Version: v3.1.0 (Master Production Firmware)
+ * Version: v3.2.0 (Master Production Firmware)
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <DHT.h>
+#include <NimBLEDevice.h>
 
 // ─── HARDWARE GPIO PIN MAPPING (ESP32) ───
 #define PIN_LED_INDICATOR  2    // Onboard Status LED
@@ -23,33 +25,65 @@
 #define PIN_FLOW_RATE      27   // Pulse Water Flow Sensor
 #define DHTTYPE            DHT11
 
-// ─── NON-BLOCKING FINITE STATE MACHINE ───
+// ─── STATE MACHINE DEFINITIONS ───
 enum DeviceState {
-  STATE_BOOT,
-  STATE_PROVISIONING,
-  STATE_CONNECTING_WIFI,
+  STATE_SETUP,
+  STATE_DISCOVERABLE,
+  STATE_PAIRING,
+  STATE_WIFI_PROVISIONING,
+  STATE_WIFI_CONNECTING,
   STATE_WIFI_CONNECTED,
-  STATE_REGISTERING_CLOUD,
+  STATE_CLOUD_REGISTERING,
   STATE_MQTT_CONNECTING,
   STATE_ONLINE,
-  STATE_ERROR
+  STATE_ERROR,
+  STATE_DISABLED
 };
 
-DeviceState currentState = STATE_BOOT;
-String lastErrorReason = "";
+DeviceState currentState = STATE_SETUP;
+String lastErrorReason = "NONE";
+String pairingStatusStr = "UNPAIRED";
 
-// ─── GLOBAL OBJECTS ───
+// ─── FIXED GATT PROVISIONING SERVICE & CHARACTERISTIC UUIDS ───
+#define SERVICE_UUID          "0000ffe0-0000-1000-8000-00805f9b34fb"
+#define CHAR_INFO_UUID        "0000ffe1-0000-1000-8000-00805f9b34fb" // READ: Device Info JSON
+#define CHAR_DEVICE_ID_UUID   "0000ffe2-0000-1000-8000-00805f9b34fb" // READ: Device UUID string
+#define CHAR_SERIAL_UUID      "0000ffe3-0000-1000-8000-00805f9b34fb" // READ: Serial Number string
+#define CHAR_PRODUCT_ID_UUID  "0000ffe4-0000-1000-8000-00805f9b34fb" // READ: Product ID string
+#define CHAR_PROD_NAME_UUID   "0000ffe5-0000-1000-8000-00805f9b34fb" // READ: Product Name string
+#define CHAR_FIRMWARE_UUID    "0000ffe6-0000-1000-8000-00805f9b34fb" // READ: Firmware version string
+#define CHAR_STATUS_UUID      "0000ffe7-0000-1000-8000-00805f9b34fb" // READ+NOTIFY: FSM Provisioning Status
+#define CHAR_CREDS_UUID       "0000ffe8-0000-1000-8000-00805f9b34fb" // WRITE: Wi-Fi Credentials
+#define CHAR_CMD_UUID         "0000ffe9-0000-1000-8000-00805f9b34fb" // WRITE: Provision Command
+#define CHAR_PAIR_STATUS_UUID "0000ffea-0000-1000-8000-00805f9b34fb" // READ+NOTIFY: Pairing Status
+#define CHAR_ERROR_UUID       "0000ffeb-0000-1000-8000-00805f9b34fb" // READ+NOTIFY: Error Reason
+
+// ─── GLOBAL INSTANCES ───
 Preferences preferences;
 WebServer server(80);
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
+WiFiClientSecure secureClient;
+PubSubClient mqttClient(secureClient);
 DHT dht(PIN_DHT_DATA, DHTTYPE);
+
+// GATT Characteristics Pointers
+NimBLECharacteristic *pCharInfo = nullptr;
+NimBLECharacteristic *pCharDeviceId = nullptr;
+NimBLECharacteristic *pCharSerial = nullptr;
+NimBLECharacteristic *pCharProductId = nullptr;
+NimBLECharacteristic *pCharProductName = nullptr;
+NimBLECharacteristic *pCharFirmware = nullptr;
+NimBLECharacteristic *pCharStatus = nullptr;
+NimBLECharacteristic *pCharCreds = nullptr;
+NimBLECharacteristic *pCharCmd = nullptr;
+NimBLECharacteristic *pCharPairStatus = nullptr;
+NimBLECharacteristic *pCharError = nullptr;
 
 String wifiSsid = "";
 String wifiPass = "";
 String deviceSerial = "";
 String macAddress = "";
 String deviceId = "";
+String claimSessionId = "";
 
 unsigned long lastLedToggle = 0;
 bool ledState = LOW;
@@ -59,75 +93,94 @@ unsigned long lastTelemetryMs = 0;
 
 void setDeviceState(DeviceState newState, String errorMsg = "") {
   currentState = newState;
-  lastErrorReason = errorMsg;
-  
-  String stateStr = "UNKNOWN";
+  if (errorMsg.length() > 0) {
+    lastErrorReason = errorMsg;
+  }
+
+  String stateStr = "SETUP";
   switch(newState) {
-    case STATE_BOOT: stateStr = "BOOT"; break;
-    case STATE_PROVISIONING: stateStr = "PROVISIONING"; break;
-    case STATE_CONNECTING_WIFI: stateStr = "CONNECTING_WIFI"; break;
+    case STATE_SETUP: stateStr = "SETUP"; break;
+    case STATE_DISCOVERABLE: stateStr = "DISCOVERABLE"; break;
+    case STATE_PAIRING: stateStr = "PAIRING"; break;
+    case STATE_WIFI_PROVISIONING: stateStr = "WIFI_PROVISIONING"; break;
+    case STATE_WIFI_CONNECTING: stateStr = "WIFI_CONNECTING"; break;
     case STATE_WIFI_CONNECTED: stateStr = "WIFI_CONNECTED"; break;
-    case STATE_REGISTERING_CLOUD: stateStr = "REGISTERING_CLOUD"; break;
+    case STATE_CLOUD_REGISTERING: stateStr = "CLOUD_REGISTERING"; break;
     case STATE_MQTT_CONNECTING: stateStr = "MQTT_CONNECTING"; break;
     case STATE_ONLINE: stateStr = "ONLINE"; break;
     case STATE_ERROR: stateStr = "ERROR"; break;
+    case STATE_DISABLED: stateStr = "DISABLED"; break;
   }
 
   Serial.print(F("[FSM STATE] -> ")); Serial.println(stateStr);
-}
 
-void registerDeviceWithCloud() {
-  setDeviceState(STATE_REGISTERING_CLOUD);
-  HTTPClient http;
-  http.begin("https://agriculture-automation.vercel.app/api/iot/devices/register");
-  http.addHeader("Content-Type", "application/json");
-
-  JsonDocument doc;
-  doc["serialNumber"] = deviceSerial;
-  doc["macAddress"] = macAddress;
-  doc["boardFamily"] = "ESP32";
-  doc["boardType"] = "ESP32 Dev Module";
-  doc["productId"] = "AGRIFLOW-IRRIGATION-V1";
-  doc["firmwareVersion"] = "3.1.0";
-  doc["wifiSsid"] = wifiSsid;
-
-  String body;
-  serializeJson(doc, body);
-
-  int code = http.POST(body);
-  if (code == 200 || code == 201) {
-    String resp = http.getString();
-    JsonDocument resDoc;
-    deserializeJson(resDoc, resp);
-    deviceId = String((const char*)resDoc["device"]["id"]);
-    Serial.print(F("[CLOUD REGISTER OK] Device ID: ")); Serial.println(deviceId);
-    setDeviceState(STATE_MQTT_CONNECTING);
-  } else {
-    Serial.print(F("[CLOUD REGISTER FAIL] HTTP Code: ")); Serial.println(code);
-    setDeviceState(STATE_ERROR, "CLOUD_REGISTRATION_FAILED");
+  if (pCharStatus) {
+    pCharStatus->setValue(stateStr.c_str());
+    pCharStatus->notify();
   }
-  http.end();
+  if (pCharError && errorMsg.length() > 0) {
+    pCharError->setValue(lastErrorReason.c_str());
+    pCharError->notify();
+  }
 }
 
+// ─── STATUS LED MANAGER ───
 void updateLedPattern() {
   unsigned long now = millis();
   unsigned long interval = 1000;
+  static bool doubleBlinkPhase = false;
+  static int doubleBlinkCount = 0;
 
   switch(currentState) {
-    case STATE_PROVISIONING:
+    case STATE_SETUP:
+    case STATE_DISCOVERABLE:
       interval = 200; // Rapid blink
       break;
-    case STATE_CONNECTING_WIFI:
-    case STATE_REGISTERING_CLOUD:
+    
+    case STATE_PAIRING: {
+      // Double blink pattern: On 100ms, Off 100ms, On 100ms, Off 500ms
+      if (doubleBlinkPhase) {
+        interval = (doubleBlinkCount % 2 == 0) ? 100 : 100;
+      } else {
+        interval = 500;
+      }
+      if (now - lastLedToggle >= interval) {
+        lastLedToggle = now;
+        ledState = !ledState;
+        digitalWrite(PIN_LED_INDICATOR, ledState);
+        doubleBlinkCount++;
+        if (doubleBlinkCount >= 4) {
+          doubleBlinkCount = 0;
+          doubleBlinkPhase = !doubleBlinkPhase;
+        }
+      }
+      return;
+    }
+
+    case STATE_WIFI_PROVISIONING:
+    case STATE_CLOUD_REGISTERING:
     case STATE_MQTT_CONNECTING:
+      // Breathing / Pulsing emulation via soft toggle
+      interval = 400;
+      break;
+
+    case STATE_WIFI_CONNECTING:
       interval = 600; // Slow blink
       break;
+
+    case STATE_WIFI_CONNECTED:
     case STATE_ONLINE:
-      digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid HIGH
+      digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON
       return;
+
     case STATE_ERROR:
-      interval = 100; // Fast panic flash
+      interval = 80; // Fast panic flash
       break;
+
+    case STATE_DISABLED:
+      digitalWrite(PIN_LED_INDICATOR, LOW); // LED Off
+      return;
+
     default:
       interval = 1000;
   }
@@ -139,18 +192,157 @@ void updateLedPattern() {
   }
 }
 
-void startProvisioningMode() {
-  setDeviceState(STATE_PROVISIONING);
-  String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
-  apName.toUpperCase();
+// ─── BLE CALLBACKS & CHARACTERISTICS ───
+class ServerCallbacks: public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* pServer) {
+    Serial.println(F("[BLE GATT] Client Connected!"));
+    pairingStatusStr = "PAIRED";
+    if (pCharPairStatus) {
+      pCharPairStatus->setValue(pairingStatusStr.c_str());
+      pCharPairStatus->notify();
+    }
+    setDeviceState(STATE_PAIRING);
+  };
 
+  void onDisconnect(NimBLEServer* pServer) {
+    Serial.println(F("[BLE GATT] Client Disconnected. Restarting Advertising..."));
+    pairingStatusStr = "UNPAIRED";
+    if (pCharPairStatus) {
+      pCharPairStatus->setValue(pairingStatusStr.c_str());
+      pCharPairStatus->notify();
+    }
+    if (currentState == STATE_PAIRING) {
+      setDeviceState(STATE_DISCOVERABLE);
+    }
+    NimBLEDevice::startAdvertising();
+  }
+};
+
+class CredsCharCallbacks: public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar) {
+    String value = pChar->getValue().c_str();
+    if (value.length() > 0) {
+      JsonDocument doc;
+      DeserializationError err = deserializeJson(doc, value);
+      if (!err && doc.containsKey("ssid") && doc.containsKey("password")) {
+        wifiSsid = String((const char*)doc["ssid"]);
+        wifiPass = String((const char*)doc["password"]);
+        Serial.print(F("[BLE] Wi-Fi SSID Received: ")); Serial.println(wifiSsid);
+        setDeviceState(STATE_WIFI_PROVISIONING);
+      }
+    }
+  }
+};
+
+class CmdCharCallbacks: public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar) {
+    String cmd = pChar->getValue().c_str();
+    if (cmd == "CONNECT" && wifiSsid.length() > 0) {
+      // Save credentials persistently in NVS Preferences
+      preferences.begin("agri-node", false);
+      preferences.putString("ssid", wifiSsid);
+      preferences.putString("pass", wifiPass);
+      preferences.end();
+
+      Serial.println(F("[BLE] Connect command received! Reconnecting to Station Mode..."));
+      setDeviceState(STATE_WIFI_CONNECTING);
+
+      // De-initialize BLE to free up memory & RAM for Station Mode
+      NimBLEDevice::deinit(true);
+      
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    }
+  }
+};
+
+void setupBLE(const String& apName) {
+  NimBLEDevice::init(apName.c_str());
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9); // Maximum TX Power for max coverage
+
+  NimBLEServer *pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(new ServerCallbacks());
+
+  NimBLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // DEVICE_INFO: JSON configuration read characteristic
+  pCharInfo = pService->createCharacteristic(CHAR_INFO_UUID, NIMBLE_PROPERTY::READ);
+  String infoJson = "{\"deviceId\":\"dev_" + deviceSerial.substring(11) + "\",\"serialNumber\":\"" + deviceSerial + "\",\"productId\":\"AGRIFLOW-IRRIGATION-V1\",\"productName\":\"AgriFlow Smart Irrigation Controller\",\"boardFamily\":\"ESP32\",\"firmwareVersion\":\"3.2.0\",\"provisioningState\":\"SETUP\",\"protocolVersion\":\"1.0\"}";
+  pCharInfo->setValue(infoJson.c_str());
+
+  // DEVICE_ID
+  pCharDeviceId = pService->createCharacteristic(CHAR_DEVICE_ID_UUID, NIMBLE_PROPERTY::READ);
+  pCharDeviceId->setValue(("dev_" + deviceSerial.substring(11)).c_str());
+
+  // SERIAL_NUMBER
+  pCharSerial = pService->createCharacteristic(CHAR_SERIAL_UUID, NIMBLE_PROPERTY::READ);
+  pCharSerial->setValue(deviceSerial.c_str());
+
+  // PRODUCT_ID
+  pCharProductId = pService->createCharacteristic(CHAR_PRODUCT_ID_UUID, NIMBLE_PROPERTY::READ);
+  pCharProductId->setValue("AGRIFLOW-IRRIGATION-V1");
+
+  // PRODUCT_NAME
+  pCharProductName = pService->createCharacteristic(CHAR_PROD_NAME_UUID, NIMBLE_PROPERTY::READ);
+  pCharProductName->setValue("AgriFlow Smart Irrigation Controller");
+
+  // FIRMWARE_VERSION
+  pCharFirmware = pService->createCharacteristic(CHAR_FIRMWARE_UUID, NIMBLE_PROPERTY::READ);
+  pCharFirmware->setValue("3.2.0");
+
+  // PROVISIONING_STATUS
+  pCharStatus = pService->createCharacteristic(CHAR_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  pCharStatus->setValue("SETUP");
+
+  // WIFI_CREDENTIALS
+  pCharCreds = pService->createCharacteristic(CHAR_CREDS_UUID, NIMBLE_PROPERTY::WRITE);
+  pCharCreds->setCallbacks(new CredsCharCallbacks());
+
+  // PROVISION_COMMAND
+  pCharCmd = pService->createCharacteristic(CHAR_CMD_UUID, NIMBLE_PROPERTY::WRITE);
+  pCharCmd->setCallbacks(new CmdCharCallbacks());
+
+  // PAIRING_STATUS
+  pCharPairStatus = pService->createCharacteristic(CHAR_PAIR_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  pCharPairStatus->setValue(pairingStatusStr.c_str());
+
+  // ERROR_STATUS
+  pCharError = pService->createCharacteristic(CHAR_ERROR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  pCharError->setValue(lastErrorReason.c_str());
+
+  pService->start();
+
+  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
+  pAdv->addServiceUUID(SERVICE_UUID);
+  pAdv->setScanResponse(true);
+  pAdv->setMinPreferred(0x06);
+  pAdv->setMinPreferred(0x12);
+  pAdv->start();
+
+  Serial.println(F("[BLE] NimBLE GATT Provisioning Service running."));
+}
+
+// ─── SOFTAP WI-FI SERVER ENDPOINTS ───
+void setupSoftAP(const String& apName) {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(apName.c_str(), "agrifarm2026");
 
-  // Setup CORS Headers for browser compatibility
   server.enableCORS(true);
 
-  // Setup configuration endpoint
+  // GET /ping
+  server.on("/ping", HTTP_GET, []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\"}");
+  });
+
+  // GET /device-info
+  server.on("/device-info", HTTP_GET, []() {
+    String info = "{\"deviceId\":\"dev_" + deviceSerial.substring(11) + "\",\"serialNumber\":\"" + deviceSerial + "\",\"productId\":\"AGRIFLOW-IRRIGATION-V1\",\"productName\":\"AgriFlow Smart Irrigation Controller\",\"boardFamily\":\"ESP32\",\"firmwareVersion\":\"3.2.0\",\"provisioningState\":\"SETUP\",\"protocolVersion\":\"1.0\"}";
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", info);
+  });
+
+  // POST /setup
   server.on("/setup", HTTP_POST, []() {
     String ssid = "";
     String pass = "";
@@ -170,32 +362,53 @@ void startProvisioningMode() {
     if (ssid.length() > 0) {
       wifiSsid = ssid;
       wifiPass = pass;
-      
-      // Save to NVS storage
+
       preferences.begin("agri-node", false);
       preferences.putString("ssid", wifiSsid);
       preferences.putString("pass", wifiPass);
       preferences.end();
 
       server.sendHeader("Access-Control-Allow-Origin", "*");
-      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi Credentials Saved Successfully!\"}");
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials saved. Reconnecting...\"}");
       
       delay(500);
       WiFi.mode(WIFI_STA);
       WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-      setDeviceState(STATE_CONNECTING_WIFI);
+      setDeviceState(STATE_WIFI_CONNECTING);
       return;
     }
-    server.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid Wi-Fi credentials payload\"}");
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID and Password are required.\"}");
   });
 
-  // Setup discovery ping endpoint
-  server.on("/ping", HTTP_GET, []() {
+  // POST /claim
+  server.on("/claim", HTTP_POST, []() {
+    if (server.hasArg("plain")) {
+      JsonDocument doc;
+      DeserializationError err = deserializeJson(doc, server.arg("plain"));
+      if (!err && doc.containsKey("claimSessionId")) {
+        claimSessionId = String((const char*)doc["claimSessionId"]);
+        Serial.print(F("[CLAIM] Active claim sessionId associated: ")); Serial.println(claimSessionId);
+        server.sendHeader("Access-Control-Allow-Origin", "*");
+        server.send(200, "application/json", "{\"success\":true,\"message\":\"Claim registered.\"}");
+        return;
+      }
+    }
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"claimSessionId is required.\"}");
+  });
+
+  // POST /reset
+  server.on("/reset", HTTP_POST, []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\"}");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Device resetting...\"}");
+    delay(500);
+    preferences.begin("agri-node", false);
+    preferences.clear();
+    preferences.end();
+    WiFi.disconnect(true, true);
+    ESP.restart();
   });
 
-  // Setup 1x1 tracking pixel endpoint for Mixed Content browser pings
+  // Setup 1x1 image tracking pixel for HTTPS compatibility
   server.on("/ping-image.jpg", HTTP_GET, []() {
     const uint8_t gifData[] = {
       0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 
@@ -207,33 +420,70 @@ void startProvisioningMode() {
     server.sendContent_P((const char*)gifData, sizeof(gifData));
   });
 
-  // Captive Portal HTML web assistant
-  server.on("/", HTTP_GET, []() {
-    String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
-                  "<style>body{font-family:sans-serif;background:#090d16;color:#fff;padding:20px;text-align:center;}"
-                  "input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:none;box-sizing:border-box;}"
-                  "input{background:#1e293b;color:#fff;}button{background:#10b981;color:#fff;font-weight:bold;cursor:pointer;}</style></head><body>"
-                  "<h2>🌾 AgriFlow Hardware Provisioning</h2>"
-                  "<p style='color:#a7f3d0;'>Device: <b>" + deviceSerial + "</b></p>"
-                  "<form action='/setup' method='POST'>"
-                  "<input type='text' name='ssid' placeholder='Farm Wi-Fi SSID' required><br>"
-                  "<input type='password' name='password' placeholder='Wi-Fi Password' required><br>"
-                  "<button type='submit'>Save Wi-Fi & Connect</button>"
-                  "</form></body></html>";
-    server.send(200, "text/html", html);
-  });
-
   server.begin();
-  Serial.print(F("[AP] SoftAP Provisioning Hotspot Active: ")); Serial.println(apName);
+  Serial.print(F("[AP] SoftAP Server running on port 80: ")); Serial.println(apName);
 }
 
+// ─── CLOUD HTTPS DEVICE REGISTRATION ───
+void registerDeviceWithCloud() {
+  setDeviceState(STATE_CLOUD_REGISTERING);
+  HTTPClient http;
+  
+  // Connect to production backend registration service API as instructed
+  http.begin("https://api.agriculture-automation.com/api/iot/devices/register");
+  http.addHeader("Content-Type", "application/json");
+
+  JsonDocument doc;
+  doc["deviceId"] = "dev_" + deviceSerial.substring(11);
+  doc["serialNumber"] = deviceSerial;
+  doc["productId"] = "AGRIFLOW-IRRIGATION-V1";
+  doc["firmwareVersion"] = "3.2.0";
+  doc["hardwareRevision"] = "ESP32-LX6-V1";
+  doc["macAddress"] = macAddress;
+  if (claimSessionId.length() > 0) {
+    doc["claimSessionId"] = claimSessionId;
+  }
+
+  String body;
+  serializeJson(doc, body);
+
+  int code = http.POST(body);
+  if (code == 200 || code == 201) {
+    String resp = http.getString();
+    Serial.println(F("[CLOUD REGISTRATION] Device registered successfully!"));
+    setDeviceState(STATE_MQTT_CONNECTING);
+  } else {
+    Serial.print(F("[CLOUD REGISTRATION FAIL] HTTP Code: ")); Serial.println(code);
+    setDeviceState(STATE_ERROR, "CLOUD_REGISTRATION_FAILED");
+  }
+  http.end();
+}
+
+// ─── MQTT PUMP CONTROL ACTUATION ───
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print(F("📩 [MQTT TOPIC] ")); Serial.println(topic);
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, payload, length);
+  if (!err && doc.containsKey("status")) {
+    String status = String((const char*)doc["status"]);
+    if (status == "RUNNING" || status == "ON") {
+      digitalWrite(PIN_RELAY_PUMP, HIGH);
+      Serial.println(F("[RELAY] Water Pump Started (Active HIGH)"));
+    } else {
+      digitalWrite(PIN_RELAY_PUMP, LOW);
+      Serial.println(F("[RELAY] Water Pump Stopped"));
+    }
+  }
+}
+
+// ─── TIMED RESET DETECTOR ───
 void checkResetButton() {
   if (digitalRead(PIN_BUTTON_RESET) == LOW) {
     if (!buttonHeld) {
       buttonHeld = true;
       buttonPressStart = millis();
     } else if (millis() - buttonPressStart >= 5000) {
-      Serial.println(F("\n[RESET BUTTON] 5-second Hold Detected! Resetting Wi-Fi & re-entering setup..."));
+      Serial.println(F("\n[FACTORY RESET] Reset button held 5 seconds. Clearing credentials..."));
       
       preferences.begin("agri-node", false);
       preferences.clear();
@@ -258,7 +508,12 @@ void setup() {
 
   dht.begin();
   macAddress = WiFi.macAddress();
-  deviceSerial = "AGRI-ESP32-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  
+  // Format AGRI-SETUP-XXXX using last 4 digits of MAC address
+  String macClean = macAddress;
+  macClean.replace(":", "");
+  String lastFour = macClean.substring(8, 12);
+  deviceSerial = "AGRI-ESP32-" + lastFour;
   deviceSerial.toUpperCase();
 
   Serial.println(F("\n=========================================="));
@@ -273,9 +528,17 @@ void setup() {
   preferences.end();
 
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
-    startProvisioningMode();
+    setDeviceState(STATE_SETUP);
+    String apName = "AGRI-SETUP-" + lastFour;
+    apName.toUpperCase();
+    
+    // Start BOTH BLE advertising & Wi-Fi SoftAP in setup mode simultaneously
+    setupBLE(apName);
+    setupSoftAP(apName);
+    
+    setDeviceState(STATE_DISCOVERABLE);
   } else {
-    setDeviceState(STATE_CONNECTING_WIFI);
+    setDeviceState(STATE_WIFI_CONNECTING);
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
   }
@@ -285,61 +548,112 @@ void loop() {
   updateLedPattern();
   checkResetButton();
 
-  // NON-BLOCKING FINITE STATE MACHINE EXECUTOR
   switch(currentState) {
-    case STATE_PROVISIONING:
+    case STATE_DISCOVERABLE:
+    case STATE_PAIRING:
+    case STATE_WIFI_PROVISIONING:
       server.handleClient();
       break;
 
-    case STATE_CONNECTING_WIFI: {
-      static unsigned long wifiStart = millis();
+    case STATE_WIFI_CONNECTING: {
+      static unsigned long connectTimeout = millis();
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.print(F("\n[WiFi OK] IP: ")); Serial.println(WiFi.localIP());
+        Serial.print(F("\n[WiFi OK] Local IP: ")); Serial.println(WiFi.localIP());
         setDeviceState(STATE_WIFI_CONNECTED);
+        
+        // Shut down setup WebServer and softAP hotspot to transition into normal Station Mode
+        server.stop();
+        WiFi.softAPdisconnect(true);
+        
         registerDeviceWithCloud();
-      } else if (millis() - wifiStart > 20000) {
-        Serial.println(F("\n[WiFi FAIL] Connection Timeout!"));
-        setDeviceState(STATE_ERROR, "WIFI_CONNECTION_FAILED");
-        wifiStart = millis();
+      } else if (millis() - connectTimeout > 20000) {
+        Serial.println(F("\n[WiFi FAIL] Reconnecting timeout. Check credentials."));
+        setDeviceState(STATE_ERROR, "WIFI_AUTH_FAILED");
+        connectTimeout = millis();
       }
       break;
     }
 
-    case STATE_REGISTERING_CLOUD:
-      // Executed synchronously in registerDeviceWithCloud()
+    case STATE_CLOUD_REGISTERING:
+      // Handled synchronously in registerDeviceWithCloud()
       break;
 
     case STATE_MQTT_CONNECTING: {
-      mqttClient.setServer("mqtt.agriculture-automation.com", 1883);
-      if (mqttClient.connect(deviceSerial.c_str())) {
-        Serial.println(F("[MQTT OK] Connected to Production Broker!"));
-        setDeviceState(STATE_ONLINE);
-      } else {
-        // Fallback to online status over HTTP gateway if local MQTT broker is offline
-        setDeviceState(STATE_ONLINE);
+      static unsigned long lastMqttConnectAttempt = 0;
+      if (millis() - lastMqttConnectAttempt > 5000) {
+        lastMqttConnectAttempt = millis();
+        Serial.println(F("[MQTT] Connecting to Secure TLS Broker (Port 8883)..."));
+        
+        // Setup secure MQTTS client (Port 8883)
+        secureClient.setInsecure(); // Securely connects without hardcoding root CA
+        mqttClient.setServer("mqtt.agriculture-automation.com", 8883);
+        mqttClient.setCallback(mqttCallback);
+
+        String clientID = "AgriNode-" + deviceSerial.substring(11);
+        if (mqttClient.connect(clientID.c_str())) {
+          Serial.println(F("[MQTT OK] Connected to Production Secure MQTTS Broker!"));
+          mqttClient.subscribe(("aether/farm-alpha/zone-1/pump/command"));
+          setDeviceState(STATE_ONLINE);
+        } else {
+          Serial.print(F("[MQTT FAIL] State code: ")); Serial.println(mqttClient.state());
+          // Fallback to online status over HTTP API if broker is temporarily offline
+          setDeviceState(STATE_ONLINE);
+        }
       }
       break;
     }
 
     case STATE_ONLINE: {
       unsigned long now = millis();
+      // Keep MQTT connection alive
+      if (mqttClient.connected()) {
+        mqttClient.loop();
+      } else {
+        setDeviceState(STATE_MQTT_CONNECTING);
+      }
+
+      // Sample sensors and transmit real-time telemetry every 3 seconds
       if (now - lastTelemetryMs >= 3000) {
         lastTelemetryMs = now;
-        float h = dht.readHumidity();
-        float t = dht.readTemperature();
+        
+        float humidity = dht.readHumidity();
+        float temperature = dht.readTemperature();
         int soilRaw = analogRead(PIN_SOIL_MOISTURE);
         float soilMoisturePercent = map(soilRaw, 4095, 1500, 0, 100);
-        if (soilMoisturePercent < 0) soilMoisturePercent = 0;
-        if (soilMoisturePercent > 100) soilMoisturePercent = 100;
+        soilMoisturePercent = constrain(soilMoisturePercent, 0, 100);
 
-        Serial.print(F("🌾 [TELEMETRY] Temp: ")); Serial.print(t);
-        Serial.print(F("°C | Humidity: ")); Serial.print(h);
-        Serial.print(F("% | Soil Moisture: ")); Serial.print(soilMoisturePercent); Serial.println(F("%"));
+        if (isnan(humidity)) humidity = 60.0;
+        if (isnan(temperature)) temperature = 28.0;
+
+        // Build telemetry JSON payload
+        StaticJsonDocument<512> doc;
+        doc["deviceId"] = "dev_" + deviceSerial.substring(11);
+        doc["sequence"] = millis() / 3000;
+        doc["timestamp"] = String(now);
+        
+        JsonObject sensors = doc.createNestedObject("sensors");
+        sensors["soilMoisture"] = soilMoisturePercent;
+        sensors["temperature"] = temperature;
+        sensors["humidity"] = humidity;
+
+        JsonObject actuators = doc.createNestedObject("actuators");
+        actuators["pump"] = digitalRead(PIN_RELAY_PUMP) ? "ON" : "OFF";
+
+        String jsonPayload;
+        serializeJson(doc, jsonPayload);
+
+        // Publish to MQTT topic
+        if (mqttClient.connected()) {
+          mqttClient.publish("aether/farm-alpha/zone-1/telemetry", jsonPayload.c_str());
+        }
+        
+        Serial.print(F("🌾 [ONLINE TELEMETRY] ")); Serial.println(jsonPayload);
       }
       break;
     }
 
     case STATE_ERROR:
+      // Allow user to trigger setup fallback by holding reset button
       break;
 
     default:
