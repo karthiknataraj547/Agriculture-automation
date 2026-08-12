@@ -3,29 +3,20 @@ $csharpCode = @"
 using System;
 using System.Diagnostics;
 using System.Windows.Forms;
-using System.Drawing;
 
-namespace AgriFlowDesktop {
+namespace AgriFlowLauncher {
     public class Program {
         [STAThread]
         public static void Main() {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-
-            Form form = new Form();
-            form.Text = "AgriFlow Smart Agriculture Native App (Windows 11)";
-            form.Width = 1300;
-            form.Height = 850;
-            form.StartPosition = FormStartPosition.CenterScreen;
-            form.BackColor = Color.FromArgb(9, 13, 22);
-
-            WebBrowser browser = new WebBrowser();
-            browser.Dock = DockStyle.Fill;
-            browser.ScriptErrorsSuppressed = true;
-            browser.Navigate("https://agriculture-automation.vercel.app");
-
-            form.Controls.Add(browser);
-            Application.Run(form);
+            try {
+                ProcessStartInfo startInfo = new ProcessStartInfo();
+                startInfo.FileName = "msedge.exe";
+                startInfo.Arguments = "--app=https://agriculture-automation.vercel.app --enable-features=WebBluetooth";
+                startInfo.UseShellExecute = true;
+                Process.Start(startInfo);
+            } catch (Exception ex) {
+                MessageBox.Show("Failed to launch AgriFlow Native App: " + ex.Message, "AgriFlow Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
     }
 }
@@ -36,6 +27,6 @@ if (!(Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force }
 
 $exePath = Join-Path $outDir "AgriFlow-Setup.exe"
 
-Add-Type -TypeDefinition $csharpCode -OutputAssembly $exePath -OutputType ConsoleApplication -ReferencedAssemblies "System.Windows.Forms", "System.Drawing"
+Add-Type -TypeDefinition $csharpCode -OutputAssembly $exePath -OutputType WindowsApplication -ReferencedAssemblies "System.Windows.Forms"
 
 Write-Host "✅ Real Windows 11 Native Executable generated at: $exePath"
