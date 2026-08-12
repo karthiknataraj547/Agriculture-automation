@@ -125,6 +125,20 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  // Live connection diagnostics log
+  const [diagLogs, setDiagLogs] = useState<{step: string; status: 'pending' | 'ok' | 'fail'; detail: string}[]>([]);
+  const addDiagLog = (step: string, status: 'pending' | 'ok' | 'fail', detail: string) => {
+    setDiagLogs((prev) => {
+      const existing = prev.findIndex((l) => l.step === step);
+      if (existing >= 0) {
+        const updated = [...prev];
+        updated[existing] = { step, status, detail };
+        return updated;
+      }
+      return [...prev, { step, status, detail }];
+    });
+  };
+
   const isBluetoothSupported = typeof window !== 'undefined' && !!(navigator as any).bluetooth;
 
   // Auto-scan on mount (exactly like Wipro Smart app)
@@ -153,15 +167,21 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const runAutoDiscovery = async () => {
     setIsScanning(true);
     setScanError(null);
+    setDiagLogs([]);
 
-    // 1. Probe SoftAP via local proxy (port 4001) — this bypasses HTTPS Mixed Content blocks
+    // Step 1: Check if local proxy daemon is running
+    addDiagLog('proxy', 'pending', 'Checking local proxy daemon (localhost:4001)...');
+    let proxyAlive = false;
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-      const pingRes = await fetch('http://localhost:4001/ping', { signal: controller.signal });
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      // Just try to connect — even a 502 means the proxy is running
+      const proxyRes = await fetch('http://localhost:4001/ping', { signal: controller.signal });
       clearTimeout(timeoutId);
-      if (pingRes.ok) {
-        const pingData = await pingRes.json();
+      proxyAlive = true;
+      if (proxyRes.ok) {
+        addDiagLog('proxy', 'ok', 'Proxy running & ESP32 reachable!');
+        const pingData = await proxyRes.json();
         const apNode = {
           serialNumber: pingData.serial || 'AGRI-SETUP-HOTSPOT',
           macAddress: pingData.mac || 'CC:50:E3:8A:12:34',
@@ -171,22 +191,33 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           isSoftAP: true,
           productName: selectedProduct.customerProductName || 'AgriFlow Smart Irrigation Controller'
         };
+        addDiagLog('esp32', 'ok', `Found ${apNode.serialNumber} (${apNode.macAddress})`);
         setDiscoveredDevices([apNode]);
         setSelectedDevice(apNode);
         setIsScanning(false);
         return;
+      } else {
+        // Proxy running but ESP32 not reachable (502)
+        addDiagLog('proxy', 'ok', 'Proxy daemon is running.');
+        addDiagLog('esp32', 'fail', 'ESP32 not reachable. Is your PC connected to the AGRI-SETUP-XXXX hotspot?');
       }
-    } catch (e) {
-      console.log('[Local proxy SoftAP probe failed]', e);
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        addDiagLog('proxy', 'fail', 'Proxy daemon timed out. Run: python scripts/esp_hardware_discovery_daemon.py');
+      } else {
+        addDiagLog('proxy', 'fail', 'Proxy daemon not running. Run: python scripts/esp_hardware_discovery_daemon.py');
+      }
     }
 
-    // 2. Direct SoftAP probe (only works when NOT on HTTPS — e.g. localhost dev server)
+    // Step 2: Direct SoftAP probe (only works on HTTP, not HTTPS)
+    addDiagLog('direct', 'pending', 'Trying direct connection to 192.168.4.1...');
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1500);
       const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
       clearTimeout(timeoutId);
       if (pingRes.ok) {
+        addDiagLog('direct', 'ok', 'Direct SoftAP connection successful!');
         const pingData = await pingRes.json();
         const apNode = {
           serialNumber: pingData.serial || 'AGRI-SETUP-HOTSPOT',
@@ -202,15 +233,19 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         setIsScanning(false);
         return;
       }
-    } catch (e) {}
+    } catch (e) {
+      addDiagLog('direct', 'fail', 'Blocked (Mixed Content on HTTPS) — use proxy instead.');
+    }
 
-    // 3. Fallback Cloud Discovery Daemon Probe
+    // Step 3: Cloud Discovery API
+    addDiagLog('cloud', 'pending', 'Checking cloud discovery API...');
     try {
       const res = await fetch('/api/iot/discovery');
       const data = await res.json();
       if (data.nodes && data.nodes.length > 0) {
         const matchingNodes = data.nodes.filter((n: any) => n.status !== 'FAKE');
         if (matchingNodes.length > 0) {
+          addDiagLog('cloud', 'ok', `Found ${matchingNodes.length} device(s) via cloud.`);
           const matched = matchingNodes.map((n: any) => ({
             ...n,
             productName: n.boardFamily === 'ESP32' ? 'AgriFlow Smart Irrigation Controller' : 'AgriSense Soil & Climate Monitor'
@@ -221,7 +256,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           return;
         }
       }
-    } catch (e) {}
+      addDiagLog('cloud', 'fail', 'No real hardware nodes found in cloud discovery.');
+    } catch (e) {
+      addDiagLog('cloud', 'fail', 'Cloud discovery API unreachable.');
+    }
 
     setIsScanning(false);
   };
@@ -621,30 +659,54 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 ))
               ) : (
                 <div className="text-center py-4 space-y-4">
-                  <div className="text-xs text-slate-400">Searching for wireless hardware...</div>
+                  <div className="text-xs text-slate-400">{isScanning ? 'Scanning for hardware...' : 'No hardware found.'}</div>
                   
-                  {/* Troubleshooting Guide */}
+                  {/* LIVE CONNECTION DIAGNOSTICS LOG */}
+                  {diagLogs.length > 0 && (
+                    <div className="text-left bg-slate-950/80 p-3.5 rounded-xl border border-slate-700 space-y-1.5 font-mono">
+                      <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider mb-2">Connection Diagnostics</div>
+                      {diagLogs.map((log, i) => (
+                        <div key={i} className="flex items-start gap-2 text-[11px]">
+                          <span className="mt-0.5 shrink-0">
+                            {log.status === 'pending' && <span className="inline-block w-3 h-3 rounded-full bg-yellow-500/80 animate-pulse" />}
+                            {log.status === 'ok' && <span className="inline-block w-3 h-3 rounded-full bg-emerald-500" />}
+                            {log.status === 'fail' && <span className="inline-block w-3 h-3 rounded-full bg-red-500" />}
+                          </span>
+                          <span className={log.status === 'ok' ? 'text-emerald-300' : log.status === 'fail' ? 'text-red-300' : 'text-yellow-300'}>
+                            {log.detail}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Setup Instructions */}
                   <div className="text-left bg-slate-900/60 p-3.5 rounded-xl border border-slate-800 space-y-2 text-[11px] text-slate-300">
-                    <div className="font-bold text-slate-200">Device Discovery Tips:</div>
-                    <ul className="list-disc pl-4 space-y-1 text-slate-400">
-                      <li>Verify your physical board is powered on.</li>
-                      <li>Check status LED: It should **blink rapidly** (200ms).</li>
-                      <li>If the LED is solid or off, **hold the Boot/Flash button on the board for 5 seconds** until the LED flashes to enter Setup Mode.</li>
-                      <li>If connecting via Wi-Fi, **connect your computer/phone to the AGRI-SETUP-XXXX hotspot (Password: agrifarm2026)** to scan and provision it.</li>
-                      <li>Ensure your computer/phone's wireless systems (Wi-Fi & Bluetooth) are enabled.</li>
-                    </ul>
+                    <div className="font-bold text-amber-300">⚡ Setup Checklist:</div>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-slate-400">
+                      <li><strong className="text-white">Power on</strong> your ESP32 board. LED should blink rapidly.</li>
+                      <li>On your PC, open a terminal and run: <code className="bg-slate-800 px-1.5 py-0.5 rounded text-cyan-300">python scripts/esp_hardware_discovery_daemon.py</code></li>
+                      <li><strong className="text-white">Connect your PC's Wi-Fi</strong> to the <code className="bg-slate-800 px-1.5 py-0.5 rounded text-cyan-300">AGRI-SETUP-XXXX</code> hotspot (Password: <code className="text-cyan-300">agrifarm2026</code>)</li>
+                      <li>Click <strong className="text-white">Re-Scan</strong> below.</li>
+                    </ol>
                   </div>
 
-                  <div className="pt-1">
+                  <div className="flex items-center justify-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={runAutoDiscovery}
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg transition-all flex items-center gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} />
+                      <span>Re-Scan</span>
+                    </button>
                     <button
                       type="button"
                       onClick={handleExplicitBleScan}
-                      className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center justify-center gap-2.5 mx-auto"
+                      className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center gap-2"
                     >
-                      <Bluetooth className="w-4 h-4 text-purple-200" />
-                      <span className="text-purple-400 font-normal">|</span>
-                      <Wifi className="w-4 h-4 text-indigo-200" />
-                      <span>Scan BLE & Wi-Fi Devices</span>
+                      <Bluetooth className="w-4 h-4" />
+                      <span>Scan via Bluetooth</span>
                     </button>
                   </div>
                 </div>
