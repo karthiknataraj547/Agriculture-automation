@@ -1,13 +1,14 @@
 /*
- * Commercial Smart Agriculture Node Firmware (Non-Blocking FSM + Espressif WiFiProv SoftAP + Telemetry)
+ * Commercial Smart Agriculture Node Firmware (Non-Blocking FSM + SoftAP Provisioning + Preferences NVS + Telemetry)
  * Product: AgriFlow Smart Irrigation Controller
  * Internal SKU: AGRIFLOW-IRRIGATION-V1
  * Microcontroller: ESP32 (Xtensa LX6 ESP32)
- * Version: v3.0.0 (Master Production Firmware)
+ * Version: v3.1.0 (Master Production Firmware)
  */
 
 #include <WiFi.h>
-#include <WiFiProv.h>
+#include <WebServer.h>
+#include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
@@ -38,6 +39,8 @@ DeviceState currentState = STATE_BOOT;
 String lastErrorReason = "";
 
 // ─── GLOBAL OBJECTS ───
+Preferences preferences;
+WebServer server(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 DHT dht(PIN_DHT_DATA, DHTTYPE);
@@ -85,7 +88,7 @@ void registerDeviceWithCloud() {
   doc["boardFamily"] = "ESP32";
   doc["boardType"] = "ESP32 Dev Module";
   doc["productId"] = "AGRIFLOW-IRRIGATION-V1";
-  doc["firmwareVersion"] = "3.0.0";
+  doc["firmwareVersion"] = "3.1.0";
   doc["wifiSsid"] = wifiSsid;
 
   String body;
@@ -136,56 +139,67 @@ void updateLedPattern() {
   }
 }
 
-// System Event Handler for WiFiProv callbacks
-void SysProvEvent(arduino_event_t *sys_event) {
-  switch (sys_event->event_id) {
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      Serial.print(F("\n[WiFiProv OK] Got IP: "));
-      Serial.println(IPAddress(sys_event->event_info.got_ip.ip_info.ip.addr));
-      setDeviceState(STATE_WIFI_CONNECTED);
-      registerDeviceWithCloud();
-      break;
-    case ARDUINO_EVENT_PROV_START:
-      Serial.println(F("[WiFiProv] Provisioning Started"));
-      break;
-    case ARDUINO_EVENT_PROV_CRED_RECV:
-      Serial.println(F("[WiFiProv] Wi-Fi Credentials Received over SoftAP"));
-      wifiSsid = String((const char*)sys_event->event_info.prov_cred_recv.ssid);
-      wifiPass = String((const char*)sys_event->event_info.prov_cred_recv.password);
-      setDeviceState(STATE_CONNECTING_WIFI);
-      break;
-    case ARDUINO_EVENT_PROV_CRED_FAIL:
-      Serial.println(F("[WiFiProv] Connection Failed: Invalid Credentials"));
-      setDeviceState(STATE_ERROR, "WIFI_CREDENTIAL_FAILED");
-      break;
-    case ARDUINO_EVENT_PROV_END:
-      Serial.println(F("[WiFiProv] Provisioning Ended"));
-      break;
-    default:
-      break;
-  }
-}
-
 void startProvisioningMode() {
   setDeviceState(STATE_PROVISIONING);
   String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
   apName.toUpperCase();
 
-  WiFi.onEvent(SysProvEvent);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(apName.c_str(), "agrifarm2026");
 
-  // Start software Access Point (SoftAP) for provisioning mode
-  // Scheme: WIFI_PROV_SCHEME_SOFTAP
-  // Scheme handler: WIFI_PROV_SCHEME_HANDLER_NONE
-  // Security: WIFI_PROV_SECURITY_0 (Open Network for easiest browser config transmission)
-  WiFiProv.beginProvision(
-    WIFI_PROV_SCHEME_SOFTAP, 
-    WIFI_PROV_SCHEME_HANDLER_NONE, 
-    WIFI_PROV_SECURITY_0, 
-    nullptr, 
-    apName.c_str()
-  );
+  // Setup CORS Headers for browser compatibility
+  server.enableCORS(true);
 
-  Serial.print(F("[AP] SoftAP Provisioning Hotspot Started: ")); Serial.println(apName);
+  // Setup configuration endpoint
+  server.on("/setup", HTTP_POST, []() {
+    if (server.hasArg("plain")) {
+      JsonDocument doc;
+      DeserializationError err = deserializeJson(doc, server.arg("plain"));
+      if (!err && doc.containsKey("ssid") && doc.containsKey("password")) {
+        wifiSsid = String((const char*)doc["ssid"]);
+        wifiPass = String((const char*)doc["password"]);
+        
+        // Save to ESP32 Preferences (NVS storage)
+        preferences.begin("agri-node", false);
+        preferences.putString("ssid", wifiSsid);
+        preferences.putString("pass", wifiPass);
+        preferences.end();
+
+        server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi Credentials Saved Successfully!\"}");
+        
+        // Connect to the configured Wi-Fi network
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+        setDeviceState(STATE_CONNECTING_WIFI);
+        return;
+      }
+    }
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid Wi-Fi credentials payload\"}");
+  });
+
+  // Setup discovery ping endpoint
+  server.on("/ping", HTTP_GET, []() {
+    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\"}");
+  });
+
+  // Captive Portal HTML web assistant
+  server.on("/", HTTP_GET, []() {
+    String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
+                  "<style>body{font-family:sans-serif;background:#090d16;color:#fff;padding:20px;text-align:center;}"
+                  "input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:none;box-sizing:border-box;}"
+                  "input{background:#1e293b;color:#fff;}button{background:#10b981;color:#fff;font-weight:bold;cursor:pointer;}</style></head><body>"
+                  "<h2>🌾 AgriFlow Hardware Provisioning</h2>"
+                  "<p style='color:#a7f3d0;'>Device: <b>" + deviceSerial + "</b></p>"
+                  "<form action='/setup' method='POST'>"
+                  "<input type='text' name='ssid' placeholder='Farm Wi-Fi SSID' required><br>"
+                  "<input type='password' name='password' placeholder='Wi-Fi Password' required><br>"
+                  "<button type='submit'>Save Wi-Fi & Connect</button>"
+                  "</form></body></html>";
+    server.send(200, "text/html", html);
+  });
+
+  server.begin();
+  Serial.print(F("[AP] SoftAP Provisioning Hotspot Active: ")); Serial.println(apName);
 }
 
 void checkResetButton() {
@@ -196,9 +210,11 @@ void checkResetButton() {
     } else if (millis() - buttonPressStart >= 5000) {
       Serial.println(F("\n[RESET BUTTON] 5-second Hold Detected! Resetting Wi-Fi & re-entering setup..."));
       
-      // Reset Wi-Fi configuration saved in NVS memory
-      WiFi.disconnect(true, true);
+      preferences.begin("agri-node", false);
+      preferences.clear();
+      preferences.end();
       
+      WiFi.disconnect(true, true);
       digitalWrite(PIN_LED_INDICATOR, LOW);
       delay(500);
       ESP.restart();
@@ -226,17 +242,17 @@ void setup() {
   Serial.print(F(" MAC Address:   ")); Serial.println(macAddress);
   Serial.println(F("=========================================="));
 
-  bool provisioned = false;
-  WiFiProv.isProvisioned(&provisioned);
+  preferences.begin("agri-node", false);
+  wifiSsid = preferences.getString("ssid", "");
+  wifiPass = preferences.getString("pass", "");
+  preferences.end();
 
-  if (provisioned) {
-    Serial.println(F("[WiFiProv] Stored credentials found. Connecting to Wi-Fi..."));
-    WiFi.onEvent(SysProvEvent);
-    WiFiProv.connectToSavedWifi();
-    setDeviceState(STATE_CONNECTING_WIFI);
-  } else {
-    Serial.println(F("[WiFiProv] No credentials found. Launching SoftAP Setup..."));
+  if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
     startProvisioningMode();
+  } else {
+    setDeviceState(STATE_CONNECTING_WIFI);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
   }
 }
 
@@ -247,13 +263,15 @@ void loop() {
   // NON-BLOCKING FINITE STATE MACHINE EXECUTOR
   switch(currentState) {
     case STATE_PROVISIONING:
-      // WiFiProv library handles incoming client connections internally
+      server.handleClient();
       break;
 
     case STATE_CONNECTING_WIFI: {
       static unsigned long wifiStart = millis();
       if (WiFi.status() == WL_CONNECTED) {
-        // Already handled by got_ip event callback
+        Serial.print(F("\n[WiFi OK] IP: ")); Serial.println(WiFi.localIP());
+        setDeviceState(STATE_WIFI_CONNECTED);
+        registerDeviceWithCloud();
       } else if (millis() - wifiStart > 20000) {
         Serial.println(F("\n[WiFi FAIL] Connection Timeout!"));
         setDeviceState(STATE_ERROR, "WIFI_CONNECTION_FAILED");

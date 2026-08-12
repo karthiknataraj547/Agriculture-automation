@@ -537,11 +537,22 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                 {discoveredNodes.length === 0 ? (
-                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-1">
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-3">
                     <div className="font-bold text-slate-300">No Nearby Hardware Discovered</div>
                     <p className="text-[11px] leading-relaxed">
-                      Power on your physical board, ensure its LED is blinking rapidly, then click <strong className="text-purple-300">"Scan Nearby Hardware"</strong> above!
+                      Power on your physical board, connect your laptop/phone Wi-Fi to network <strong className="text-white">AGRI-SETUP-XXXX</strong> (Password: <span className="font-mono text-purple-300 font-bold">agrifarm2026</span>), then click scan or open the portal below.
                     </p>
+                    <div className="pt-1">
+                      <a
+                        href="http://192.168.4.1"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white transition-all text-[11px] font-bold"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Open Local Hotspot Portal (192.168.4.1)</span>
+                      </a>
+                    </div>
                   </div>
                 ) : (
                   discoveredNodes.map((node) => {
