@@ -96,9 +96,16 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           setIsLoadingSsids(false);
         })
         .catch((err) => {
-          console.warn('[WiFi scan endpoint offline or blocked]', err);
+          console.warn('[WiFi scan endpoint offline or blocked, checking discovery cache]', err);
+          if (selectedDevice?.wifiNetworks && Array.isArray(selectedDevice.wifiNetworks) && selectedDevice.wifiNetworks.length > 0) {
+            const ssids = selectedDevice.wifiNetworks.map((n: any) => typeof n === 'string' ? n : n.ssid).filter(Boolean);
+            setScannedSsids(Array.from(new Set(ssids)));
+            setWifiSsid(ssids[0]);
+            setIsManualSsid(false);
+          } else {
+            setIsManualSsid(true);
+          }
           setIsLoadingSsids(false);
-          setIsManualSsid(true);
         });
     }
   }, [step, selectedDevice]);

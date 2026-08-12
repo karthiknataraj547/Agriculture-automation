@@ -72,13 +72,13 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { macAddress, serialNumber, boardFamily, boardType, ipAddress, rssi } = body;
+    const { macAddress, serialNumber, boardFamily, boardType, ipAddress, rssi, wifiNetworks } = body;
 
     const targetFamily = boardFamily || 'ESP32';
     const targetMac = macAddress || `CC:50:E3:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`;
     const targetSerial = serialNumber || `AGRI-${targetFamily}-${targetMac.replace(/[^A-Z0-9]/g, '').slice(-6)}`;
 
-    const node: DiscoveredNode = {
+    const node: DiscoveredNode & { wifiNetworks?: any[] } = {
       macAddress: targetMac,
       serialNumber: targetSerial,
       boardFamily: targetFamily,
@@ -86,9 +86,10 @@ export async function POST(req: Request) {
       ipAddress: ipAddress || '192.168.1.120',
       rssi: rssi || -52,
       lastPing: new Date().toISOString(),
+      wifiNetworks: wifiNetworks || [],
     };
 
-    await saveDiscoveryNode(node);
+    await saveDiscoveryNode(node as any);
     return NextResponse.json({
       success: true,
       message: `Physical hardware ping registered for ${node.serialNumber}`,

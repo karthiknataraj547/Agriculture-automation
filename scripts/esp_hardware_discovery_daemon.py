@@ -18,14 +18,15 @@ if hasattr(sys.stdout, 'reconfigure'):
 VERCEL_DISCOVERY_URL = "https://agriculture-automation.vercel.app/api/iot/discovery"
 LOCAL_DISCOVERY_URL = "http://localhost:3000/api/iot/discovery"
 
-def register_discovered_node(mac_address, serial_number, board_family="ESP32", board_type="ESP32 Dev Module", rssi=-45):
+def register_discovered_node(mac_address, serial_number, board_family="ESP32", board_type="ESP32 Dev Module", rssi=-45, wifi_networks=None):
     payload = {
         "macAddress": mac_address,
         "serialNumber": serial_number,
         "boardFamily": board_family,
         "boardType": board_type,
         "rssi": rssi,
-        "status": "DISCOVERED_PHYSICAL_HARDWARE"
+        "status": "DISCOVERED_PHYSICAL_HARDWARE",
+        "wifiNetworks": wifi_networks or []
     }
 
     data = json.dumps(payload).encode("utf-8")
@@ -66,7 +67,20 @@ def probe_softap_direct():
                 serial = data.get("serial", "AGRI-ESP32-PROV")
                 mac = data.get("mac", "CC:50:E3:8A:12:34")
                 print(f"[SOFTAP DISCOVERED] Found active ESP32 board on 192.168.4.1 -> Serial: {serial}")
-                register_discovered_node(mac, serial, "ESP32", "Direct ESP32 SoftAP", -38)
+                
+                # Fetch wifi-scan list
+                wifi_networks = []
+                try:
+                    req_scan = urllib.request.Request("http://192.168.4.1/wifi-scan", headers={"User-Agent": "AgriFlow-Probe/1.0"})
+                    with urllib.request.urlopen(req_scan, timeout=3) as resp_scan:
+                        if resp_scan.status == 200:
+                            scan_data = json.loads(resp_scan.read().decode("utf-8"))
+                            if isinstance(scan_data, list):
+                                wifi_networks = scan_data
+                except Exception as ex:
+                    print(f"[SOFTAP SCAN WARNING] Could not fetch wifi-scan: {ex}")
+                
+                register_discovered_node(mac, serial, "ESP32", "Direct ESP32 SoftAP", -38, wifi_networks)
                 return True
     except Exception:
         pass
