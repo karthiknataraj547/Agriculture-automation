@@ -80,7 +80,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       setScannedSsids([]);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      fetch('http://192.168.4.1/wifi-scan', { signal: controller.signal })
+      
+      // Try local python proxy on port 4001 first to bypass secure HTTPS mixed-content blocks
+      fetch('http://localhost:4001/wifi-scan', { signal: controller.signal })
+        .catch(() => fetch('http://192.168.4.1/wifi-scan', { signal: controller.signal }))
         .then((r) => r.json())
         .then((data) => {
           if (Array.isArray(data)) {
@@ -305,17 +308,31 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     // 2. Transmit via SoftAP
     if (selectedDevice?.isSoftAP) {
       try {
-        // Send via URL query parameters in direct fetch (highly robust bypass for JSON parser CORS issues on ESP web server)
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        await fetch(
-          `http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
-          {
-            method: 'POST',
-            mode: 'cors',
-            signal: controller.signal
-          }
-        );
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        // Try local proxy first (port 4001) to bypass secure HTTPS mixed-content blocks
+        try {
+          await fetch(
+            `http://localhost:4001/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
+            {
+              method: 'POST',
+              mode: 'cors',
+              signal: controller.signal
+            }
+          );
+        } catch {
+          // Fall back to direct microcontroller endpoint
+          await fetch(
+            `http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
+            {
+              method: 'POST',
+              mode: 'cors',
+              signal: controller.signal
+            }
+          );
+        }
+        
         clearTimeout(timeoutId);
         console.log('[SoftAP fetch transmit ok]');
       } catch (e) {
@@ -402,9 +419,16 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         try {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 1200);
-          const statusRes = await fetch('http://192.168.4.1/status', { signal: controller.signal });
+          
+          let statusRes;
+          try {
+            statusRes = await fetch('http://localhost:4001/status', { signal: controller.signal });
+          } catch {
+            statusRes = await fetch('http://192.168.4.1/status', { signal: controller.signal });
+          }
+          
           clearTimeout(timeoutId);
-          if (statusRes.ok) {
+          if (statusRes && statusRes.ok) {
             const data = await statusRes.json();
             currentDeviceState = data.status || 'WIFI_CONNECTING';
             errorReason = data.error || 'NONE';

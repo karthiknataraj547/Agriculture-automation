@@ -10,6 +10,9 @@ import time
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -106,7 +109,64 @@ def scan_usb_serial_ports():
         return esp_found
     except ImportError:
         pass
-    return False
+class LocalDiscoveryProxyHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass # Suppress standard access logging to keep console clean
+
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
+
+    def do_GET(self):
+        self.handle_request('GET')
+
+    def do_POST(self):
+        self.handle_request('POST')
+
+    def handle_request(self, method):
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+        query = parsed_url.query
+
+        # Target ESP8266/ESP32 board url
+        target_url = f"http://192.168.4.1{path}"
+        if query:
+            target_url += f"?{query}"
+
+        try:
+            req = urllib.request.Request(
+                target_url,
+                method=method,
+                headers={"User-Agent": "AgriFlow-LocalProxy/1.0"}
+            )
+            # Read post body if present
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length) if content_length > 0 else None
+            
+            with urllib.request.urlopen(req, data=post_data, timeout=3) as resp:
+                self.send_response(resp.status)
+                self.send_header('Content-Type', resp.headers.get('Content-Type', 'application/json'))
+                self.end_headers()
+                self.wfile.write(resp.read())
+        except Exception as e:
+            self.send_response(502)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": False, "message": f"Proxy failed: {e}"}).encode('utf-8'))
+
+def start_local_proxy_server():
+    try:
+        server = HTTPServer(('127.0.0.1', 4001), LocalDiscoveryProxyHandler)
+        print("[LOCAL PROXY SERVER] Running on http://127.0.0.1:4001 (Mixed Content Proxy Bypass)")
+        server.serve_forever()
+    except Exception as e:
+        print(f"[LOCAL PROXY SERVER ERROR] Could not start: {e}")
 
 def main():
     print("\n=======================================================")
@@ -116,6 +176,10 @@ def main():
     print("1. Scanning local USB COM Ports")
     print("2. Probing Wi-Fi SoftAP HTTP at 192.168.4.1/ping")
     print("3. Registering discovered hardware to Cloud Web Tool\n")
+
+    # Start localhost proxy server to bypass secure HTTPS mixed-content blocks
+    proxy_thread = threading.Thread(target=start_local_proxy_server, daemon=True)
+    proxy_thread.start()
 
     iteration = 0
     while True:
