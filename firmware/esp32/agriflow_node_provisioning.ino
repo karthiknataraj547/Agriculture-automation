@@ -314,6 +314,17 @@ void setupBLE(const String& apName) {
 
   NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
   pAdv->addServiceUUID(SERVICE_UUID);
+
+  NimBLEAdvertisementData advData;
+  advData.setFlags(ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SUPPORT);
+  advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+  advData.setName(apName.c_str());
+  pAdv->setAdvertisementData(advData);
+
+  NimBLEAdvertisementData scanRespData;
+  scanRespData.setName(apName.c_str());
+  pAdv->setScanResponseData(scanRespData);
+
   pAdv->setScanResponse(true);
   pAdv->setMinPreferred(0x06);
   pAdv->setMinPreferred(0x12);
@@ -566,9 +577,19 @@ void loop() {
         WiFi.softAPdisconnect(true);
         
         registerDeviceWithCloud();
-      } else if (millis() - connectTimeout > 20000) {
-        Serial.println(F("\n[WiFi FAIL] Reconnecting timeout. Check credentials."));
-        setDeviceState(STATE_ERROR, "WIFI_AUTH_FAILED");
+      } else if (millis() - connectTimeout > 15000) {
+        Serial.println(F("\n[WiFi FAIL] Reconnecting timeout. Falling back to Setup/Provisioning mode..."));
+        
+        String macClean = WiFi.macAddress();
+        macClean.replace(":", "");
+        String lastFour = macClean.substring(8, 12);
+        String apName = "AGRI-SETUP-" + lastFour;
+        apName.toUpperCase();
+
+        setupBLE(apName);
+        setupSoftAP(apName);
+        
+        setDeviceState(STATE_DISCOVERABLE, "WIFI_AUTH_FAILED");
         connectTimeout = millis();
       }
       break;

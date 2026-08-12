@@ -401,9 +401,18 @@ void loop() {
         WiFi.softAPdisconnect(true);
         
         registerDeviceWithCloud();
-      } else if (millis() - connectTimeout > 20000) {
-        Serial.println(F("\n[WiFi FAIL] Reconnecting timeout. Check credentials."));
-        setDeviceState(STATE_ERROR, "WIFI_AUTH_FAILED");
+      } else if (millis() - connectTimeout > 15000) {
+        Serial.println(F("\n[WiFi FAIL] Reconnecting timeout. Falling back to Setup/Provisioning mode..."));
+        
+        String macClean = WiFi.macAddress();
+        macClean.replace(":", "");
+        String lastFour = macClean.substring(8, 12);
+        String apName = "AGRI-SETUP-" + lastFour;
+        apName.toUpperCase();
+
+        setupSoftAP(apName);
+        
+        setDeviceState(STATE_DISCOVERABLE, "WIFI_AUTH_FAILED");
         connectTimeout = millis();
       }
       break;

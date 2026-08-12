@@ -109,7 +109,39 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setIsScanning(true);
     setScanError(null);
 
-    // 1. Probe direct SoftAP Wi-Fi
+    // 1. Probe direct SoftAP Wi-Fi via image probe to bypass Mixed Content blocks on HTTPS
+    const probeImage = new Promise<any>((resolve, reject) => {
+      const img = new Image();
+      img.src = 'http://192.168.4.1/ping-image.jpg?t=' + Date.now();
+      img.onload = () => {
+        resolve({
+          serialNumber: `AGRI-SETUP-HOTSPOT`,
+          macAddress: 'CC:50:E3:8A:12:34',
+          boardFamily: selectedProduct.boardFamily,
+          rssi: -30,
+          mode: 'Wi-Fi Hotspot Mode (192.168.4.1)',
+          isSoftAP: true,
+          productName: selectedProduct.customerProductName
+        });
+      };
+      img.onerror = () => {
+        reject(new Error('Hotspot ping-image offline'));
+      };
+      // Timeout after 1.5s
+      setTimeout(() => reject(new Error('Hotspot ping-image timeout')), 1500);
+    });
+
+    try {
+      const apNode = await probeImage;
+      setDiscoveredDevices([apNode]);
+      setSelectedDevice(apNode);
+      setIsScanning(false);
+      return;
+    } catch (e) {
+      console.log('[Mixed-Content SoftAP image probe failed, trying standard fetch...]', e);
+    }
+
+    // 2. Probe direct SoftAP Wi-Fi via fetch
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1500);
@@ -118,11 +150,11 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       if (pingRes.ok) {
         const pingData = await pingRes.json();
         const apNode = {
-          serialNumber: pingData.serial || 'AGRI-ESP32-HOTSPOT',
+          serialNumber: pingData.serial || 'AGRI-SETUP-HOTSPOT',
           macAddress: pingData.mac || 'CC:50:E3:8A:12:34',
           boardFamily: selectedProduct.boardFamily,
           rssi: -35,
-          mode: 'Wi-Fi Hotspot Mode (192.168.4.1)',
+          mode: 'Wi-Fi Hotspot (192.168.4.1)',
           isSoftAP: true,
           productName: 'AgriFlow Smart Irrigation Controller'
         };
@@ -133,7 +165,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     } catch (e) {}
 
-    // 2. Fallback Cloud Discovery Daemon Probe
+    // 3. Fallback Cloud Discovery Daemon Probe
     try {
       const res = await fetch('/api/iot/discovery');
       const data = await res.json();
@@ -456,24 +488,36 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                   </div>
                 ))
               ) : (
-                <div className="text-center py-6 space-y-2">
-                  <div className="text-xs text-slate-400">Discovering nearby wireless hardware...</div>
+                <div className="text-center py-4 space-y-4">
+                  <div className="text-xs text-slate-400">Searching for wireless hardware...</div>
+                  
+                  {/* Troubleshooting Guide */}
+                  <div className="text-left bg-slate-900/60 p-3.5 rounded-xl border border-slate-800 space-y-2 text-[11px] text-slate-300">
+                    <div className="font-bold text-slate-200">Device Discovery Tips:</div>
+                    <ul className="list-disc pl-4 space-y-1 text-slate-400">
+                      <li>Verify your physical board is powered on.</li>
+                      <li>Check status LED: It should **blink rapidly** (200ms).</li>
+                      <li>If the LED is solid or off, **hold the Boot/Flash button on the board for 5 seconds** until the LED flashes to enter Setup Mode.</li>
+                      <li>Ensure your computer/phone's **Bluetooth is turned ON**.</li>
+                    </ul>
+                  </div>
+
                   <div className="flex justify-center gap-2 pt-1">
                     <button
                       type="button"
                       onClick={handleExplicitBleScan}
-                      className="px-3.5 py-1.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/50 border border-purple-500/30 text-purple-300 text-[10px] font-bold transition-all flex items-center gap-1"
+                      className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center gap-1.5"
                     >
-                      <Bluetooth className="w-3.5 h-3.5" />
+                      <Bluetooth className="w-4 h-4" />
                       <span>Scan BLE</span>
                     </button>
                     <a
                       href="http://192.168.4.1"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold transition-all flex items-center gap-1 border border-slate-700"
+                      className="px-4 py-2 rounded-xl bg-slate-850 hover:bg-slate-750 text-slate-300 text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-700"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <ExternalLink className="w-4 h-4" />
                       <span>Use Wi-Fi Hotspot</span>
                     </a>
                   </div>
