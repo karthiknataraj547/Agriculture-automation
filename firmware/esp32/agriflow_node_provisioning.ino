@@ -152,34 +152,59 @@ void startProvisioningMode() {
 
   // Setup configuration endpoint
   server.on("/setup", HTTP_POST, []() {
-    if (server.hasArg("plain")) {
+    String ssid = "";
+    String pass = "";
+
+    if (server.hasArg("ssid") && server.hasArg("password")) {
+      ssid = server.arg("ssid");
+      pass = server.arg("password");
+    } else if (server.hasArg("plain")) {
       JsonDocument doc;
       DeserializationError err = deserializeJson(doc, server.arg("plain"));
       if (!err && doc.containsKey("ssid") && doc.containsKey("password")) {
-        wifiSsid = String((const char*)doc["ssid"]);
-        wifiPass = String((const char*)doc["password"]);
-        
-        // Save to ESP32 Preferences (NVS storage)
-        preferences.begin("agri-node", false);
-        preferences.putString("ssid", wifiSsid);
-        preferences.putString("pass", wifiPass);
-        preferences.end();
-
-        server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi Credentials Saved Successfully!\"}");
-        
-        // Connect to the configured Wi-Fi network
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-        setDeviceState(STATE_CONNECTING_WIFI);
-        return;
+        ssid = String((const char*)doc["ssid"]);
+        pass = String((const char*)doc["password"]);
       }
+    }
+
+    if (ssid.length() > 0) {
+      wifiSsid = ssid;
+      wifiPass = pass;
+      
+      // Save to NVS storage
+      preferences.begin("agri-node", false);
+      preferences.putString("ssid", wifiSsid);
+      preferences.putString("pass", wifiPass);
+      preferences.end();
+
+      server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi Credentials Saved Successfully!\"}");
+      
+      delay(500);
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+      setDeviceState(STATE_CONNECTING_WIFI);
+      return;
     }
     server.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid Wi-Fi credentials payload\"}");
   });
 
   // Setup discovery ping endpoint
   server.on("/ping", HTTP_GET, []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\"}");
+  });
+
+  // Setup 1x1 tracking pixel endpoint for Mixed Content browser pings
+  server.on("/ping-image.jpg", HTTP_GET, []() {
+    const uint8_t gifData[] = {
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 
+      0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 
+      0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 
+      0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b
+    };
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendContent_P((const char*)gifData, sizeof(gifData));
   });
 
   // Captive Portal HTML web assistant

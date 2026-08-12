@@ -118,7 +118,37 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setFoundDevice(null);
     setCurrentStage('SEARCHING');
 
-    // ESP32 Web Bluetooth BLE GATT Discovery
+    // 1. Wi-Fi SoftAP Image Probe (bypasses HTTPS mixed content security blocks)
+    const probePromise = new Promise<any>((resolve) => {
+      const img = new Image();
+      img.src = 'http://192.168.4.1/ping-image.jpg?t=' + Date.now();
+      img.onload = () => {
+        resolve({
+          serialNumber: `AGRI-${selectedProduct.boardFamily}-HOTSPOT`,
+          macAddress: 'CC:50:E3:8A:12:34',
+          boardFamily: selectedProduct.boardFamily,
+          rssi: -35,
+          mode: 'Wi-Fi Hotspot Mode (192.168.4.1)',
+          isSoftAP: true
+        });
+      };
+      img.onerror = () => {
+        resolve(null);
+      };
+      // Timeout after 2 seconds
+      setTimeout(() => resolve(null), 2000);
+    });
+
+    const wifiHotspotNode = await probePromise;
+    if (wifiHotspotNode) {
+      setDiscoveredNodes([wifiHotspotNode]);
+      setFoundDevice(wifiHotspotNode);
+      setCurrentStage('DEVICE_FOUND');
+      setIsScanning(false);
+      return;
+    }
+
+    // 2. ESP32 Web Bluetooth BLE GATT Discovery
     if (selectedProduct.boardFamily === 'ESP32' && isBluetoothSupported) {
       try {
         const device = await (navigator as any).bluetooth.requestDevice({
@@ -220,7 +250,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setTransmitSuccess(false);
     setCurrentStage('SENDING_WIFI');
 
-    // 1. Transmit via Bluetooth BLE GATT Characteristics
+    // 1. Transmit via Bluetooth BLE GATT Characteristics if connected
     if (bleServer && bleServer.connected) {
       try {
         const service = await bleServer.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
@@ -238,20 +268,49 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     }
 
-    // 2. Direct SoftAP HTTP Transmit (http://192.168.4.1/setup)
-    if (typeof window !== 'undefined' && window.location.protocol === 'http:') {
+    // 2. Direct SoftAP HTTP Transmit via form submission (bypasses HTTPS Mixed Content blocks)
+    if (foundDevice?.isSoftAP || typeof window !== 'undefined') {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-        await fetch('http://192.168.4.1/setup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ssid: wifiSsid, password: wifiPass }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
+        const iframeName = 'hidden_prov_iframe';
+        let iframe = document.getElementById(iframeName) as HTMLIFrameElement;
+        if (!iframe) {
+          iframe = document.createElement('iframe');
+          iframe.id = iframeName;
+          iframe.name = iframeName;
+          iframe.style.display = 'none';
+          document.body.appendChild(iframe);
+        }
+
+        const form = document.createElement('form');
+        form.action = 'http://192.168.4.1/setup';
+        form.method = 'POST';
+        form.target = iframeName;
+
+        const ssidInput = document.createElement('input');
+        ssidInput.type = 'hidden';
+        ssidInput.name = 'ssid';
+        ssidInput.value = wifiSsid;
+        form.appendChild(ssidInput);
+
+        const passInput = document.createElement('input');
+        passInput.type = 'hidden';
+        passInput.name = 'password';
+        passInput.value = wifiPass;
+        form.appendChild(passInput);
+
+        document.body.appendChild(form);
+        form.submit();
+        
+        setTimeout(() => {
+          if (document.body.contains(form)) {
+            document.body.removeChild(form);
+          }
+        }, 1000);
+
         setCurrentStage('CONNECTING_INTERNET');
-      } catch (e) {}
+      } catch (e) {
+        console.error('[SoftAP Transmit Error]', e);
+      }
     }
 
     // 3. Trigger Cloud Registration Route (/api/iot/devices/register)
