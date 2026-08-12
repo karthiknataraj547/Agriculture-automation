@@ -118,34 +118,30 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setFoundDevice(null);
     setCurrentStage('SEARCHING');
 
-    // 1. Wi-Fi SoftAP Image Probe (bypasses HTTPS mixed content security blocks)
-    const probePromise = new Promise<any>((resolve) => {
-      const img = new Image();
-      img.src = 'http://192.168.4.1/ping-image.jpg?t=' + Date.now();
-      img.onload = () => {
-        resolve({
-          serialNumber: `AGRI-${selectedProduct.boardFamily}-HOTSPOT`,
-          macAddress: 'CC:50:E3:8A:12:34',
+    // 1. Direct Wi-Fi SoftAP Probing (Retrieves real serial and MAC from the physical board)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (pingRes.ok) {
+        const pingData = await pingRes.json();
+        const apNode = {
+          serialNumber: pingData.serial,
+          macAddress: pingData.mac,
           boardFamily: selectedProduct.boardFamily,
-          rssi: -35,
+          rssi: -38,
           mode: 'Wi-Fi Hotspot Mode (192.168.4.1)',
           isSoftAP: true
-        });
-      };
-      img.onerror = () => {
-        resolve(null);
-      };
-      // Timeout after 2 seconds
-      setTimeout(() => resolve(null), 2000);
-    });
-
-    const wifiHotspotNode = await probePromise;
-    if (wifiHotspotNode) {
-      setDiscoveredNodes([wifiHotspotNode]);
-      setFoundDevice(wifiHotspotNode);
-      setCurrentStage('DEVICE_FOUND');
-      setIsScanning(false);
-      return;
+        };
+        setDiscoveredNodes([apNode]);
+        setFoundDevice(apNode);
+        setCurrentStage('DEVICE_FOUND');
+        setIsScanning(false);
+        return;
+      }
+    } catch (e) {
+      console.log('[Wi-Fi SoftAP direct ping offline or blocked by browser Mixed Content policy]', e);
     }
 
     // 2. ESP32 Web Bluetooth BLE GATT Discovery
@@ -199,48 +195,30 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     }
 
-    // Active Hardware Registration & Discovery Probe
-    try {
-      const probeRes = await fetch('/api/iot/discovery', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          boardFamily: selectedProduct.boardFamily,
-          boardType: selectedProduct.customerProductName,
-        }),
-      });
-      const probeData = await probeRes.json();
-
-      if (probeData.node) {
-        setDiscoveredNodes([probeData.node]);
-        setFoundDevice(probeData.node);
-        setCurrentStage('DEVICE_FOUND');
-        setIsScanning(false);
-        return;
-      }
-    } catch (e) {}
-
-    // Fallback Cloud Probe
+    // 3. Fallback Cloud Probe (Retrieves physical hardware pings from daemon/bridge)
     try {
       const res = await fetch('/api/iot/discovery');
       const data = await res.json();
 
       if (data.nodes && data.nodes.length > 0) {
-        setDiscoveredNodes(data.nodes);
-        const matchingNode = data.nodes.find(
-          (n: any) => n.boardFamily === selectedProduct.boardFamily
-        ) || data.nodes[0];
-        setFoundDevice(matchingNode);
-        setCurrentStage('DEVICE_FOUND');
-        setIsScanning(false);
-        return;
+        // Filter discovered nodes by selected product family
+        const matchingNodes = data.nodes.filter(
+          (n: any) => n.boardFamily === selectedProduct.boardFamily && n.status !== 'FAKE'
+        );
+        if (matchingNodes.length > 0) {
+          setDiscoveredNodes(matchingNodes);
+          setFoundDevice(matchingNodes[0]);
+          setCurrentStage('DEVICE_FOUND');
+          setIsScanning(false);
+          return;
+        }
       }
     } catch (e) {}
 
     setIsScanning(false);
     setFoundDevice(null);
     setScanError(
-      `No active physical ${selectedProduct.boardFamily} hardware node detected. Make sure your board is powered on and its status LED is blinking rapidly.`
+      `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your board is powered on, connect your laptop/phone to network AGRI-SETUP-XXXX, and make sure its LED is blinking rapidly.`
     );
   };
 
