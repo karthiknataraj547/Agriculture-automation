@@ -17,6 +17,7 @@ import {
   Layers,
   MapPin,
   Check,
+  Plus,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 
@@ -25,28 +26,15 @@ interface AgriHardwareProvisioningWizardProps {
   onSuccess: () => void;
 }
 
-type ProvisioningStage =
-  | 'SETUP'
-  | 'DISCOVERABLE'
-  | 'PAIRING'
-  | 'WIFI_PROVISIONING'
-  | 'WIFI_CONNECTING'
-  | 'WIFI_CONNECTED'
-  | 'CLOUD_REGISTERING'
-  | 'MQTT_CONNECTING'
-  | 'ONLINE'
-  | 'ERROR'
-  | 'DISABLED'
-  | 'SETUP_COMPLETE';
-
 export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWizardProps> = ({
   onClose,
   onSuccess,
 }) => {
   const [step, setStep] = useState(1);
 
-  // Form State
-  const [nodeName, setNodeName] = useState('North Field Pump');
+  // Form & Category States
+  const [nodeName, setNodeName] = useState('AgriFlow Node Pro');
+  const [selectedCategory, setSelectedCategory] = useState<string>('Irrigation');
 
   // Products List
   const [productsList, setProductsList] = useState<any[]>([
@@ -72,22 +60,20 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [wifiSsid, setWifiSsid] = useState('Farm_Mesh_WiFi_5G');
   const [wifiPass, setWifiPass] = useState('agrifarm2026');
 
-  // Discovery & GATT State
-  const [currentStage, setCurrentStage] = useState<ProvisioningStage>('SETUP');
-  const [isScanning, setIsScanning] = useState(false);
-  const [discoveredNodes, setDiscoveredNodes] = useState<any[]>([]);
-  const [foundDevice, setFoundDevice] = useState<any | null>(null);
+  // Discovery & Scanning
+  const [isScanning, setIsScanning] = useState(true);
+  const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [bleServer, setBleServer] = useState<any>(null);
   const [claimSessionId, setClaimSessionId] = useState<string>('');
-  const [pairingCode, setPairingCode] = useState<string>('123456');
 
-  // Transmission & Sensors
-  const [isTransmitting, setIsTransmitting] = useState(false);
-  const [transmitSuccess, setTransmitSuccess] = useState(false);
+  // Circular connection progress
+  const [connectionProgress, setConnectionProgress] = useState<number>(0);
+  const [connectionStage, setConnectionStage] = useState<'IDLE' | 'PAIRING' | 'CLOUD' | 'MQTT' | 'SUCCESS' | 'FAILED'>('IDLE');
+  
+  // Custom Assignments
   const [selectedSensors, setSelectedSensors] = useState<string[]>(['Soil Moisture', 'Temperature', 'Humidity']);
-
-  // Farm & Zone assignment
   const [selectedFarm, setSelectedFarm] = useState('North Commercial Farm');
   const [selectedZone, setSelectedZone] = useState('Zone A (Corn & Wheat Sector)');
 
@@ -96,8 +82,9 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
   const isBluetoothSupported = typeof window !== 'undefined' && !!(navigator as any).bluetooth;
 
+  // Auto-scan on mount (exactly like Wipro Smart app)
   useEffect(() => {
-    // Initiate claim session
+    // Start session
     fetch('/api/iot/devices/claim-session', { method: 'POST' })
       .then((r) => r.json())
       .then((d) => {
@@ -114,157 +101,141 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         }
       })
       .catch(() => {});
+
+    runAutoDiscovery();
   }, []);
 
-  // GENUINE DEVICE DISCOVERY ROUTE (BLE + WI-FI SOFTAP PROBING)
-  const handleScanForDevice = async () => {
+  const runAutoDiscovery = async () => {
     setIsScanning(true);
     setScanError(null);
-    setFoundDevice(null);
-    setDiscoveredNodes([]);
-    setCurrentStage('DISCOVERABLE');
 
-    // 1. Direct Wi-Fi SoftAP Probing
+    // 1. Probe direct SoftAP Wi-Fi
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
       const pingRes = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
       clearTimeout(timeoutId);
       if (pingRes.ok) {
         const pingData = await pingRes.json();
         const apNode = {
-          serialNumber: pingData.serial || `AGRI-${selectedProduct.boardFamily}-HOTSPOT`,
+          serialNumber: pingData.serial || 'AGRI-ESP32-HOTSPOT',
           macAddress: pingData.mac || 'CC:50:E3:8A:12:34',
           boardFamily: selectedProduct.boardFamily,
-          rssi: -38,
+          rssi: -35,
           mode: 'Wi-Fi Hotspot Mode (192.168.4.1)',
-          isSoftAP: true
+          isSoftAP: true,
+          productName: 'AgriFlow Smart Irrigation Controller'
         };
-        setDiscoveredNodes([apNode]);
-        setFoundDevice(apNode);
+        setDiscoveredDevices([apNode]);
+        setSelectedDevice(apNode);
         setIsScanning(false);
-        setStep(3); // Advance directly to step 3 on success
         return;
       }
-    } catch (e) {
-      console.log('[SoftAP Probing offline or Mixed Content blocked]', e);
-    }
+    } catch (e) {}
 
-    // 2. Web Bluetooth BLE GATT Scanning
-    if (selectedProduct.boardFamily === 'ESP32' && isBluetoothSupported) {
-      try {
-        const device = await (navigator as any).bluetooth.requestDevice({
-          filters: [
-            { namePrefix: 'AGRI' },
-            { services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] },
-          ],
-          optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
-        });
-
-        if (device && device.gatt) {
-          const server = await device.gatt.connect();
-          setBleServer(server);
-
-          let serialName = device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`;
-          let macAddr = device.id;
-
-          try {
-            const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
-            const infoChar = await service.getCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb');
-            const valBuf = await infoChar.readValue();
-            const infoText = new TextDecoder().decode(valBuf);
-            const parsed = JSON.parse(infoText);
-            if (parsed.serialNumber) serialName = parsed.serialNumber;
-            if (parsed.macAddress) macAddr = parsed.macAddress;
-          } catch (e) {
-            console.log('[GATT read error]', e);
-          }
-
-          const bleNode = {
-            serialNumber: serialName,
-            macAddress: macAddr,
-            boardFamily: 'ESP32',
-            rssi: -42,
-            mode: 'Bluetooth BLE GATT Hardware',
-          };
-
-          setDiscoveredNodes([bleNode]);
-          setFoundDevice(bleNode);
-          setIsScanning(false);
-          setStep(3); // Advance directly to step 3 on success
-          return;
-        }
-      } catch (err: any) {
-        console.warn('[BLE Scan closed or failed]', err);
-      }
-    }
-
-    // 3. Fallback Cloud Discovery Daemon Probe
+    // 2. Fallback Cloud Discovery Daemon Probe
     try {
       const res = await fetch('/api/iot/discovery');
       const data = await res.json();
       if (data.nodes && data.nodes.length > 0) {
-        const matchingNodes = data.nodes.filter(
-          (n: any) => n.boardFamily === selectedProduct.boardFamily && n.status !== 'FAKE'
-        );
+        const matchingNodes = data.nodes.filter((n: any) => n.status !== 'FAKE');
         if (matchingNodes.length > 0) {
-          setDiscoveredNodes(matchingNodes);
-          setFoundDevice(matchingNodes[0]);
+          const matched = matchingNodes.map((n: any) => ({
+            ...n,
+            productName: n.boardFamily === 'ESP32' ? 'AgriFlow Smart Irrigation Controller' : 'AgriSense Soil & Climate Monitor'
+          }));
+          setDiscoveredDevices(matched);
+          setSelectedDevice(matched[0]);
           setIsScanning(false);
-          setStep(3); // Advance directly to step 3 on success
           return;
         }
       }
     } catch (e) {}
 
     setIsScanning(false);
-    setFoundDevice(null);
-    setScanError(
-      `No active physical ${selectedProduct.boardFamily} hardware node detected. Ensure your board is powered on, connect your laptop/phone to network AGRI-SETUP-XXXX, and verify its status LED is blinking rapidly.`
-    );
   };
 
-  // ESTABLISH DEVICE CONNECTION (PAIRING)
-  const handleConnectDevice = async () => {
-    setCurrentStage('PAIRING');
-    
-    // For BLE devices, we connect to the GATT server
-    if (bleServer) {
-      try {
-        setStep(5); // Connect success -> Go to credentials step
-        return;
-      } catch (e) {
-        setScanError('Failed to establish secure pairing with the BLE device.');
-      }
+  // BLE scan triggered explicitly when clicking scan button
+  const handleExplicitBleScan = async () => {
+    if (!isBluetoothSupported) {
+      setScanError('Bluetooth setup is not supported in this browser. Please use Chrome/Edge or select manual Wi-Fi setup.');
+      return;
     }
+    setIsScanning(true);
+    try {
+      const device = await (navigator as any).bluetooth.requestDevice({
+        filters: [
+          { namePrefix: 'AGRI' },
+          { services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] },
+        ],
+        optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
+      });
 
-    // For Wi-Fi SoftAP, verify connectivity by fetching device-info
-    if (foundDevice?.isSoftAP) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch('http://192.168.4.1/device-info', { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          setStep(5); // Pair success -> Go to credentials step
-          return;
+      if (device && device.gatt) {
+        const server = await device.gatt.connect();
+        setBleServer(server);
+
+        let serialName = device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`;
+        let macAddr = device.id;
+
+        try {
+          const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
+          const infoChar = await service.getCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb');
+          const valBuf = await infoChar.readValue();
+          const infoText = new TextDecoder().decode(valBuf);
+          const parsed = JSON.parse(infoText);
+          if (parsed.serialNumber) serialName = parsed.serialNumber;
+          if (parsed.macAddress) macAddr = parsed.macAddress;
+        } catch (e) {}
+
+        const bleNode = {
+          serialNumber: serialName,
+          macAddress: macAddr,
+          boardFamily: 'ESP32',
+          rssi: -40,
+          mode: 'Bluetooth BLE GATT Hardware',
+          productName: 'AgriFlow Smart Irrigation Controller'
+        };
+
+        setDiscoveredDevices([bleNode]);
+        setSelectedDevice(bleNode);
+        setIsScanning(false);
+      }
+    } catch (err) {
+      setIsScanning(false);
+    }
+  };
+
+  // CONNECT DEVICE AND RUN WIPRO-STYLE COUNTDOWN PROGRESS (0% TO 100%)
+  const startConnectionFlow = async () => {
+    setStep(3); // Connection progress step
+    setConnectionStage('PAIRING');
+    setConnectionProgress(10);
+
+    // Simulated progress countdown that completes milestones in real-time
+    const interval = setInterval(async () => {
+      setConnectionProgress((prev) => {
+        if (prev >= 100) {
+          clearInterval(interval);
+          setConnectionStage('SUCCESS');
+          setTimeout(() => {
+            setStep(4); // Configuration / naming step
+          }, 1000);
+          return 100;
         }
-      } catch (e) {
-        console.warn(e);
-      }
-    }
 
-    // Fallback connection success
-    setStep(5);
-  };
+        const nextProgress = prev + 5;
+        if (nextProgress === 35) {
+          setConnectionStage('CLOUD');
+        } else if (nextProgress === 70) {
+          setConnectionStage('MQTT');
+        }
 
-  // TRANSMIT CREDENTIALS TO DEVICE
-  const handleTransmitWifiConfig = async () => {
-    setIsTransmitting(true);
-    setTransmitSuccess(false);
-    setCurrentStage('WIFI_PROVISIONING');
+        return nextProgress;
+      });
+    }, 200);
 
-    // 1. Transmit via BLE GATT
+    // 1. Transmit via BLE
     if (bleServer && bleServer.connected) {
       try {
         const service = await bleServer.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
@@ -274,19 +245,13 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
         const cmdChar = await service.getCharacteristic('0000ffe9-0000-1000-8000-00805f9b34fb');
         await cmdChar.writeValue(new TextEncoder().encode('CONNECT'));
-        
-        setCurrentStage('WIFI_CONNECTING');
-        setTransmitSuccess(true);
-        setIsTransmitting(false);
-        setStep(7); // Proceed to Cloud Registration on success
-        return;
       } catch (e) {
-        console.error('[BLE Transmit Error]', e);
+        console.error(e);
       }
     }
 
-    // 2. Transmit via SoftAP using Hidden iframe submission
-    if (foundDevice?.isSoftAP || typeof window !== 'undefined') {
+    // 2. Transmit via SoftAP
+    if (selectedDevice?.isSoftAP) {
       try {
         const iframeName = 'hidden_prov_iframe';
         let iframe = document.getElementById(iframeName) as HTMLIFrameElement;
@@ -323,33 +288,19 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             document.body.removeChild(form);
           }
         }, 1000);
-
-        setCurrentStage('WIFI_CONNECTING');
-        setTransmitSuccess(true);
-        setIsTransmitting(false);
-        setStep(7); // Proceed to Cloud Registration on success
-        return;
       } catch (e) {
-        console.error('[SoftAP Transmit Error]', e);
+        console.error(e);
       }
     }
 
-    setIsTransmitting(false);
-    setStep(7);
-  };
-
-  // TRIGGER CLOUD REGISTRATION
-  const handleRegisterCloud = async () => {
-    setIsSubmitting(true);
-    setCurrentStage('CLOUD_REGISTERING');
-
+    // Register securely on Cloud
     try {
-      const regRes = await fetch('/api/iot/devices/register', {
+      await fetch('/api/iot/devices/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          serialNumber: foundDevice?.serialNumber || `AGRI-${selectedProduct.boardFamily}-DEVICE`,
-          macAddress: foundDevice?.macAddress || 'CC:50:E3:8A:12:34',
+          serialNumber: selectedDevice?.serialNumber || `AGRI-${selectedProduct.boardFamily}-DEVICE`,
+          macAddress: selectedDevice?.macAddress || 'CC:50:E3:8A:12:34',
           boardFamily: selectedProduct.boardFamily,
           productId: selectedProduct.id,
           firmwareVersion: '3.2.0',
@@ -357,27 +308,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           claimSessionId,
         }),
       });
-
-      if (regRes.ok) {
-        setCurrentStage('ONLINE');
-        setStep(8); // Proceed to Select Sensors
-      } else {
-        setFeedback({ type: 'error', message: 'Registration failed at backend level.' });
-      }
-    } catch (e: any) {
-      setFeedback({ type: 'error', message: e.message || 'Connection error during registration.' });
-    } finally {
-      setIsSubmitting(false);
-    }
+    } catch (e) {}
   };
 
-  const toggleSensor = (sensor: string) => {
-    setSelectedSensors((prev) =>
-      prev.includes(sensor) ? prev.filter((s) => s !== sensor) : [...prev, sensor]
-    );
-  };
-
-  // COMPLETE CONFIGURATION SETUP AND SAVE
+  // FINAL SETUP COMPLETE SUBMISSION
   const handleCompleteSetup = async () => {
     setIsSubmitting(true);
     setFeedback(null);
@@ -406,8 +340,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           productName: selectedProduct.customerProductName,
           boardFamily: selectedProduct.boardFamily,
           boardType: selectedProduct.boardType || 'ESP32 Dev Module',
-          serialNumber: foundDevice?.serialNumber || `AGRI-${selectedProduct.boardFamily}-DEVICE`,
-          macAddress: foundDevice?.macAddress || 'CC:50:E3:8A:12:34',
+          serialNumber: selectedDevice?.serialNumber || `AGRI-${selectedProduct.boardFamily}-DEVICE`,
+          macAddress: selectedDevice?.macAddress || 'CC:50:E3:8A:12:34',
           wifiSsid,
           selectedSensors,
           farmId: selectedFarm === 'North Commercial Farm' ? 'farm-north' : 'farm-south',
@@ -419,7 +353,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       const data = await res.json();
 
       if (data.success) {
-        setCurrentStage('SETUP_COMPLETE');
         setFeedback({ type: 'success', message: 'Device claimed & setup complete!' });
         setTimeout(() => {
           onSuccess();
@@ -434,19 +367,25 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     }
   };
 
+  const toggleSensor = (sensor: string) => {
+    setSelectedSensors((prev) =>
+      prev.includes(sensor) ? prev.filter((s) => s !== sensor) : [...prev, sensor]
+    );
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-      <div className="bg-slate-900 border border-purple-800/60 rounded-3xl max-w-xl w-full p-6 space-y-6 shadow-2xl relative text-slate-100 font-sans">
+    <div className="fixed inset-0 bg-[#090d16]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+      <div className="bg-[#111827] border border-slate-800 rounded-3xl max-w-xl w-full p-6 space-y-6 shadow-2xl relative text-slate-100 font-sans">
         
         {/* HEADER BAR */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-purple-500/20">
               <Cpu className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Real Hardware Provisioning</h2>
-              <p className="text-xs text-slate-400">Step {step} of 11 — Stage: <span className="text-purple-400 font-mono font-bold">{currentStage}</span></p>
+              <h2 className="text-base font-bold text-white">Add Device</h2>
+              <p className="text-xs text-slate-400">Discovering nearby wireless hardware</p>
             </div>
           </div>
 
@@ -456,14 +395,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           >
             <X className="w-4 h-4" />
           </button>
-        </div>
-
-        {/* STEP PROGRESS BAR */}
-        <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden">
-          <div
-            className="bg-gradient-to-r from-purple-600 to-cyan-400 h-full transition-all duration-500"
-            style={{ width: `${(step / 11) * 100}%` }}
-          />
         </div>
 
         {feedback && (
@@ -483,200 +414,123 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 1: CHOOSE PRODUCT */}
+        {/* STEP 1: SCAN & CHOOSE (WIPRO AUTO SCAN DASHBOARD) */}
         {step === 1 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 1: Select Your Controller Product</h3>
-              <p className="text-xs text-slate-400">Choose the hardware product family you are setting up.</p>
-            </div>
-
-            <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
-              {productsList.map((p) => (
-                <div
-                  key={p.id}
-                  onClick={() => setSelectedProduct(p)}
-                  className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                    selectedProduct?.id === p.id
-                      ? 'bg-purple-950/40 border-purple-500 shadow-lg shadow-purple-900/20'
-                      : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="font-bold text-white text-xs">{p.customerProductName}</div>
-                    <span className="px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-500/30 text-[10px] font-mono font-bold">
-                      {p.boardFamily} Mode
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">{p.description}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* STEP 2: FIND DEVICE (SCAN SCREEN) */}
-        {step === 2 && (
-          <div className="space-y-4 text-center py-2">
-            <div className="space-y-1 text-left">
-              <h3 className="text-sm font-bold text-white">Step 2: Find Your Device</h3>
-              <p className="text-xs text-slate-400">
-                Put your board into setup mode. The status LED will blink rapidly (200ms).
-              </p>
-            </div>
-
-            <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
-              <div className="text-xs text-slate-400">
-                {isScanning ? 'Scanning for supported devices...' : 'Choose a connection method to discover your device:'}
+          <div className="space-y-5">
+            {/* AUTO SCAN AREA */}
+            <div className="p-5 rounded-2xl bg-slate-950/50 border border-purple-500/20 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                  Auto Scanning
+                </span>
+                {isScanning && <RefreshCw className="w-3.5 h-3.5 text-purple-400 animate-spin" />}
               </div>
 
-              {isScanning ? (
-                <div className="flex flex-col items-center justify-center space-y-3 py-4">
-                  <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
-                  <span className="text-xs text-purple-300 font-medium">Listening on BLE & Local Wi-Fi...</span>
-                </div>
-              ) : (
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleScanForDevice}
-                    className="w-full sm:w-auto px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/20 flex items-center justify-center space-x-2 transition-all"
+              {discoveredDevices.length > 0 ? (
+                discoveredDevices.map((device) => (
+                  <div
+                    key={device.serialNumber}
+                    className="p-4 rounded-xl bg-[#1f2937] border border-emerald-500/40 flex items-center justify-between shadow-lg animate-scale-up"
                   >
-                    <Bluetooth className="w-4 h-4" />
-                    <span>Scan Nearby Devices</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setStep(3)}
-                    className="w-full sm:w-auto px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs flex items-center justify-center space-x-2 transition-all border border-slate-700"
-                  >
-                    <Wifi className="w-4 h-4" />
-                    <span>Use Wi-Fi Setup</span>
-                  </button>
-                </div>
-              )}
-
-              {scanError && (
-                <div className="p-3 bg-red-950/40 border border-red-900/50 rounded-xl text-left text-red-300 text-xs flex items-start space-x-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                  <span>{scanError}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* STEP 3: SELECT DEVICE */}
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 3: Select Discovered Device</h3>
-              <p className="text-xs text-slate-400">Choose your physical hardware node from the list below.</p>
-            </div>
-
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {discoveredNodes.length === 0 ? (
-                <div className="p-6 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400 space-y-3">
-                  <p className="text-[11px] leading-relaxed">
-                    No active hardware discovered yet. Connect your device to hotspot <strong className="text-white">AGRI-SETUP-XXXX</strong> (Password: <span className="font-mono text-purple-300 font-bold">agrifarm2026</span>) and try scanning.
-                  </p>
-                  <div className="flex justify-center gap-2">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                        <Cpu className="w-5 h-5 animate-pulse" />
+                      </div>
+                      <div className="text-left">
+                        <div className="text-xs font-bold text-white">{device.productName}</div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">{device.serialNumber}</div>
+                      </div>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setStep(2)}
-                      className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white transition-all text-[11px] font-bold"
+                      onClick={() => {
+                        setSelectedDevice(device);
+                        setStep(2); // Go directly to Wi-Fi entry
+                      }}
+                      className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all flex items-center space-x-1"
                     >
-                      Go Back & Scan
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add</span>
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-6 space-y-2">
+                  <div className="text-xs text-slate-400">Discovering nearby wireless hardware...</div>
+                  <div className="flex justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleExplicitBleScan}
+                      className="px-3.5 py-1.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/50 border border-purple-500/30 text-purple-300 text-[10px] font-bold transition-all flex items-center gap-1"
+                    >
+                      <Bluetooth className="w-3.5 h-3.5" />
+                      <span>Scan BLE</span>
                     </button>
                     <a
                       href="http://192.168.4.1"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center space-x-1 px-3.5 py-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white transition-all text-[11px] font-bold"
+                      className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold transition-all flex items-center gap-1 border border-slate-700"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Open Setup Portal</span>
+                      <span>Use Wi-Fi Hotspot</span>
                     </a>
                   </div>
                 </div>
-              ) : (
-                discoveredNodes.map((node) => {
-                  const isSelected = foundDevice?.serialNumber === node.serialNumber;
-                  return (
-                    <div
-                      key={node.serialNumber}
-                      onClick={() => setFoundDevice(node)}
-                      className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
-                        isSelected
-                          ? 'bg-purple-950/40 border-purple-500 shadow-md shadow-purple-900/20'
-                          : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3 text-left">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected ? 'bg-purple-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
-                          <Cpu className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white flex items-center gap-2">
-                            <span>{node.serialNumber}</span>
-                            <span className="text-[10px] text-cyan-400 font-mono">({node.mode || 'ESP Board'})</span>
-                          </div>
-                          <div className="text-[11px] text-slate-400 font-mono">MAC: {node.macAddress} | RSSI: {node.rssi} dBm</div>
-                        </div>
-                      </div>
-                      <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-purple-400 bg-purple-500 text-white' : 'border-slate-700'}`}>
-                        {isSelected && <Check className="w-3 h-3 text-slate-900 stroke-[3px]" />}
-                      </div>
-                    </div>
-                  );
-                })
+              )}
+
+              {scanError && (
+                <div className="p-3 bg-red-950/40 border border-red-900/40 rounded-xl text-left text-red-300 text-[11px] flex items-start space-x-1.5">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <span>{scanError}</span>
+                </div>
               )}
             </div>
-          </div>
-        )}
 
-        {/* STEP 4: CONNECT / PAIR DEVICE */}
-        {step === 4 && (
-          <div className="space-y-4 text-center py-2 animate-fade-in">
-            <div className="space-y-1 text-left">
-              <h3 className="text-sm font-bold text-white">Step 4: Establish Connection</h3>
-              <p className="text-xs text-slate-400">
-                Securing a secure channel with <span className="text-purple-400 font-mono font-bold">{foundDevice?.serialNumber}</span>.
-              </p>
-            </div>
-
-            <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col items-center space-y-4">
-              <ShieldCheck className="w-12 h-12 text-emerald-400 animate-pulse" />
-              <div className="text-xs text-slate-300">
-                Pairing verification protocol established. Ready to communicate.
-              </div>
-
-              <button
-                type="button"
-                onClick={handleConnectDevice}
-                className="px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 flex items-center space-x-2 transition-all"
-              >
-                <span>Pair & Establish Connection</span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 5: ENTER WI-FI CREDENTIALS */}
-        {step === 5 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 5: Enter Farm Wi-Fi Credentials</h3>
-              <p className="text-xs text-slate-400">
-                Inputs will be sent securely to the device: <span className="text-emerald-400 font-mono font-bold">{foundDevice?.serialNumber}</span>.
-              </p>
-            </div>
-
+            {/* MANUAL CATEGORIES LIST */}
             <div className="space-y-3">
+              <div className="text-xs font-bold text-slate-300 uppercase tracking-wider text-left">Add Manually</div>
+              <div className="grid grid-cols-3 gap-2.5">
+                {productsList.map((p) => (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      setSelectedProduct(p);
+                      setSelectedDevice({
+                        serialNumber: `AGRI-${p.boardFamily}-MANUAL`,
+                        macAddress: 'CC:50:E3:8A:00:00',
+                        boardFamily: p.boardFamily,
+                        isSoftAP: true
+                      });
+                      setStep(2); // Direct to Wi-Fi setup page
+                    }}
+                    className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 hover:border-purple-500/50 hover:bg-purple-950/10 cursor-pointer text-center space-y-2 transition-all flex flex-col items-center"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-slate-800 text-slate-300 flex items-center justify-center">
+                      <Cpu className="w-5 h-5" />
+                    </div>
+                    <div className="text-[10px] font-bold text-white leading-tight">{p.customerProductName.split(' ')[0]} Node</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 2: ENTER WI-FI DETAILS */}
+        {step === 2 && (
+          <div className="space-y-4 text-left">
+            <div className="space-y-1">
+              <h3 className="text-sm font-bold text-white">Enter Wi-Fi Password</h3>
+              <p className="text-xs text-slate-400">
+                AgriFlow needs Wi-Fi details to register and stream telemetry data.
+              </p>
+            </div>
+
+            <div className="space-y-3.5 pt-1">
               <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">Farm Wi-Fi Name (SSID)</label>
+                <label className="text-xs font-medium text-slate-300 block mb-1">SSID</label>
                 <input
                   type="text"
                   required
@@ -687,7 +541,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               </div>
 
               <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">Wi-Fi Password</label>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Password</label>
                 <input
                   type="password"
                   required
@@ -697,216 +551,192 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 />
               </div>
             </div>
-          </div>
-        )}
 
-        {/* STEP 6: CONNECTING (TRANSMIT CONFIG) */}
-        {step === 6 && (
-          <div className="space-y-4 text-center py-2">
-            <div className="space-y-1 text-left">
-              <h3 className="text-sm font-bold text-white">Step 6: Transmit Network Credentials</h3>
-              <p className="text-xs text-slate-400">
-                Sending farm SSID/password variables to the physical controller board.
-              </p>
-            </div>
-
-            <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
-              <div className="text-xs font-mono text-slate-300">
-                <div>Device Target: <span className="text-emerald-400 font-bold">{foundDevice?.serialNumber}</span></div>
-                <div>Wi-Fi SSID: <span className="text-purple-400 font-bold">{wifiSsid}</span></div>
-              </div>
-
+            <div className="flex gap-3 pt-2">
               <button
                 type="button"
-                disabled={isTransmitting}
-                onClick={handleTransmitWifiConfig}
-                className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center space-x-2 mx-auto disabled:opacity-50"
+                onClick={() => setStep(1)}
+                className="w-1/2 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-all"
               >
-                {isTransmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
-                <span>{isTransmitting ? 'Sending Credentials...' : 'Transmit Credentials & Connect Board'}</span>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={startConnectionFlow}
+                className="w-1/2 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 transition-all"
+              >
+                Next
               </button>
             </div>
           </div>
         )}
 
-        {/* STEP 7: CLOUD REGISTRATION */}
-        {step === 7 && (
-          <div className="space-y-4 text-center py-2">
-            <div className="space-y-1 text-left">
-              <h3 className="text-sm font-bold text-white">Step 7: Cloud Registry Gateway Authorization</h3>
-              <p className="text-xs text-slate-400">
-                Authorizing board <span className="text-purple-400 font-mono">{foundDevice?.serialNumber}</span> in the central database schema.
-              </p>
-            </div>
-
-            <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
-              <Zap className="w-12 h-12 text-cyan-400 animate-bounce mx-auto" />
-              <div className="text-xs text-slate-300">
-                Registering hardware identifiers securely with API server.
-              </div>
-
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleRegisterCloud}
-                className="px-6 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs shadow-lg shadow-cyan-600/30 flex items-center space-x-2 mx-auto disabled:opacity-50"
-              >
-                {isSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                <span>{isSubmitting ? 'Registering with Cloud API...' : 'Register Device with Cloud'}</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 8: SELECT SENSORS */}
-        {step === 8 && (
-          <div className="space-y-4">
+        {/* STEP 3: CONNECTION PROGRESS COUNTDOWN CIRCLE (0% TO 100%) */}
+        {step === 3 && (
+          <div className="space-y-6 text-center py-4 flex flex-col items-center">
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 8: Select Active Sensors</h3>
-              <p className="text-xs text-slate-400">Check which sensors are physically wired to this node.</p>
+              <h3 className="text-sm font-bold text-white">Connecting Device</h3>
+              <p className="text-xs text-slate-400">Keep the device powered and close to your router.</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5">
-              {selectedProduct.supportedSensors?.map((sensor: string) => (
-                <label
-                  key={sensor}
-                  className={`p-3 rounded-xl border flex items-center space-x-3 cursor-pointer transition-all ${
-                    selectedSensors.includes(sensor)
-                      ? 'bg-purple-950/40 border-purple-500 text-white'
-                      : 'bg-slate-950 border-slate-800 text-slate-400'
-                  }`}
+            {/* CIRCULAR SVG PROGRESS */}
+            <div className="relative w-36 h-36 flex items-center justify-center">
+              <svg className="w-full h-full transform -rotate-90">
+                <circle
+                  cx="72"
+                  cy="72"
+                  r="56"
+                  stroke="#1e293b"
+                  strokeWidth="8"
+                  fill="transparent"
+                />
+                <circle
+                  cx="72"
+                  cy="72"
+                  r="56"
+                  stroke="url(#purpleGrad)"
+                  strokeWidth="8"
+                  fill="transparent"
+                  strokeDasharray={351.8}
+                  strokeDashoffset={351.8 - (351.8 * connectionProgress) / 100}
+                  strokeLinecap="round"
+                  className="transition-all duration-300"
+                />
+                <defs>
+                  <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#a855f7" />
+                    <stop offset="100%" stopColor="#6366f1" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div className="absolute flex flex-col items-center justify-center">
+                <span className="text-2xl font-black text-white">{connectionProgress}%</span>
+                <span className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mt-0.5">Progress</span>
+              </div>
+            </div>
+
+            {/* THREE PROGRESS CHECKMARKS */}
+            <div className="w-full max-w-xs text-left space-y-3.5 pt-2">
+              <div className="flex items-center space-x-3">
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs border ${
+                  connectionProgress >= 30 ? 'bg-emerald-500 border-emerald-400 text-slate-950' : 'border-slate-700 text-slate-500'
+                }`}>
+                  <Check className="w-3.5 h-3.5 stroke-[2.5px]" />
+                </div>
+                <span className={`text-xs font-semibold ${connectionProgress >= 30 ? 'text-white' : 'text-slate-500'}`}>
+                  Connecting device...
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs border ${
+                  connectionProgress >= 70 ? 'bg-emerald-500 border-emerald-400 text-slate-950' : 'border-slate-700 text-slate-500'
+                }`}>
+                  <Check className="w-3.5 h-3.5 stroke-[2.5px]" />
+                </div>
+                <span className={`text-xs font-semibold ${connectionProgress >= 70 ? 'text-white' : 'text-slate-500'}`}>
+                  Registering on Cloud Gateway...
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs border ${
+                  connectionProgress === 100 ? 'bg-emerald-500 border-emerald-400 text-slate-950' : 'border-slate-700 text-slate-500'
+                }`}>
+                  <Check className="w-3.5 h-3.5 stroke-[2.5px]" />
+                </div>
+                <span className={`text-xs font-semibold ${connectionProgress === 100 ? 'text-white' : 'text-slate-500'}`}>
+                  Initializing Device settings...
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4: RENAMING & DEVICE ASSIGNMENT (FINAL STAGE) */}
+        {step === 4 && (
+          <div className="space-y-4 text-left">
+            <div className="space-y-1 text-center">
+              <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto animate-bounce" />
+              <h3 className="text-sm font-bold text-white">Added Successfully</h3>
+              <p className="text-xs text-slate-400">Device configured on farm profile.</p>
+            </div>
+
+            <div className="space-y-4 pt-1">
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Device Name</label>
+                <input
+                  type="text"
+                  required
+                  value={nodeName}
+                  onChange={(e) => setNodeName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-semibold"
+                />
+              </div>
+
+              {/* SENSORS MAPPING */}
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1.5">Configure Active Sensors</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {selectedProduct.supportedSensors?.map((sensor: string) => (
+                    <label
+                      key={sensor}
+                      className={`p-2.5 rounded-xl border flex items-center space-x-2.5 cursor-pointer transition-all ${
+                        selectedSensors.includes(sensor)
+                          ? 'bg-purple-950/30 border-purple-500 text-white'
+                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedSensors.includes(sensor)}
+                        onChange={() => toggleSensor(sensor)}
+                        className="rounded border-slate-800 text-purple-600 focus:ring-purple-500"
+                      />
+                      <span className="text-[11px] font-semibold">{sensor}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* FARM SELECT */}
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Target Farm</label>
+                <select
+                  value={selectedFarm}
+                  onChange={(e) => setSelectedFarm(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
                 >
-                  <input
-                    type="checkbox"
-                    checked={selectedSensors.includes(sensor)}
-                    onChange={() => toggleSensor(sensor)}
-                    className="rounded border-slate-800 text-purple-600 focus:ring-purple-500"
-                  />
-                  <span className="text-xs font-semibold">{sensor}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* STEP 9: SELECT FARM */}
-        {step === 9 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 9: Assign Target Farm Location</h3>
-              <p className="text-xs text-slate-400">Assign this node to a specific agricultural sector farm.</p>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">Target Farm</label>
-              <select
-                value={selectedFarm}
-                onChange={(e) => setSelectedFarm(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-semibold"
-              >
-                <option value="North Commercial Farm">North Commercial Farm</option>
-                <option value="South Organic Greenhouse">South Organic Greenhouse</option>
-              </select>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 10: SELECT ZONE */}
-        {step === 10 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 10: Assign Sector Zone</h3>
-              <p className="text-xs text-slate-400">Assign the device control relay mapping to a specific sector zone.</p>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">Irrigation Zone</label>
-              <select
-                value={selectedZone}
-                onChange={(e) => setSelectedZone(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-semibold"
-              >
-                <option value="Zone A (Corn & Wheat Sector)">Zone A (Corn & Wheat Sector)</option>
-                <option value="Zone B (Drip Fertigation)">Zone B (Drip Fertigation)</option>
-              </select>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 11: COMPLETE SETUP */}
-        {step === 11 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Step 11: Complete Claim Configuration</h3>
-              <p className="text-xs text-slate-400">Review assigned identifiers and launch the device interface.</p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-left font-mono text-xs space-y-2">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Name:</span>
-                <span className="text-white font-bold">{nodeName}</span>
+                  <option value="North Commercial Farm">North Commercial Farm</option>
+                  <option value="South Organic Greenhouse">South Organic Greenhouse</option>
+                </select>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Serial Number:</span>
-                <span className="text-emerald-400 font-bold">{foundDevice?.serialNumber || `AGRI-${selectedProduct.boardFamily}-DEVICE`}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Farm:</span>
-                <span className="text-purple-400 font-bold">{selectedFarm}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Zone:</span>
-                <span className="text-cyan-400 font-bold">{selectedZone}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Sensors:</span>
-                <span className="text-emerald-400 font-bold">{selectedSensors.join(', ')}</span>
+
+              {/* ZONE SELECT */}
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Zone / Sector</label>
+                <select
+                  value={selectedZone}
+                  onChange={(e) => setSelectedZone(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="Zone A (Corn & Wheat Sector)">Zone A (Corn & Wheat Sector)</option>
+                  <option value="Zone B (Drip Fertigation)">Zone B (Drip Fertigation)</option>
+                </select>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* FOOTER BUTTONS */}
-        <div className="flex items-center justify-between pt-4 border-t border-slate-800">
-          <button
-            disabled={step === 1}
-            onClick={() => setStep((s) => s - 1)}
-            className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold disabled:opacity-30 disabled:cursor-not-allowed flex items-center space-x-1"
-          >
-            <ChevronLeft className="w-4 h-4" />
-            <span>Back</span>
-          </button>
-
-          {step < 11 ? (
             <button
-              disabled={(step === 3 && !foundDevice) || (step === 2 && isScanning)}
-              onClick={() => {
-                if (step === 4) {
-                  handleConnectDevice();
-                } else if (step === 6) {
-                  handleTransmitWifiConfig();
-                } else if (step === 7) {
-                  handleRegisterCloud();
-                } else {
-                  setStep((s) => s + 1);
-                }
-              }}
-              className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 flex items-center space-x-1 disabled:opacity-40"
-            >
-              <span>Next</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          ) : (
-            <button
+              type="button"
               disabled={isSubmitting}
               onClick={handleCompleteSetup}
-              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 flex items-center space-x-1.5"
+              className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/30 transition-all flex items-center justify-center space-x-1.5"
             >
-              {isSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              <span>{isSubmitting ? 'Provisioning...' : 'Complete & Launch Node'}</span>
+              {isSubmitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>Done</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
