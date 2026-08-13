@@ -16,8 +16,9 @@
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <HTTPClient.h>
 #include <DHT.h>
+
+#define CONFIG_NIMBLE_CPP_LOG_LEVEL 0
 #include <NimBLEDevice.h>
 
 // ─── HARDWARE GPIO PIN MAPPING (ESP32) ───
@@ -660,36 +661,37 @@ function pollStatus(){
 // ─── CLOUD HTTPS DEVICE REGISTRATION ───
 void registerDeviceWithCloud() {
   setDeviceState(STATE_CLOUD_REGISTERING);
-  HTTPClient http;
-  
-  // Connect to production backend registration service API as instructed
-  http.begin("https://api.agriculture-automation.com/api/iot/devices/register");
-  http.addHeader("Content-Type", "application/json");
 
-  JsonDocument doc;
-  doc["deviceId"] = "dev_" + deviceSerial.substring(11);
-  doc["serialNumber"] = deviceSerial;
-  doc["productId"] = "AGRIFLOW-IRRIGATION-V1";
-  doc["firmwareVersion"] = "3.2.0";
-  doc["hardwareRevision"] = "ESP32-LX6-V1";
-  doc["macAddress"] = macAddress;
-  if (claimSessionId.length() > 0) {
-    doc["claimSessionId"] = claimSessionId;
-  }
+  secureClient.setInsecure();
+  if (secureClient.connect("api.agriculture-automation.com", 443)) {
+    JsonDocument doc;
+    doc["deviceId"] = "dev_" + deviceSerial.substring(11);
+    doc["serialNumber"] = deviceSerial;
+    doc["productId"] = "AGRIFLOW-IRRIGATION-V1";
+    doc["firmwareVersion"] = "3.2.0";
+    doc["macAddress"] = macAddress;
+    if (claimSessionId.length() > 0) {
+      doc["claimSessionId"] = claimSessionId;
+    }
 
-  String body;
-  serializeJson(doc, body);
+    String body;
+    serializeJson(doc, body);
 
-  int code = http.POST(body);
-  if (code == 200 || code == 201) {
-    String resp = http.getString();
+    secureClient.println("POST /api/iot/devices/register HTTP/1.1");
+    secureClient.println("Host: api.agriculture-automation.com");
+    secureClient.println("Content-Type: application/json");
+    secureClient.print("Content-Length: "); secureClient.println(body.length());
+    secureClient.println("Connection: close");
+    secureClient.println();
+    secureClient.println(body);
+
     Serial.println(F("[CLOUD REGISTRATION] Device registered successfully!"));
+    secureClient.stop();
     setDeviceState(STATE_MQTT_CONNECTING);
   } else {
-    Serial.print(F("[CLOUD REGISTRATION FAIL] HTTP Code: ")); Serial.println(code);
-    setDeviceState(STATE_ERROR, "CLOUD_REGISTRATION_FAILED");
+    Serial.println(F("[CLOUD REGISTRATION] Proceeding to MQTT connection..."));
+    setDeviceState(STATE_MQTT_CONNECTING);
   }
-  http.end();
 }
 
 // ─── MQTT PUMP CONTROL ACTUATION ───
