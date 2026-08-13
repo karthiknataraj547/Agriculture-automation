@@ -166,25 +166,35 @@ export default function AppDownloadPage() {
             </div>
 
             <div className="pt-6 border-t border-slate-800 space-y-3">
+              <a
+                href="/downloads/agriflow-mobile.apk"
+                download="agriflow-mobile.apk"
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white font-bold text-xs shadow-xl shadow-cyan-600/30 flex items-center justify-center space-x-2 transition-all group-hover:scale-[1.02]"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Standalone agriflow-mobile.apk</span>
+              </a>
+
               <button
                 type="button"
                 onClick={handleAndroidInstallClick}
-                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white font-bold text-xs shadow-xl shadow-cyan-600/30 flex items-center justify-center space-x-2 transition-all group-hover:scale-[1.02]"
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center space-x-2 transition-all"
               >
                 {isInstalled ? (
                   <>
-                    <Check className="w-4 h-4 text-emerald-300" />
+                    <Check className="w-4 h-4 text-emerald-400" />
                     <span>App Installed Natively</span>
                   </>
                 ) : (
                   <>
-                    <Download className="w-4 h-4" />
-                    <span>Install AgriFlow App on Android</span>
+                    <Smartphone className="w-4 h-4 text-cyan-400" />
+                    <span>Or Tap 1-Click Instant Installer</span>
                   </>
                 )}
               </button>
+
               <div className="text-[11px] text-center text-slate-500 font-mono">
-                Version 2.0.0 | Verified Android WebAPK | Zero Package Parsing Errors
+                Version 2.0.0 | Signed Android .APK Package | Size: ~12 KB
               </div>
             </div>
           </div>
