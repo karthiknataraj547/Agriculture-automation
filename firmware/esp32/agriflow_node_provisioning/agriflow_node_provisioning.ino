@@ -8,6 +8,7 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
+#include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -38,11 +39,6 @@ String wifiPass = "";
 String deviceSerial = "";
 String macAddress = "";
 bool isProvisioned = false;
-enum ProvisioningMode { MODE_EZ_FAST_BLINK, MODE_AP_SLOW_BLINK, MODE_CONNECTING_HEARTBEAT };
-ProvisioningMode currentBlinkMode = MODE_AP_SLOW_BLINK;
-
-bool toolConnected = false;
-unsigned long lastToolConnectTime = 0;
 
 unsigned long lastLedToggle = 0;
 bool ledState = LOW;
@@ -62,29 +58,22 @@ void setup() {
   
   dht.begin();
   
-  WiFi.mode(WIFI_AP);
-  delay(100);
   macAddress = WiFi.macAddress();
-  String macClean = macAddress;
-  macClean.replace(":", "");
-  String lastFour = macClean.substring(8, 12);
-  deviceSerial = "AGRI-ESP32-" + lastFour;
+  deviceSerial = "AGRI-ESP32-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
   deviceSerial.toUpperCase();
 
   Serial.println("\n==========================================");
-  Serial.println(" AgriFlow Smart Node (Wipro Smart Protocol)");
+  Serial.println(" AgriFlow Smart Irrigation Controller (ESP32)");
   Serial.println(" Serial Number: " + deviceSerial);
   Serial.println(" MAC Address:   " + macAddress);
-  Serial.println(" Protocol:      WIPRO_TUYA_AP_V2");
   Serial.println("==========================================");
 
   preferences.begin("agri-node", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPass = preferences.getString("pass", "");
-  preferences.end();
 
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
-    Serial.println("[MODE] Entering WIPRO SMART PROVISIONING MODE...");
+    Serial.println("[MODE] Entering PROVISIONING / SETUP MODE...");
     setupProvisioningMode();
   } else {
     Serial.println("[MODE] Connecting with saved Wi-Fi: " + wifiSsid);
@@ -94,102 +83,32 @@ void setup() {
 
 void setupProvisioningMode() {
   isProvisioned = false;
-  toolConnected = false;
-  currentBlinkMode = MODE_AP_SLOW_BLINK;
-
-  String macClean = macAddress;
-  macClean.replace(":", "");
-  String lastFour = macClean.substring(8, 12);
-  String apName = "AGRI-SETUP-" + lastFour;
-  apName.toUpperCase();
-
+  String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
   WiFi.softAP(apName.c_str(), "agrifarm2026");
 
-  Serial.println("[WIPRO AP] Access Point Started: " + apName);
-  Serial.println("[WIPRO AP] Visit IP: " + WiFi.softAPIP().toString());
+  Serial.println("[AP] Access Point Started: " + apName);
+  Serial.println("[AP] Connect & Visit IP: " + WiFi.softAPIP().toString());
 
-  // GET /ping — Wipro Smart Device Verification Endpoint
+  server.on("/setup", HTTP_POST, handleProvisioningRequest);
   server.on("/ping", HTTP_GET, []() {
-    toolConnected = true;
-    currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
-    lastToolConnectTime = millis();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    String json = "{\"deviceType\":\"WIPRO_AGRIFLOW_SMART_NODE\","
-                  "\"protocol\":\"TUYA_AP_V2\","
-                  "\"status\":\"READY_FOR_PROVISIONING\","
-                  "\"serial\":\"" + deviceSerial + "\","
-                  "\"mac\":\"" + macAddress + "\","
-                  "\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\","
-                  "\"blinkingMode\":\"AP_MODE_SLOW\"}";
-    server.send(200, "application/json", json);
-    Serial.println(F("[WIPRO APP] App connected! LED set to Heartbeat mode."));
+    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\"}");
   });
-
-  // GET /wifi-scan — Nearby 2.4GHz Wi-Fi scanner endpoint for Wipro App
-  server.on("/wifi-scan", HTTP_GET, []() {
-    toolConnected = true;
-    currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
-    lastToolConnectTime = millis();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    int n = WiFi.scanNetworks();
-    String json = "[";
-    for (int i = 0; i < n; ++i) {
-      if (i > 0) json += ",";
-      json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
-    }
-    json += "]";
-    server.send(200, "application/json", json);
-  });
-
-  // GET /status — Live connection status endpoint
-  server.on("/status", HTTP_GET, []() {
-    toolConnected = true;
-    lastToolConnectTime = millis();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"error\":\"NONE\"}");
-  });
-
-  // POST or GET /setup — Wi-Fi Credential Transmission Endpoint
-  server.on("/setup", []() {
-    toolConnected = true;
-    currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
-    lastToolConnectTime = millis();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    String reqSsid = server.arg("ssid");
-    String reqPass = server.arg("password");
-    if (reqSsid.length() > 0) {
-      wifiSsid = reqSsid;
-      wifiPass = reqPass;
-      isProvisioned = true;
-      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials received! Connecting to router...\"}");
-      return;
-    }
-    server.send(400, "application/json", "{\"success\":false,\"message\":\"Missing Wi-Fi SSID\"}");
-  });
-
   server.begin();
 
-  // Loop in Provisioning Mode until Wi-Fi Config Received
+  NimBLEDevice::init(apName.c_str());
+  NimBLEServer *pServer = NimBLEDevice::createServer();
+  NimBLEService *pService = pServer->createService(SERVICE_UUID);
+  pService->start();
+  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
+  pAdv->addServiceUUID(SERVICE_UUID);
+  pAdv->start();
+  Serial.println("[BLE] NimBLE Bluetooth Advertising Started!");
+
+  // Loop in Setup Mode until Wi-Fi Config Received
   while (!isProvisioned) {
-    // Wipro Smart LED Blinking Pattern Logic:
-    // • EZ Mode: Rapid Blinking (100ms)
-    // • AP Mode: Slow Blinking (1200ms)
-    // • App Transmitting / Connected: Slow Heartbeat Pulse (600ms)
+    // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
     unsigned long currentMillis = millis();
-    
-    if (toolConnected && (currentMillis - lastToolConnectTime > 12000)) {
-      toolConnected = false;
-      currentBlinkMode = MODE_AP_SLOW_BLINK;
-    }
-
-    unsigned long blinkInterval = 1200; // AP Mode default
-    if (currentBlinkMode == MODE_CONNECTING_HEARTBEAT) {
-      blinkInterval = 600;
-    } else if (currentBlinkMode == MODE_EZ_FAST_BLINK) {
-      blinkInterval = 100;
-    }
-
-    if (currentMillis - lastLedToggle >= blinkInterval) {
+    if (currentMillis - lastLedToggle >= 200) {
       lastLedToggle = currentMillis;
       ledState = !ledState;
       digitalWrite(PIN_LED_INDICATOR, ledState);
@@ -198,7 +117,7 @@ void setupProvisioningMode() {
     server.handleClient();
   }
 
-  preferences.begin("agri-node", false);
+  NimBLEDevice::deinit(true);
   preferences.putString("ssid", wifiSsid);
   preferences.putString("pass", wifiPass);
   preferences.end();
