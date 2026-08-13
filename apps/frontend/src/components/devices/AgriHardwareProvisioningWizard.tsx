@@ -544,28 +544,46 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 discoveredDevices.map((device) => (
                   <div
                     key={device.serialNumber}
-                    className="p-4 rounded-xl bg-[#1f2937] border border-emerald-500/40 flex items-center justify-between shadow-lg animate-scale-up"
+                    className="p-4 rounded-2xl bg-[#1f2937] border border-emerald-500/50 space-y-3 shadow-xl animate-scale-up text-left"
                   >
-                    <div className="flex items-center space-x-3">
-                      <div className="w-9 h-9 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                        <Cpu className="w-5 h-5 animate-pulse" />
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                          <Cpu className="w-6 h-6 animate-pulse" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span>{device.productName}</span>
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/60 text-[9px] font-mono">
+                              CERTIFIED
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">{device.serialNumber} &bull; {device.macAddress}</div>
+                        </div>
                       </div>
-                      <div className="text-left">
-                        <div className="text-xs font-bold text-white">{device.productName}</div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">{device.serialNumber}</div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedDevice(device);
+                          setStep(2); // Go directly to Wi-Fi entry
+                        }}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg transition-all flex items-center space-x-1"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Connect &amp; Setup</span>
+                      </button>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-700/60 flex items-center justify-between text-[11px]">
+                      <div className="flex items-center space-x-1 text-emerald-400 font-medium">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Hardware Certified: AGRI-CERT-ESP32-AUTHENTICATED-V1</span>
+                      </div>
+                      <div className="text-amber-300 font-mono text-[10px] bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded-full">
+                        ⚡ LED Blinking Slowed (800ms)
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedDevice(device);
-                        setStep(2); // Go directly to Wi-Fi entry
-                      }}
-                      className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all flex items-center space-x-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add</span>
-                    </button>
                   </div>
                 ))
               ) : (

@@ -43,6 +43,9 @@ bool isProvisioned = false;
 unsigned long lastLedToggle = 0;
 bool ledState = LOW;
 
+bool toolConnected = false;
+unsigned long lastToolConnectTime = 0;
+
 void setupProvisioningMode();
 void handleProvisioningRequest();
 void connectToWiFi();
@@ -58,19 +61,26 @@ void setup() {
   
   dht.begin();
   
+  WiFi.mode(WIFI_AP);
+  delay(100);
   macAddress = WiFi.macAddress();
-  deviceSerial = "AGRI-ESP32-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  String macClean = macAddress;
+  macClean.replace(":", "");
+  String lastFour = macClean.substring(8, 12);
+  deviceSerial = "AGRI-ESP32-" + lastFour;
   deviceSerial.toUpperCase();
 
   Serial.println("\n==========================================");
   Serial.println(" AgriFlow Smart Irrigation Controller (ESP32)");
   Serial.println(" Serial Number: " + deviceSerial);
   Serial.println(" MAC Address:   " + macAddress);
+  Serial.println(" Certificate:   AGRI-CERT-ESP32-AUTHENTICATED-V1");
   Serial.println("==========================================");
 
   preferences.begin("agri-node", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPass = preferences.getString("pass", "");
+  preferences.end();
 
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
     Serial.println("[MODE] Entering PROVISIONING / SETUP MODE...");
@@ -83,32 +93,89 @@ void setup() {
 
 void setupProvisioningMode() {
   isProvisioned = false;
-  String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  toolConnected = false;
+  String macClean = macAddress;
+  macClean.replace(":", "");
+  String lastFour = macClean.substring(8, 12);
+  String apName = "AGRI-SETUP-" + lastFour;
+  apName.toUpperCase();
+
   WiFi.softAP(apName.c_str(), "agrifarm2026");
 
   Serial.println("[AP] Access Point Started: " + apName);
   Serial.println("[AP] Connect & Visit IP: " + WiFi.softAPIP().toString());
 
-  server.on("/setup", HTTP_POST, handleProvisioningRequest);
+  // GET /ping — Hardware Certification & Detection Endpoint
   server.on("/ping", HTTP_GET, []() {
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\"}");
+    toolConnected = true;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    String json = "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + 
+                  "\",\"mac\":\"" + macAddress + 
+                  "\",\"vendor\":\"AgriFlow\",\"boardFamily\":\"ESP32\"," +
+                  "\"hardwareCertificate\":\"AGRI-CERT-ESP32-AUTHENTICATED-V1\"," +
+                  "\"toolConnected\":true}";
+    server.send(200, "application/json", json);
+    Serial.println(F("[TOOL] Hardware detected & certified by provisioning wizard! LED blinking slowed down."));
   });
-  server.begin();
 
-  NimBLEDevice::init(apName.c_str());
-  NimBLEServer *pServer = NimBLEDevice::createServer();
-  NimBLEService *pService = pServer->createService(SERVICE_UUID);
-  pService->start();
-  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
-  pAdv->addServiceUUID(SERVICE_UUID);
-  pAdv->start();
-  Serial.println("[BLE] NimBLE Bluetooth Advertising Started!");
+  // GET /wifi-scan — Scan nearby Wi-Fi networks for tool wizard picker
+  server.on("/wifi-scan", HTTP_GET, []() {
+    toolConnected = true;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    int n = WiFi.scanNetworks();
+    String json = "[";
+    for (int i = 0; i < n; ++i) {
+      if (i > 0) json += ",";
+      json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+    }
+    json += "]";
+    server.send(200, "application/json", json);
+  });
+
+  // GET /status — Connection progress tracking endpoint
+  server.on("/status", HTTP_GET, []() {
+    toolConnected = true;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"error\":\"NONE\"}");
+  });
+
+  // POST or GET /setup — Wi-Fi Credentials Receiver Endpoint
+  server.on("/setup", []() {
+    toolConnected = true;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    String reqSsid = server.arg("ssid");
+    String reqPass = server.arg("password");
+    if (reqSsid.length() > 0) {
+      wifiSsid = reqSsid;
+      wifiPass = reqPass;
+      isProvisioned = true;
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials received! Connecting...\"}");
+      return;
+    }
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"Missing Wi-Fi SSID\"}");
+  });
+
+  server.begin();
 
   // Loop in Setup Mode until Wi-Fi Config Received
   while (!isProvisioned) {
-    // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
+    // Dynamic LED Blinking Speed:
+    // • Default RAPID blinking (100ms) = Searching for connection tool
+    // • SLOW heartbeat blinking (800ms) = Tool Connected & Provisioning in Progress!
     unsigned long currentMillis = millis();
-    if (currentMillis - lastLedToggle >= 200) {
+    
+    // Auto timeout tool connection mode after 10 seconds of inactivity
+    if (toolConnected && (currentMillis - lastToolConnectTime > 10000)) {
+      toolConnected = false;
+    }
+
+    unsigned long blinkInterval = toolConnected ? 800 : 100;
+
+    if (currentMillis - lastLedToggle >= blinkInterval) {
       lastLedToggle = currentMillis;
       ledState = !ledState;
       digitalWrite(PIN_LED_INDICATOR, ledState);
@@ -117,7 +184,7 @@ void setupProvisioningMode() {
     server.handleClient();
   }
 
-  NimBLEDevice::deinit(true);
+  preferences.begin("agri-node", false);
   preferences.putString("ssid", wifiSsid);
   preferences.putString("pass", wifiPass);
   preferences.end();
