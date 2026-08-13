@@ -554,9 +554,106 @@ void setupSoftAP(const String& apName) {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.sendContent_P((const char*)gifData, sizeof(gifData));
   });
+  // GET / — Self-contained Captive Portal Provisioning Page
+  server.on("/", HTTP_GET, []() {
+    String html = R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgriFlow Setup</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:16px}
+.card{background:#1e293b;border-radius:16px;padding:24px;max-width:400px;width:100%;box-shadow:0 20px 40px rgba(0,0,0,.5)}
+h1{font-size:18px;color:#a78bfa;margin-bottom:4px}
+.sub{font-size:12px;color:#64748b;margin-bottom:16px}
+label{font-size:12px;color:#94a3b8;display:block;margin-bottom:4px;margin-top:12px}
+select,input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#fff;font-size:13px;outline:none}
+select:focus,input:focus{border-color:#7c3aed}
+button{width:100%;padding:12px;border:none;border-radius:10px;font-size:14px;font-weight:bold;cursor:pointer;margin-top:16px;transition:.2s}
+.btn-scan{background:#4f46e5;color:#fff}
+.btn-scan:hover{background:#6366f1}
+.btn-connect{background:#7c3aed;color:#fff}
+.btn-connect:hover{background:#8b5cf6}
+.status{margin-top:12px;padding:10px;border-radius:8px;font-size:12px;display:none}
+.ok{background:#064e3b;color:#6ee7b7;border:1px solid #065f46;display:block}
+.err{background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d;display:block}
+.info{background:#1e1b4b;color:#a5b4fc;border:1px solid #312e81;display:block}
+.devinfo{font-size:11px;color:#475569;margin-top:8px;text-align:center}
+#networks{max-height:120px;overflow-y:auto}
+</style></head><body>
+<div class="card">
+<h1>&#127793; AgriFlow Setup</h1>
+<div class="sub">)rawliteral" + deviceSerial + " &bull; " + macAddress + R"rawliteral(</div>
+
+<button class="btn-scan" onclick="scanWifi()">&#128225; Scan Wi-Fi Networks</button>
+<div id="status1" class="status"></div>
+
+<label>Wi-Fi Network (SSID)</label>
+<select id="ssid"><option value="">-- Scan first or type below --</option></select>
+<input id="ssid_manual" placeholder="Or type SSID manually" style="margin-top:6px">
+
+<label>Password</label>
+<input id="pass" type="password" placeholder="Enter Wi-Fi password">
+
+<button class="btn-connect" onclick="sendCreds()">&#128268; Connect to Wi-Fi</button>
+<div id="status2" class="status"></div>
+
+<div class="devinfo">After connecting, the device will register with AgriFlow Cloud automatically.</div>
+</div>
+
+<script>
+function $(id){return document.getElementById(id)}
+function showStatus(el,msg,cls){el.className='status '+cls;el.textContent=msg;el.style.display='block'}
+
+function scanWifi(){
+  showStatus($('status1'),'Scanning...','info');
+  fetch('/wifi-scan').then(r=>r.json()).then(data=>{
+    var sel=$('ssid');sel.innerHTML='';
+    if(data.length===0){showStatus($('status1'),'No networks found','err');return}
+    data.forEach(n=>{var o=document.createElement('option');o.value=n.ssid;o.textContent=n.ssid+' ('+n.rssi+'dBm)';sel.appendChild(o)});
+    showStatus($('status1'),'Found '+data.length+' networks','ok');
+  }).catch(e=>showStatus($('status1'),'Scan failed: '+e,'err'));
+}
+
+function sendCreds(){
+  var ssid=$('ssid').value||$('ssid_manual').value;
+  var pass=$('pass').value;
+  if(!ssid){showStatus($('status2'),'Please enter SSID','err');return}
+  showStatus($('status2'),'Sending credentials...','info');
+  fetch('/setup?ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(pass),{method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){showStatus($('status2'),'Credentials saved! Connecting to WiFi...','ok');pollStatus()}
+      else showStatus($('status2'),d.message||'Failed','err');
+    }).catch(e=>showStatus($('status2'),'Send failed: '+e,'err'));
+}
+
+function pollStatus(){
+  var iv=setInterval(function(){
+    fetch('/status').then(r=>r.json()).then(d=>{
+      if(d.status==='WIFI_CONNECTED'||d.status==='ONLINE'||d.status==='CLOUD_REGISTERING'||d.status==='MQTT_CONNECTING'){
+        clearInterval(iv);showStatus($('status2'),'Connected to WiFi! IP: Device is now online.','ok');
+      }else if(d.status==='ERROR'||d.error==='WIFI_AUTH_FAILED'){
+        clearInterval(iv);showStatus($('status2'),'WiFi connection failed. Check password and try again.','err');
+      }else{
+        showStatus($('status2'),'Status: '+d.status+'...','info');
+      }
+    }).catch(function(){});
+  },2000);
+}
+</script></body></html>)rawliteral";
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "text/html", html);
+  });
+
+  // Captive portal redirect — catch all unknown URLs and redirect to /
+  server.onNotFound([]() {
+    server.sendHeader("Location", "http://192.168.4.1/");
+    server.send(302, "text/plain", "Redirecting to setup page...");
+  });
 
   server.begin();
   Serial.print(F("[AP] SoftAP Server running on port 80: ")); Serial.println(apName);
+  Serial.println(F("[AP] Connect & Visit IP: 192.168.4.1"));
 }
 
 // ─── CLOUD HTTPS DEVICE REGISTRATION ───
@@ -642,6 +739,10 @@ void setup() {
   digitalWrite(PIN_RELAY_PUMP, LOW);
 
   dht.begin();
+  
+  // Initialize WiFi hardware FIRST so macAddress() returns a valid MAC
+  WiFi.mode(WIFI_AP);
+  delay(100);
   macAddress = WiFi.macAddress();
   
   // Format AGRI-SETUP-XXXX using last 4 digits of MAC address
