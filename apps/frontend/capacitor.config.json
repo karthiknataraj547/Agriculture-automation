@@ -1,0 +1,15 @@
+{
+  "appId": "com.agriflow.app",
+  "appName": "AgriFlow Smart Agriculture",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://agriculture-automation.vercel.app",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}
