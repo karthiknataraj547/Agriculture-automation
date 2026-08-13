@@ -65,7 +65,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [bleServer, setBleServer] = useState<any>(null);
   const [claimSessionId, setClaimSessionId] = useState<string>('');
 
   // Local Wi-Fi networks scanned from the hardware
@@ -264,80 +263,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setIsScanning(false);
   };
 
-  // BLE scan triggered explicitly when clicking scan button
-  const handleExplicitBleScan = async () => {
-    if (!isBluetoothSupported) {
-      setScanError('Bluetooth setup is not supported in this browser. Please use Chrome/Edge or select manual Wi-Fi setup.');
-      return;
-    }
-    setIsScanning(true);
-    try {
-      const device = await (navigator as any).bluetooth.requestDevice({
-        filters: [
-          { namePrefix: 'AGRI' },
-          { services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] },
-        ],
-        optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb'],
-      });
-
-      if (device && device.gatt) {
-        const server = await device.gatt.connect();
-        setBleServer(server);
-
-        let serialName = device.name || `AGRI-ESP32-${device.id.slice(0, 6)}`;
-        let macAddr = device.id;
-
-        try {
-          const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
-          const infoChar = await service.getCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb');
-          const valBuf = await infoChar.readValue();
-          const infoText = new TextDecoder().decode(valBuf);
-          const parsed = JSON.parse(infoText);
-          if (parsed.serialNumber) serialName = parsed.serialNumber;
-          if (parsed.macAddress) macAddr = parsed.macAddress;
-        } catch (e) {}
-
-        const bleNode = {
-          serialNumber: serialName,
-          macAddress: macAddr,
-          boardFamily: 'ESP32',
-          rssi: -40,
-          mode: 'Bluetooth BLE GATT Hardware',
-          productName: 'AgriFlow Smart Irrigation Controller'
-        };
-
-        setDiscoveredDevices([bleNode]);
-        setSelectedDevice(bleNode);
-        setIsScanning(false);
-      }
-    } catch (err) {
-      setIsScanning(false);
-    }
-  };
-
-  // CONNECT DEVICE AND RUN WIPRO-STYLE COUNTDOWN PROGRESS (0% TO 100%)
+  // CONNECT DEVICE AND RUN WIPRO-STYLE COUNTDOWN PROGRESS (0% TO 100%) VIA WI-FI
   const startConnectionFlow = async () => {
     setStep(3); // Connection progress step
     setConnectionStage('PAIRING');
     setConnectionProgress(10);
     setFeedback(null);
 
-    // 1. Transmit via BLE
-    if (bleServer && bleServer.connected) {
-      try {
-        const service = await bleServer.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
-        const ssidChar = await service.getCharacteristic('0000ffe8-0000-1000-8000-00805f9b34fb');
-        const credsPayload = JSON.stringify({ ssid: wifiSsid, password: wifiPass });
-        await ssidChar.writeValue(new TextEncoder().encode(credsPayload));
-
-        const cmdChar = await service.getCharacteristic('0000ffe9-0000-1000-8000-00805f9b34fb');
-        await cmdChar.writeValue(new TextEncoder().encode('CONNECT'));
-      } catch (e) {
-        console.error('[BLE Transmit Error]', e);
-      }
-    }
-
-    // 2. Transmit via SoftAP
+    // Transmit credentials via Wi-Fi (Proxy or SoftAP)
     if (selectedDevice?.isSoftAP) {
       try {
         const controller = new AbortController();
@@ -404,45 +337,26 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       let currentDeviceState = 'WIFI_CONNECTING';
       let errorReason = 'NONE';
 
-      // A. Polling via BLE GATT characteristics
-      if (bleServer && bleServer.connected) {
+      // Polling via Wi-Fi SoftAP / Local Proxy status endpoints
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        
+        let statusRes;
         try {
-          const service = await bleServer.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
-          
-          const statusChar = await service.getCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb');
-          const valBuf = await statusChar.readValue();
-          currentDeviceState = new TextDecoder().decode(valBuf);
-
-          const errChar = await service.getCharacteristic('0000ffea-0000-1000-8000-00805f9b34fb');
-          const errBuf = await errChar.readValue();
-          errorReason = new TextDecoder().decode(errBuf);
-        } catch (e) {
-          console.warn('[BLE status poll failed]', e);
+          statusRes = await fetch('http://localhost:4001/status', { signal: controller.signal });
+        } catch {
+          statusRes = await fetch('http://192.168.4.1/status', { signal: controller.signal });
         }
-      }
-      // B. Polling via SoftAP Web Server endpoint
-      else if (selectedDevice?.isSoftAP) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 1200);
-          
-          let statusRes;
-          try {
-            statusRes = await fetch('http://localhost:4001/status', { signal: controller.signal });
-          } catch {
-            statusRes = await fetch('http://192.168.4.1/status', { signal: controller.signal });
-          }
-          
-          clearTimeout(timeoutId);
-          if (statusRes && statusRes.ok) {
-            const data = await statusRes.json();
-            currentDeviceState = data.status || 'WIFI_CONNECTING';
-            errorReason = data.error || 'NONE';
-          }
-        } catch (e) {
-          // If the network switches or SoftAP turns off, check if backend cloud discovery registers the node
-          console.warn('[SoftAP connection dropped, polling database discovery as fallback...]', e);
+        
+        clearTimeout(timeoutId);
+        if (statusRes && statusRes.ok) {
+          const data = await statusRes.json();
+          currentDeviceState = data.status || 'WIFI_CONNECTING';
+          errorReason = data.error || 'NONE';
         }
+      } catch (e) {
+        console.warn('[SoftAP connection dropped, polling database discovery as fallback...]', e);
       }
 
       // Handle Wi-Fi authentication/connection failure
@@ -578,8 +492,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               <Cpu className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Add Device</h2>
-              <p className="text-xs text-slate-400">Discovering nearby wireless hardware</p>
+              <h2 className="text-base font-bold text-white">Wi-Fi Hardware Discovery Wizard</h2>
+              <p className="text-xs text-slate-400">Pure Wi-Fi Wireless Provisioning (SoftAP & Local Proxy)</p>
             </div>
           </div>
 
@@ -614,18 +528,15 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             {/* AUTO SCAN AREA */}
             <div className="p-5 rounded-2xl bg-slate-950/50 border border-purple-500/20 space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-purple-500 animate-ping"></span>
-                  Auto Scanning (BLE & Wi-Fi)
+                <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></span>
+                  Wi-Fi Auto Discovery
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] bg-purple-950/60 border border-purple-500/30 text-purple-300 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
-                    <Bluetooth className="w-3 h-3 text-purple-400" /> BLE
-                  </span>
                   <span className="text-[10px] bg-indigo-950/60 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
-                    <Wifi className="w-3 h-3 text-indigo-400" /> Wi-Fi
+                    <Wifi className="w-3 h-3 text-indigo-400" /> Wi-Fi SoftAP & Local Proxy
                   </span>
-                  {isScanning && <RefreshCw className="w-3.5 h-3.5 text-purple-400 animate-spin" />}
+                  {isScanning && <RefreshCw className="w-3.5 h-3.5 text-indigo-400 animate-spin" />}
                 </div>
               </div>
 
@@ -695,18 +606,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                     <button
                       type="button"
                       onClick={runAutoDiscovery}
-                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg transition-all flex items-center gap-2"
+                      className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg transition-all flex items-center justify-center gap-2 mx-auto"
                     >
                       <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} />
-                      <span>Re-Scan</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleExplicitBleScan}
-                      className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all flex items-center gap-2"
-                    >
-                      <Bluetooth className="w-4 h-4" />
-                      <span>Scan via Bluetooth</span>
+                      <span>Re-Scan Wi-Fi Hardware</span>
                     </button>
                   </div>
                 </div>
