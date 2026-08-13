@@ -91,17 +91,7 @@ export default function AdminPage() {
           </div>
         </div>
       )}
-      {activeView === 'FIRMWARE' && (
-        <div className="space-y-6">
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <RefreshCw className="w-6 h-6 text-emerald-400" />
-            ESP32 / ESP8266 OTA Firmware Policy
-          </h1>
-          <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 backdrop-blur-md text-xs font-mono text-emerald-300">
-            Current Production Firmware: AetherCrop NodeMCU v1.4.2 (C++ Arduino Core)
-          </div>
-        </div>
-      )}
+      {activeView === 'FIRMWARE' && <AdminHardwareProductsView />}
       {activeView === 'AUDIT' && <AdminAuditLogsView />}
       {activeView === 'EMERGENCY' && <AdminEmergencyControls />}
       {activeView === 'SETTINGS' && (

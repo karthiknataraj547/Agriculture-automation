@@ -20,8 +20,8 @@ import {
   Activity,
   Box,
   X,
+  Zap,
   Code2,
-  Terminal,
 } from 'lucide-react';
 
 export const AdminHardwareProductsView: React.FC = () => {
@@ -703,6 +703,17 @@ void loop() {
                   <Download className="w-3.5 h-3.5" />
                   <span>DOWNLOAD .INO SKETCH</span>
                 </button>
+              </div>
+            </div>
+
+            {/* PARTITION SCHEME NOTICE */}
+            <div className="bg-purple-950/40 border border-purple-800/60 rounded-xl p-3 text-xs text-purple-200 flex items-start space-x-2">
+              <Zap className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-purple-300">Arduino IDE Partition Scheme (If "Sketch too big / 102%" error occurs):</span>
+                <p className="text-[11px] text-purple-300/90 mt-0.5">
+                  In Arduino IDE, select <strong>Tools &rarr; Partition Scheme &rarr; &quot;Huge APP (3MB No OTA/1MB SPIFFS)&quot;</strong> or <strong>&quot;Minimal SPIFFS (1.9MB APP with OTA)&quot;</strong> to expand available flash storage to 3MB.
+                </p>
               </div>
             </div>
 

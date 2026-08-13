@@ -4,6 +4,10 @@
  * Internal SKU: AGRIFLOW-IRRIGATION-V1
  * Microcontroller: ESP32 (Xtensa LX6 ESP32)
  * Version: v3.2.0 (Master Production Firmware)
+ * 
+ * NOTE FOR ARDUINO IDE COMPILATION ("Sketch too big" / "text section exceeds available space"):
+ * In Arduino IDE, go to: Tools -> Partition Scheme -> Select "Huge APP (3MB No OTA/1MB SPIFFS)" 
+ * OR "Minimal SPIFFS (1.9MB APP with OTA)" to give 1.9MB - 3.0MB of program flash storage.
  */
 
 #include <WiFi.h>
