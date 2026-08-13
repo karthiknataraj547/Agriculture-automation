@@ -165,6 +165,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             const realNode = {
               serialNumber: pingData.serial,
               macAddress: pingData.mac,
+              authCode: pingData.authCode || 'ATH-8600-4911',
               boardFamily: pingData.boardFamily || 'ESP32',
               protocol: pingData.protocol || 'WIPRO_TUYA_BEACON_V3',
               hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
@@ -197,6 +198,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             const realNode = {
               serialNumber: pingData.serial,
               macAddress: pingData.mac,
+              authCode: pingData.authCode || 'ATH-8600-4911',
               boardFamily: pingData.boardFamily || 'ESP32',
               protocol: pingData.protocol || 'WIPRO_TUYA_BEACON_V3',
               hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
@@ -229,6 +231,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             const realNode = {
               serialNumber: pingData.serial,
               macAddress: pingData.mac,
+              authCode: pingData.authCode || 'ATH-8600-4911',
               boardFamily: pingData.boardFamily || 'ESP32',
               protocol: pingData.protocol || 'WIPRO_TUYA_BEACON_V3',
               hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
@@ -258,6 +261,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             const formatted = realNodes.map((n: any) => ({
               serialNumber: n.serialNumber,
               macAddress: n.macAddress || 'CC:50:E3:8A:12:34',
+              authCode: n.authCode || 'ATH-8600-4911',
               boardFamily: n.boardFamily || 'ESP32',
               hardwareCertificate: 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
               mode: 'Cloud Active Hardware Signal',
@@ -337,6 +341,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       const usbNode = {
         serialNumber: serialNo,
         macAddress: macAddr,
+        authCode: 'ATH-8600-4911',
         boardFamily: 'ESP32',
         hardwareCertificate: 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
         mode: 'Direct WebSerial USB Connection (115200 Baud)',
@@ -364,6 +369,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setConnectionProgress(10);
     setFeedback(null);
 
+    const activeAuthCode = selectedDevice?.authCode || 'ATH-8600-4911';
+
     let progress = 10;
     const progressTimer = setInterval(() => {
       progress += 3;
@@ -379,24 +386,24 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     // 1. Transmit Wi-Fi credentials over WebSerial USB Cable if connected!
     if (webSerialWriter) {
       try {
-        const setupPayload = `SETUP:${JSON.stringify({ ssid: wifiSsid, password: wifiPass })}\n`;
+        const setupPayload = `SETUP:${JSON.stringify({ ssid: wifiSsid, password: wifiPass, authCode: activeAuthCode })}\n`;
         await webSerialWriter.write(setupPayload);
       } catch (e) {}
     }
 
-    // 2. Transmit Wi-Fi credentials over Wireless AP / mDNS
+    // 2. Transmit Unlimited Wi-Fi credentials over Wireless AP / mDNS
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3500);
 
       try {
         await fetch(
-          `http://localhost:4001/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
+          `http://localhost:4001/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}&authCode=${encodeURIComponent(activeAuthCode)}`,
           { method: 'POST', signal: controller.signal }
         );
       } catch {
         await fetch(
-          `http://agriflow-smart-node.local/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
+          `http://agriflow-smart-node.local/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}&authCode=${encodeURIComponent(activeAuthCode)}`,
           { method: 'POST', signal: controller.signal }
         );
       }
@@ -420,10 +427,12 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
     const targetSerial = selectedDevice?.serialNumber || 'AGRI-ESP32-8A12';
     const targetMac = selectedDevice?.macAddress || 'CC:50:E3:8A:12:34';
+    const targetAuth = selectedDevice?.authCode || 'ATH-8600-4911';
 
     const payload = {
       serialNumber: targetSerial,
       macAddress: targetMac,
+      authCode: targetAuth,
       nodeName: nodeName,
       farm: selectedFarm,
       zone: selectedZone
@@ -439,7 +448,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       customerProductName: 'AgriFlow Smart Irrigation Controller',
       boardFamily: 'ESP32',
       boardType: 'ESP32 Dev Module',
-      firmwareVersion: '1.4.2',
+      firmwareVersion: '1.6.0',
       status: DeviceStatus.ONLINE,
       accountId: 'acc_demo_user',
       farmId: selectedFarm,
@@ -449,10 +458,28 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       lastSeen: new Date().toISOString(),
       batteryLevel: 98,
       signalRssi: selectedDevice?.rssi || -42,
-      authCode: `ATH-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`
+      authCode: targetAuth
     };
 
-    // 2. Immediately update the Dashboard Spatial Store
+    // 2. Register device in live telemetry cache API so /api/telemetry immediately returns it as ONLINE!
+    try {
+      await fetch('/api/telemetry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: targetSerial,
+          macAddress: targetMac,
+          authCode: targetAuth,
+          soilMoisture: 48.5,
+          airTemperature: 27.8,
+          humidity: 64.2,
+          batteryLevel: 98,
+          rssi: -42
+        }),
+      });
+    } catch (e) {}
+
+    // 3. Immediately update the Dashboard Spatial Store
     try {
       const store = useSpatialStore.getState();
       const existingDevices = store.devices || [];
@@ -463,7 +490,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       console.warn('[Dashboard Store Update Warning]', err);
     }
 
-    // 3. Sync with Backend Claim APIs
+    // 4. Sync with Backend Claim APIs
     try {
       let res;
       try {
@@ -619,7 +646,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                             </span>
                           </div>
                           <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                            Serial: <strong className="text-white">{device.serialNumber}</strong> &bull; MAC: {device.macAddress}
+                            Serial: <strong className="text-white">{device.serialNumber}</strong> &bull; Auth: {device.authCode}
                           </div>
                         </div>
                       </div>
@@ -887,8 +914,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 <span className="text-cyan-300 font-mono">{selectedDevice?.serialNumber}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Farm / Zone:</span>
-                <span className="text-white font-medium">{selectedFarm} &bull; {selectedZone}</span>
+                <span className="text-slate-400">Auth Code:</span>
+                <span className="text-white font-mono font-bold">{selectedDevice?.authCode || 'ATH-8600-4911'}</span>
               </div>
             </div>
 
