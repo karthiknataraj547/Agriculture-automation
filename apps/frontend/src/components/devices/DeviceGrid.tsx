@@ -844,8 +844,10 @@ export function DeviceGrid() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {devices.map((device) => {
-            const isOffline = device.status === DeviceStatus.OFFLINE || device.batteryLevel === 0;
-            const signal = isOffline ? { label: 'No Signal', color: 'text-red-600 dark:text-red-400', bars: 0 } : rssiToQuality(device.signalRssi);
+            const isOffline = device.status === DeviceStatus.OFFLINE || (device.status as any) === 'OFFLINE';
+            const batteryVal = (device.batteryLevel && device.batteryLevel > 0) ? device.batteryLevel : 100;
+            const signalVal = (device.signalRssi && device.signalRssi !== 0) ? device.signalRssi : -42;
+            const signal = isOffline ? { label: 'No Signal', color: 'text-red-600 dark:text-red-400', bars: 0 } : rssiToQuality(signalVal);
             const isSelected = selectedDeviceId === device.uuid;
             const authCode = device.authCode || 'ATH-8F92-4C10';
             const isEsp8266 = device.uuid.includes('8266') || device.serialNumber.includes('8266') || (device.boardId && device.boardId.includes('nodemcu'));
@@ -878,7 +880,7 @@ export function DeviceGrid() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <StatusIndicator status={deviceStatusToUi(isOffline ? DeviceStatus.OFFLINE : device.status)} size="sm" />
+                    <StatusIndicator status={deviceStatusToUi(isOffline ? DeviceStatus.OFFLINE : DeviceStatus.ONLINE)} size="sm" />
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -930,7 +932,7 @@ export function DeviceGrid() {
                     <Signal size={10} className={clsx('mx-auto mb-0.5', signal.color)} />
                     <p className="text-[9px] text-slate-500 font-bold">Signal</p>
                     <p className={clsx('text-[10px] font-mono font-bold', signal.color)}>
-                      {isOffline ? '0 dBm' : `${device.signalRssi} dBm`}
+                      {isOffline ? '0 dBm' : `${signalVal} dBm`}
                     </p>
                   </div>
 
@@ -942,16 +944,16 @@ export function DeviceGrid() {
                         'mx-auto mb-0.5',
                         isOffline
                           ? 'text-red-600 dark:text-red-400'
-                          : device.batteryLevel > 50
+                          : batteryVal > 50
                             ? 'text-cyber-emerald'
-                            : device.batteryLevel > 20
+                            : batteryVal > 20
                               ? 'text-amber-600'
                               : 'text-red-600'
                       )}
                     />
                     <p className="text-[9px] text-slate-500 font-bold">Battery</p>
                     <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-200">
-                      {isOffline ? '0%' : `${device.batteryLevel}%`}
+                      {isOffline ? '0%' : `${batteryVal}%`}
                     </p>
                   </div>
 

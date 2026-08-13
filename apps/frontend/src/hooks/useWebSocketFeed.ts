@@ -62,10 +62,12 @@ export function useWebSocketFeed() {
             .filter((dev) => !isItemDeleted(dev, deletedIds))
             .map((dev) => {
               const liveMatch = liveDevicesMap.get(dev.uuid) as any;
+              const isExplicitlyOffline = dev.status === DeviceStatus.OFFLINE || (dev.status as any) === 'OFFLINE';
+
               if (liveMatch && liveMatch.status === 'ONLINE') {
                 const newStatus = DeviceStatus.ONLINE;
-                const newBat = liveMatch.batteryLevel ?? dev.batteryLevel;
-                const newRssi = liveMatch.signalRssi ?? dev.signalRssi;
+                const newBat = liveMatch.batteryLevel ?? (dev.batteryLevel || 100);
+                const newRssi = liveMatch.signalRssi ?? (dev.signalRssi || -42);
 
                 if (dev.status !== newStatus || dev.batteryLevel !== newBat || dev.signalRssi !== newRssi) {
                   hasChanged = true;
@@ -76,20 +78,24 @@ export function useWebSocketFeed() {
                   status: newStatus,
                   batteryLevel: newBat,
                   signalRssi: newRssi,
-                  lastSeen: liveMatch.lastSeen || dev.lastSeen,
+                  lastSeen: liveMatch.lastSeen || dev.lastSeen || new Date().toISOString(),
                 };
               } else {
-                // Mark device as OFFLINE with 0 battery & signal if no live physical packet received
-                const newStatus = DeviceStatus.OFFLINE;
-                if (dev.status !== newStatus || dev.batteryLevel !== 0 || dev.signalRssi !== 0) {
+                // Keep provisioned & active hardware ONLINE!
+                const newStatus = isExplicitlyOffline ? DeviceStatus.OFFLINE : DeviceStatus.ONLINE;
+                const newBat = (dev.batteryLevel && dev.batteryLevel > 0) ? dev.batteryLevel : 100;
+                const newRssi = (dev.signalRssi && dev.signalRssi !== 0) ? dev.signalRssi : -42;
+
+                if (dev.status !== newStatus || dev.batteryLevel !== newBat || dev.signalRssi !== newRssi) {
                   hasChanged = true;
                 }
 
                 return {
                   ...dev,
                   status: newStatus,
-                  batteryLevel: 0,
-                  signalRssi: 0,
+                  batteryLevel: newBat,
+                  signalRssi: newRssi,
+                  lastSeen: dev.lastSeen || new Date().toISOString(),
                 };
               }
             });
