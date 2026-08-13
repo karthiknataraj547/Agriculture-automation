@@ -174,6 +174,17 @@ void setupProvisioningMode() {
     server.send(400, "application/json", "{\"success\":false,\"message\":\"Missing Wi-Fi SSID\"}");
   });
 
+  // POST or GET /reset — Wipe saved Wi-Fi credentials
+  server.on("/reset", []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Hardware Wi-Fi Credentials Erased! Rebooting into Setup Mode...\"}");
+    preferences.begin("agri-node", false);
+    preferences.clear();
+    preferences.end();
+    delay(800);
+    ESP.restart();
+  });
+
   server.begin();
 
   // Provisioning Loop
@@ -331,6 +342,41 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void loop() {
+  // Physical BOOT Button Hold (GPIO 0) for 3 Seconds to Reset Hardware & Forget Wi-Fi
+  static unsigned long buttonPressStart = 0;
+  if (digitalRead(PIN_BUTTON_RESET) == LOW) {
+    if (buttonPressStart == 0) buttonPressStart = millis();
+    if (millis() - buttonPressStart >= 3000) {
+      Serial.println(F("[RESET] BOOT Button held for 3 seconds! Erasing saved Wi-Fi credentials..."));
+      preferences.begin("agri-node", false);
+      preferences.clear(); // Wipes saved Wi-Fi SSID & Password from NVS!
+      preferences.end();
+      
+      // Fast LED Flash Confirmation
+      for (int i = 0; i < 10; i++) {
+        digitalWrite(PIN_LED_INDICATOR, !digitalRead(PIN_LED_INDICATOR));
+        delay(100);
+      }
+      ESP.restart();
+    }
+  } else {
+    buttonPressStart = 0;
+  }
+
+  // Serial UART Command Listener over USB (Type 'RESET' in Serial Monitor)
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    if (input.equalsIgnoreCase("RESET") || input.equalsIgnoreCase("FACTORY_RESET")) {
+      Serial.println(F("{\"success\":true,\"message\":\"Hardware Wi-Fi Credentials Erased! Rebooting into Setup Mode...\"}"));
+      preferences.begin("agri-node", false);
+      preferences.clear();
+      preferences.end();
+      delay(800);
+      ESP.restart();
+    }
+  }
+
   if (WiFi.status() != WL_CONNECTED) {
     digitalWrite(PIN_LED_INDICATOR, LOW);
     connectToWiFi();
