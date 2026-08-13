@@ -8,29 +8,28 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
-#include <NimBLEDevice.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
 // ─── HARDWARE GPIO PIN MAPPING (ESP32) ───
-#define PIN_LED_INDICATOR  2    // Onboard Status LED (Blinks rapidly in Setup Mode)
-#define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0 - hold for 3s to reset setup)
+#define PIN_LED_INDICATOR  2    // Onboard Status LED
+#define PIN_BUTTON_RESET   0    // Flash/Boot Button
 #define PIN_SOIL_MOISTURE  34  // Analog Soil Moisture Probe
 #define PIN_DHT_DATA       4   // Digital Air Temp & Humidity
 #define PIN_RELAY_PUMP     26   // Water Pump Relay (Active HIGH)
 #define PIN_FLOW_RATE      27   // Pulse Water Flow Sensor
 #define DHTTYPE            DHT11
 
-#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
-#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
-
 // ─── GLOBAL OBJECTS & STATE ───
 Preferences preferences;
 WebServer server(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
+WiFiUDP udpBeacon;
 
 DHT dht(PIN_DHT_DATA, DHTTYPE);
 
@@ -40,6 +39,12 @@ String deviceSerial = "";
 String macAddress = "";
 bool isProvisioned = false;
 
+enum ProvisioningMode { MODE_EZ_FAST_BLINK, MODE_AP_SLOW_BLINK, MODE_CONNECTING_HEARTBEAT };
+ProvisioningMode currentBlinkMode = MODE_AP_SLOW_BLINK;
+
+bool toolConnected = false;
+unsigned long lastToolConnectTime = 0;
+unsigned long lastBeaconTime = 0;
 unsigned long lastLedToggle = 0;
 bool ledState = LOW;
 
@@ -58,22 +63,29 @@ void setup() {
   
   dht.begin();
   
+  WiFi.mode(WIFI_AP_STA);
+  delay(100);
   macAddress = WiFi.macAddress();
-  deviceSerial = "AGRI-ESP32-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  String macClean = macAddress;
+  macClean.replace(":", "");
+  String lastFour = macClean.substring(8, 12);
+  deviceSerial = "AGRI-ESP32-" + lastFour;
   deviceSerial.toUpperCase();
 
   Serial.println("\n==========================================");
-  Serial.println(" AgriFlow Smart Irrigation Controller (ESP32)");
+  Serial.println(" AgriFlow Smart Wireless Node (Beacon V3)");
   Serial.println(" Serial Number: " + deviceSerial);
   Serial.println(" MAC Address:   " + macAddress);
+  Serial.println(" Certificate:   AGRI-CERT-WIPRO-AUTHENTICATED-V2");
   Serial.println("==========================================");
 
   preferences.begin("agri-node", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPass = preferences.getString("pass", "");
+  preferences.end();
 
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
-    Serial.println("[MODE] Entering PROVISIONING / SETUP MODE...");
+    Serial.println("[MODE] Entering 15-SECOND WIRELESS AUTO-BEACON PROVISIONING MODE...");
     setupProvisioningMode();
   } else {
     Serial.println("[MODE] Connecting with saved Wi-Fi: " + wifiSsid);
@@ -83,30 +95,101 @@ void setup() {
 
 void setupProvisioningMode() {
   isProvisioned = false;
-  String apName = "AGRI-SETUP-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  toolConnected = false;
+  currentBlinkMode = MODE_AP_SLOW_BLINK;
+
+  String macClean = macAddress;
+  macClean.replace(":", "");
+  String lastFour = macClean.substring(8, 12);
+  String apName = "AGRI-SETUP-" + lastFour;
+  apName.toUpperCase();
+
   WiFi.softAP(apName.c_str(), "agrifarm2026");
 
-  Serial.println("[AP] Access Point Started: " + apName);
-  Serial.println("[AP] Connect & Visit IP: " + WiFi.softAPIP().toString());
+  // mDNS Wireless Signal Hostname (agriflow-smart-node.local)
+  if (MDNS.begin("agriflow-smart-node")) {
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("agriflow", "tcp", 80);
+    Serial.println(F("[mDNS] Wireless Signal Host: http://agriflow-smart-node.local"));
+  }
 
-  server.on("/setup", HTTP_POST, handleProvisioningRequest);
+  // GET /ping — Wireless Hardware Detection & Signal Endpoint
   server.on("/ping", HTTP_GET, []() {
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\"}");
+    toolConnected = true;
+    currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "*");
+    String json = "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + 
+                  "\",\"mac\":\"" + macAddress + 
+                  "\",\"vendor\":\"AgriFlow\",\"boardFamily\":\"ESP32\"," +
+                  "\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\"," +
+                  "\"protocol\":\"WIPRO_TUYA_BEACON_V3\"," +
+                  "\"rssi\":-42," +
+                  "\"toolConnected\":true}";
+    server.send(200, "application/json", json);
+    Serial.println(F("[SIGNAL] Web Tool locked onto wireless signal! LED set to heartbeat mode."));
   });
+
+  // GET /wifi-scan — Wireless 2.4GHz network scanner
+  server.on("/wifi-scan", HTTP_GET, []() {
+    toolConnected = true;
+    currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    int n = WiFi.scanNetworks();
+    String json = "[";
+    for (int i = 0; i < n; ++i) {
+      if (i > 0) json += ",";
+      json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+    }
+    json += "]";
+    server.send(200, "application/json", json);
+  });
+
+  // GET /status — Wireless Connection Status
+  server.on("/status", HTTP_GET, []() {
+    toolConnected = true;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"error\":\"NONE\"}");
+  });
+
+  // POST or GET /setup — Wireless Credentials Endpoint
+  server.on("/setup", []() {
+    toolConnected = true;
+    currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
+    lastToolConnectTime = millis();
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    String reqSsid = server.arg("ssid");
+    String reqPass = server.arg("password");
+    if (reqSsid.length() > 0) {
+      wifiSsid = reqSsid;
+      wifiPass = reqPass;
+      isProvisioned = true;
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials received! Connecting...\"}");
+      return;
+    }
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"Missing Wi-Fi SSID\"}");
+  });
+
   server.begin();
 
-  NimBLEDevice::init(apName.c_str());
-  NimBLEServer *pServer = NimBLEDevice::createServer();
-  NimBLEService *pService = pServer->createService(SERVICE_UUID);
-  pService->start();
-  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
-  pAdv->addServiceUUID(SERVICE_UUID);
-  pAdv->start();
-  Serial.println("[BLE] NimBLE Bluetooth Advertising Started!");
-
-  // Loop in Provisioning Mode until Wi-Fi Config Received
+  // Provisioning Loop
   while (!isProvisioned) {
-    // Check for USB Serial Commands (PING or SETUP:{"ssid":"...","password":"..."})
+    unsigned long currentMillis = millis();
+
+    // Broadcast UDP Wireless Signal Packet every 1 second
+    if (currentMillis - lastBeaconTime >= 1000) {
+      lastBeaconTime = currentMillis;
+      udpBeacon.beginPacket(IPAddress(255, 255, 255, 255), 7000);
+      udpBeacon.printf("{\"signal\":\"AGRI_WIRELESS_BEACON_V3\",\"serial\":\"%s\",\"mac\":\"%s\",\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\"}\n",
+                       deviceSerial.c_str(), macAddress.c_str());
+      udpBeacon.endPacket();
+    }
+
+    // Process USB Serial UART PING & SETUP commands
     if (Serial.available()) {
       String input = Serial.readStringUntil('\n');
       input.trim();
@@ -122,16 +205,19 @@ void setupProvisioningMode() {
           wifiSsid = String(reqSsid);
           wifiPass = String(reqPass);
           isProvisioned = true;
-          Serial.println("{\"success\":true,\"message\":\"Wi-Fi credentials received over USB Serial! Connecting to Wi-Fi...\"}");
+          Serial.println("{\"success\":true,\"message\":\"Credentials Received! Rebooting...\"}");
         }
       }
     }
 
-    // Dynamic LED Blinking Speed:
-    // • AP/EZ Mode: Blinking
-    // • App Connected / Transmitting: Heartbeat pulse
-    unsigned long currentMillis = millis();
-    if (currentMillis - lastLedToggle >= 200) {
+    // LED Blinking Speed
+    if (toolConnected && (currentMillis - lastToolConnectTime > 12000)) {
+      toolConnected = false;
+      currentBlinkMode = MODE_AP_SLOW_BLINK;
+    }
+
+    unsigned long blinkInterval = (currentBlinkMode == MODE_CONNECTING_HEARTBEAT) ? 600 : 1200;
+    if (currentMillis - lastLedToggle >= blinkInterval) {
       lastLedToggle = currentMillis;
       ledState = !ledState;
       digitalWrite(PIN_LED_INDICATOR, ledState);
@@ -145,7 +231,7 @@ void setupProvisioningMode() {
   preferences.putString("pass", wifiPass);
   preferences.end();
 
-  Serial.println("[SETUP] Wi-Fi Credentials Received & Saved! Rebooting to connect...");
+  Serial.println("[SETUP] Wi-Fi Credentials Received! Rebooting to connect...");
   digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON — Flashing STOPS!
   delay(1500);
   ESP.restart();

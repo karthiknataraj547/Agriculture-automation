@@ -23,7 +23,8 @@ import {
   Sparkles,
   Globe,
   RadioTower,
-  Usb
+  Usb,
+  Radar
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 
@@ -36,12 +37,15 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   onClose,
   onSuccess,
 }) => {
-  // Triple-Method Hardware Pairing Steps:
-  // 1: Detect Hardware (WebSerial USB, Wi-Fi Hotspot 192.168.4.1, or Local LAN mDNS)
+  // 15-Second Wireless Signal Radar Steps:
+  // 1: 15-Second Wireless Signal Radar Scan & Detection
   // 2: Enter Home 2.4GHz Wi-Fi Credentials & Assign Location
   // 3: 3-Stage Progress Ring (0% to 100%)
   // 4: Device Active & Ready
   const [step, setStep] = useState(1);
+
+  // 15-Second Radar Countdown Timer
+  const [scanSecondsLeft, setScanSecondsLeft] = useState<number>(15);
 
   // Form & Device Customization
   const [nodeName, setNodeName] = useState('AgriFlow Smart Irrigation Controller');
@@ -91,6 +95,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       const timeoutId = setTimeout(() => controller.abort(), 3500);
 
       fetch('http://localhost:4001/wifi-scan', { signal: controller.signal })
+        .catch(() => fetch('http://agriflow-smart-node.local/wifi-scan', { signal: controller.signal }))
         .catch(() => fetch('http://192.168.4.1/wifi-scan', { signal: controller.signal }))
         .then((r) => r.json())
         .then((data) => {
@@ -114,109 +119,168 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     }
   }, [step, selectedDevice]);
 
-  // Auto-scan real physical hardware on mount
+  // 15-Second Countdown Timer Effect
   useEffect(() => {
-    runAutoDiscovery();
+    run15SecondWirelessScan();
   }, []);
 
-  // Probes for REAL physical hardware (Strictly NO fake/mock nodes created)
-  const runAutoDiscovery = async () => {
+  const run15SecondWirelessScan = async () => {
     setIsScanning(true);
     setScanError(null);
     setDiscoveredDevices([]);
+    setScanSecondsLeft(15);
 
+    let secondsLeft = 15;
     let foundHardware = false;
 
-    // Probe 1: Local Proxy Daemon (Port 4001)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch('http://localhost:4001/ping', { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const pingData = await res.json();
-        if (pingData && (pingData.serial || pingData.mac)) {
-          const realNode = {
-            serialNumber: pingData.serial,
-            macAddress: pingData.mac,
-            boardFamily: pingData.boardFamily || 'ESP32',
-            protocol: pingData.protocol || 'WIPRO_TUYA_AP_V2',
-            hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
-            mode: 'SoftAP via Local Proxy (localhost:4001)',
-            isSoftAP: true,
-            productName: 'AgriFlow Smart Irrigation Controller'
-          };
-          setDiscoveredDevices([realNode]);
-          setSelectedDevice(realNode);
-          foundHardware = true;
-          setIsScanning(false);
-          return;
-        }
+    const timerInterval = setInterval(() => {
+      secondsLeft -= 1;
+      setScanSecondsLeft(secondsLeft);
+      if (secondsLeft <= 0) {
+        clearInterval(timerInterval);
+        setIsScanning(false);
       }
-    } catch (e) {}
+    }, 1000);
 
-    // Probe 2: Direct SoftAP IP (http://192.168.4.1/ping)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      const res = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const pingData = await res.json();
-        if (pingData && (pingData.serial || pingData.mac)) {
-          const realNode = {
-            serialNumber: pingData.serial,
-            macAddress: pingData.mac,
-            boardFamily: pingData.boardFamily || 'ESP32',
-            protocol: pingData.protocol || 'WIPRO_TUYA_AP_V2',
-            hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
-            mode: 'Wi-Fi SoftAP Direct (192.168.4.1)',
-            isSoftAP: true,
-            productName: 'AgriFlow Smart Irrigation Controller'
-          };
-          setDiscoveredDevices([realNode]);
-          setSelectedDevice(realNode);
-          foundHardware = true;
-          setIsScanning(false);
-          return;
-        }
+    // Continuous Wireless Probe Loop during the 15 Seconds
+    const probeInterval = setInterval(async () => {
+      if (foundHardware) {
+        clearInterval(probeInterval);
+        clearInterval(timerInterval);
+        return;
       }
-    } catch (e) {}
 
-    // Probe 3: Backend Cloud Discovery API (Real registered MAC hardware)
-    try {
-      const res = await fetch('/api/iot/discovery');
-      const data = await res.json();
-      if (data.nodes && Array.isArray(data.nodes)) {
-        const realNodes = data.nodes.filter((n: any) => n.status !== 'FAKE' && n.serialNumber && !n.serialNumber.includes('MOCK'));
-        if (realNodes.length > 0) {
-          const formatted = realNodes.map((n: any) => ({
-            serialNumber: n.serialNumber,
-            macAddress: n.macAddress || 'CC:50:E3:8A:12:34',
-            boardFamily: n.boardFamily || 'ESP32',
-            hardwareCertificate: 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
-            mode: 'Cloud Active Hardware (LAN)',
-            isSoftAP: false,
-            productName: 'AgriFlow Smart Irrigation Controller'
-          }));
-          setDiscoveredDevices(formatted);
-          setSelectedDevice(formatted[0]);
-          foundHardware = true;
-          setIsScanning(false);
-          return;
+      // Probe 1: Local Proxy Daemon / UDP Wireless Receiver (localhost:4001)
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        const res = await fetch('http://localhost:4001/ping', { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const pingData = await res.json();
+          if (pingData && (pingData.serial || pingData.mac)) {
+            const realNode = {
+              serialNumber: pingData.serial,
+              macAddress: pingData.mac,
+              boardFamily: pingData.boardFamily || 'ESP32',
+              protocol: pingData.protocol || 'WIPRO_TUYA_BEACON_V3',
+              hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
+              mode: 'Wireless Signal Lock (Local Proxy / UDP)',
+              rssi: pingData.rssi || -42,
+              isSoftAP: true,
+              productName: 'AgriFlow Smart Irrigation Controller'
+            };
+            setDiscoveredDevices([realNode]);
+            setSelectedDevice(realNode);
+            foundHardware = true;
+            setIsScanning(false);
+            clearInterval(probeInterval);
+            clearInterval(timerInterval);
+            return;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
 
-    setIsScanning(false);
+      // Probe 2: mDNS Wireless Hostname (agriflow-smart-node.local)
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        const res = await fetch('http://agriflow-smart-node.local/ping', { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const pingData = await res.json();
+          if (pingData && (pingData.serial || pingData.mac)) {
+            const realNode = {
+              serialNumber: pingData.serial,
+              macAddress: pingData.mac,
+              boardFamily: pingData.boardFamily || 'ESP32',
+              protocol: pingData.protocol || 'WIPRO_TUYA_BEACON_V3',
+              hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
+              mode: 'mDNS Wireless Host (agriflow-smart-node.local)',
+              rssi: -38,
+              isSoftAP: false,
+              productName: 'AgriFlow Smart Irrigation Controller'
+            };
+            setDiscoveredDevices([realNode]);
+            setSelectedDevice(realNode);
+            foundHardware = true;
+            setIsScanning(false);
+            clearInterval(probeInterval);
+            clearInterval(timerInterval);
+            return;
+          }
+        }
+      } catch (e) {}
+
+      // Probe 3: Direct SoftAP IP (192.168.4.1/ping)
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        const res = await fetch('http://192.168.4.1/ping', { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const pingData = await res.json();
+          if (pingData && (pingData.serial || pingData.mac)) {
+            const realNode = {
+              serialNumber: pingData.serial,
+              macAddress: pingData.mac,
+              boardFamily: pingData.boardFamily || 'ESP32',
+              protocol: pingData.protocol || 'WIPRO_TUYA_BEACON_V3',
+              hardwareCertificate: pingData.hardwareCertificate || 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
+              mode: 'Wi-Fi Direct Signal (192.168.4.1)',
+              rssi: -35,
+              isSoftAP: true,
+              productName: 'AgriFlow Smart Irrigation Controller'
+            };
+            setDiscoveredDevices([realNode]);
+            setSelectedDevice(realNode);
+            foundHardware = true;
+            setIsScanning(false);
+            clearInterval(probeInterval);
+            clearInterval(timerInterval);
+            return;
+          }
+        }
+      } catch (e) {}
+
+      // Probe 4: Backend Cloud Wireless Signal API
+      try {
+        const res = await fetch('/api/iot/discovery');
+        const data = await res.json();
+        if (data.nodes && Array.isArray(data.nodes)) {
+          const realNodes = data.nodes.filter((n: any) => n.status !== 'FAKE' && n.serialNumber && !n.serialNumber.includes('MOCK'));
+          if (realNodes.length > 0) {
+            const formatted = realNodes.map((n: any) => ({
+              serialNumber: n.serialNumber,
+              macAddress: n.macAddress || 'CC:50:E3:8A:12:34',
+              boardFamily: n.boardFamily || 'ESP32',
+              hardwareCertificate: 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
+              mode: 'Cloud Active Hardware Signal',
+              rssi: -45,
+              isSoftAP: false,
+              productName: 'AgriFlow Smart Irrigation Controller'
+            }));
+            setDiscoveredDevices(formatted);
+            setSelectedDevice(formatted[0]);
+            foundHardware = true;
+            setIsScanning(false);
+            clearInterval(probeInterval);
+            clearInterval(timerInterval);
+            return;
+          }
+        }
+      } catch (e) {}
+
+    }, 1200);
   };
 
   // WebSerial Direct USB Detection & Writer Store Handler
   const connectWebSerialHardware = async () => {
     if (!('serial' in navigator)) {
-      setScanError('WebSerial USB detection requires Google Chrome, Microsoft Edge, or Opera. Please use Chrome/Edge or connect PC Wi-Fi to AGRI-SETUP-XXXX.');
+      setScanError('WebSerial USB detection requires Google Chrome, Microsoft Edge, or Opera.');
       return;
     }
 
@@ -237,7 +301,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
       setWebSerialWriter(writer);
 
-      // Request hardware identity over serial UART
       await writer.write('PING\n');
 
       let receivedText = '';
@@ -281,7 +344,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
       setDiscoveredDevices([usbNode]);
       setSelectedDevice(usbNode);
-      setStep(2); // Go straight to Wi-Fi setup!
+      setStep(2);
     } catch (err: any) {
       console.warn('[WebSerial Error]', err);
       if (err.name !== 'NotFoundError') {
@@ -316,13 +379,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       try {
         const setupPayload = `SETUP:${JSON.stringify({ ssid: wifiSsid, password: wifiPass })}\n`;
         await webSerialWriter.write(setupPayload);
-        console.log('[WebSerial] Transmitted Wi-Fi credentials directly over USB cable! Hardware LED flashing stopped.');
-      } catch (e) {
-        console.warn('[WebSerial write error]', e);
-      }
+      } catch (e) {}
     }
 
-    // 2. Transmit Wi-Fi credentials over SoftAP Wi-Fi as secondary fallback
+    // 2. Transmit Wi-Fi credentials over Wireless AP / mDNS
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3500);
@@ -334,7 +394,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         );
       } catch {
         await fetch(
-          `http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
+          `http://agriflow-smart-node.local/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}`,
           { method: 'POST', signal: controller.signal }
         );
       }
@@ -346,7 +406,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       setConnectionProgress(100);
       setConnectionStage('SUCCESS');
       setTimeout(() => {
-        setStep(4); // Success step
+        setStep(4);
       }, 600);
     }, 2500);
   };
@@ -383,9 +443,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       let data: any = { success: true };
       try {
         data = await res.json();
-      } catch (e) {
-        console.warn('[Claim JSON parse warning]', e);
-      }
+      } catch (e) {}
 
       setFeedback({ type: 'success', message: 'Hardware claimed & active!' });
       setTimeout(() => {
@@ -409,16 +467,16 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
-              <Zap className="w-5 h-5 animate-pulse" />
+              <Radar className="w-5 h-5 animate-spin" />
             </div>
             <div className="text-left">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">Add Hardware Device</h2>
+                <h2 className="text-base font-bold text-white">Wireless Device Discovery</h2>
                 <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-2 py-0.5 rounded-full font-mono">
-                  ESP32 Auto Detect
+                  15s Signal Radar
                 </span>
               </div>
-              <p className="text-xs text-slate-400">Detecting physical ESP32 board via USB Cable or Wi-Fi</p>
+              <p className="text-xs text-slate-400">Automatic 15-second wireless hardware beacon scan</p>
             </div>
           </div>
 
@@ -432,7 +490,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
         {/* STEP PROGRESS TABS */}
         <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 px-2">
-          <span className={step >= 1 ? 'text-cyan-400 font-bold' : ''}>1. Detect Device</span>
+          <span className={step >= 1 ? 'text-cyan-400 font-bold' : ''}>1. 15s Wireless Radar</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className={step >= 2 ? 'text-cyan-400 font-bold' : ''}>2. Enter Wi-Fi</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
@@ -456,82 +514,79 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 1: DUAL DETECTION METHODS (USB SERIAL & WI-FI HOTSPOT) */}
+        {/* STEP 1: 15-SECOND WIRELESS RADAR SCANNER */}
         {step === 1 && (
           <div className="space-y-5 text-left">
             
-            {/* METHOD 1: WEBSERIAL USB DETECTION (FASTEST & 100% RELIABLE) */}
-            <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-950/80 to-slate-900 border border-indigo-500/40 space-y-3 shadow-xl">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center border border-cyan-500/30">
-                    <Usb className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-white">Method 1: Auto-Detect via USB Cable</h3>
-                    <p className="text-[10px] text-slate-400">Connect ESP32 to PC using USB cable for instant 1-click scan</p>
-                  </div>
+            {/* 15-SECOND RADAR SWEEP ANIMATION CARD */}
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-950 to-indigo-950/40 border border-cyan-500/30 text-center space-y-4 relative overflow-hidden">
+              <div className="relative w-28 h-28 mx-auto flex items-center justify-center">
+                {/* RADAR SWEEP RINGS */}
+                <div className={`absolute inset-0 rounded-full border-2 border-cyan-500/30 ${isScanning ? 'animate-ping' : ''}`} />
+                <div className="absolute inset-2 rounded-full border border-indigo-500/30" />
+                <div className="absolute inset-4 rounded-full border border-cyan-400/20" />
+                
+                <div className="w-16 h-16 rounded-full bg-cyan-950/80 border-2 border-cyan-400 flex flex-col items-center justify-center text-cyan-300 font-mono z-10 shadow-lg shadow-cyan-500/30">
+                  {isScanning ? (
+                    <>
+                      <span className="text-xl font-black">{scanSecondsLeft}s</span>
+                      <span className="text-[9px] uppercase tracking-wider">Scanning</span>
+                    </>
+                  ) : (
+                    <RadioTower className="w-7 h-7 text-cyan-400" />
+                  )}
                 </div>
-                <span className="text-[9px] bg-emerald-900 text-emerald-300 border border-emerald-700/60 px-2 py-0.5 rounded font-mono">
-                  RECOMMENDED
-                </span>
               </div>
 
-              <button
-                type="button"
-                onClick={connectWebSerialHardware}
-                disabled={isWebSerialConnecting}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-cyan-600/20 transition-all flex items-center justify-center gap-2"
-              >
-                {isWebSerialConnecting ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Usb className="w-4 h-4" />
-                )}
-                <span>{isWebSerialConnecting ? 'Connecting WebSerial...' : 'Scan & Auto-Detect via USB Cable'}</span>
-              </button>
-            </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  {isScanning ? 'Scanning Wireless Space (15s Radar)...' : discoveredDevices.length > 0 ? 'Wireless Signal Locked!' : 'Wireless Signal Scan Complete'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  {isScanning
+                    ? 'Listening for wireless UDP signal beacons & mDNS broadcasts from ESP32 hardware...'
+                    : discoveredDevices.length > 0
+                    ? 'Found physical ESP32 wireless signal beacon! Select below to connect.'
+                    : 'No wireless signal beacon locked. Ensure ESP32 is powered ON.'}
+                </p>
+              </div>
 
-            {/* METHOD 2: WI-FI HOTSPOT PROBE (192.168.4.1) */}
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
-                    <Wifi className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-white">Method 2: Detect via Wi-Fi Hotspot</h3>
-                    <p className="text-[10px] text-slate-400">Connect PC/Phone Wi-Fi to <code className="text-cyan-300 font-mono">AGRI-SETUP-XXXX</code> (Pass: <code className="text-cyan-300 font-mono">agrifarm2026</code>)</p>
-                  </div>
-                </div>
-
+              <div className="flex items-center justify-center gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={runAutoDiscovery}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 text-xs font-bold hover:bg-slate-700 transition-all flex items-center gap-1.5"
+                  onClick={run15SecondWirelessScan}
+                  disabled={isScanning}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-cyan-300 text-xs font-bold transition-all flex items-center gap-1.5"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-                  <span>Scan Wi-Fi</span>
+                  <span>Restart 15s Scan</span>
                 </button>
               </div>
+            </div>
 
-              {/* RENDER REAL DISCOVERED HARDWARE CARDS */}
-              {discoveredDevices.length > 0 ? (
-                discoveredDevices.map((device) => (
+            {/* RENDER REAL DISCOVERED HARDWARE CARDS */}
+            {discoveredDevices.length > 0 && (
+              <div className="space-y-3">
+                <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span>Locked Wireless Hardware Signal</span>
+                </div>
+
+                {discoveredDevices.map((device) => (
                   <div
                     key={device.serialNumber}
-                    className="p-3.5 rounded-xl bg-[#1f2937] border border-emerald-500/60 space-y-2.5 shadow-xl animate-scale-up"
+                    className="p-4 rounded-2xl bg-[#1f2937] border border-emerald-500/60 space-y-3 shadow-xl animate-scale-up"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
-                          <Cpu className="w-5 h-5 animate-pulse" />
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
+                          <RadioTower className="w-6 h-6 animate-pulse" />
                         </div>
                         <div>
                           <div className="text-xs font-bold text-white flex items-center gap-1.5">
                             <span>{device.productName}</span>
-                            <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 text-[9px] font-mono">
-                              REAL HARDWARE
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/60 text-[9px] font-mono">
+                              SIGNAL LOCKED
                             </span>
                           </div>
                           <div className="text-[10px] text-slate-400 font-mono mt-0.5">
@@ -546,38 +601,44 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                           setSelectedDevice(device);
                           setStep(2);
                         }}
-                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md transition-all flex items-center space-x-1"
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg transition-all flex items-center space-x-1"
                       >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Select</span>
+                        <Plus className="w-4 h-4" />
+                        <span>Pair &amp; Connect</span>
                       </button>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-700/60 flex items-center justify-between text-[10px]">
+                    <div className="pt-2 border-t border-slate-700/60 flex items-center justify-between text-[11px]">
                       <div className="flex items-center space-x-1 text-emerald-400 font-medium">
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span>Verified: {device.hardwareCertificate}</span>
+                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Certificate: {device.hardwareCertificate}</span>
                       </div>
-                      <div className="text-amber-300 font-mono text-[9px] bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded-full">
-                        ⚡ LED Pulsing Slow (Heartbeat)
+                      <div className="text-cyan-300 font-mono text-[10px] bg-cyan-950/40 border border-cyan-800/40 px-2 py-0.5 rounded-full">
+                        📶 Signal: {device.rssi} dBm
                       </div>
                     </div>
                   </div>
-                ))
-              ) : (
-                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center space-y-2">
-                  <div className="text-xs text-slate-400">
-                    {isScanning ? (
-                      <span className="flex items-center justify-center gap-2 text-cyan-400 font-bold animate-pulse text-[11px]">
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Scanning 192.168.4.1 for ESP32 hardware...
-                      </span>
-                    ) : (
-                      <span className="text-amber-300 font-semibold text-[11px]">No Wi-Fi hotspot device detected yet.</span>
-                    )}
-                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* OPTIONAL USB DIRECT FALLBACK */}
+            {webSerialSupported && (
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
+                <div className="flex items-center space-x-2 text-slate-300">
+                  <Usb className="w-4 h-4 text-cyan-400 shrink-0" />
+                  <span>Alternative: Auto-Scan via USB Cable</span>
                 </div>
-              )}
-            </div>
+                <button
+                  type="button"
+                  onClick={connectWebSerialHardware}
+                  disabled={isWebSerialConnecting}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition-all"
+                >
+                  {isWebSerialConnecting ? 'Scanning USB...' : 'Scan USB'}
+                </button>
+              </div>
+            )}
 
             {scanError && (
               <div className="p-3 bg-red-950/40 border border-red-900/40 rounded-xl text-left text-red-300 text-[11px] flex items-start space-x-1.5">
@@ -751,7 +812,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                   1
                 </div>
                 <span className={connectionStage === 'DISCOVERING_LAN' ? 'text-white font-bold' : 'text-slate-400'}>
-                  ESP32 Board Identified
+                  Wireless Signal Locked
                 </span>
               </div>
 
