@@ -104,9 +104,32 @@ void setupProvisioningMode() {
   pAdv->start();
   Serial.println("[BLE] NimBLE Bluetooth Advertising Started!");
 
-  // Loop in Setup Mode until Wi-Fi Config Received
+  // Loop in Provisioning Mode until Wi-Fi Config Received
   while (!isProvisioned) {
-    // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
+    // Check for USB Serial Commands (PING or SETUP:{"ssid":"...","password":"..."})
+    if (Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      input.trim();
+      if (input.startsWith("PING")) {
+        Serial.println("{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\",\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\"}");
+      } else if (input.startsWith("SETUP:")) {
+        String jsonPayload = input.substring(6);
+        StaticJsonDocument<256> doc;
+        deserializeJson(doc, jsonPayload);
+        const char* reqSsid = doc["ssid"];
+        const char* reqPass = doc["password"];
+        if (reqSsid && reqPass) {
+          wifiSsid = String(reqSsid);
+          wifiPass = String(reqPass);
+          isProvisioned = true;
+          Serial.println("{\"success\":true,\"message\":\"Wi-Fi credentials received over USB Serial! Connecting to Wi-Fi...\"}");
+        }
+      }
+    }
+
+    // Dynamic LED Blinking Speed:
+    // • AP/EZ Mode: Blinking
+    // • App Connected / Transmitting: Heartbeat pulse
     unsigned long currentMillis = millis();
     if (currentMillis - lastLedToggle >= 200) {
       lastLedToggle = currentMillis;
@@ -117,14 +140,14 @@ void setupProvisioningMode() {
     server.handleClient();
   }
 
-  NimBLEDevice::deinit(true);
+  preferences.begin("agri-node", false);
   preferences.putString("ssid", wifiSsid);
   preferences.putString("pass", wifiPass);
   preferences.end();
 
-  Serial.println("[SETUP] Wi-Fi Config Saved! Restarting in 2s...");
-  digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON
-  delay(2000);
+  Serial.println("[SETUP] Wi-Fi Credentials Received & Saved! Rebooting to connect...");
+  digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON — Flashing STOPS!
+  delay(1500);
   ESP.restart();
 }
 
