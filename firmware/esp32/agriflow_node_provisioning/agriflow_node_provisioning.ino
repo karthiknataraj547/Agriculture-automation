@@ -7,10 +7,7 @@
  */
 
 #include <WiFi.h>
-#include <WiFi.h>
 #include <WebServer.h>
-#include <ESPmDNS.h>
-#include <WiFiUdp.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <PubSubClient.h>
@@ -18,20 +15,22 @@
 #include <DHT.h>
 
 // ─── HARDWARE GPIO PIN MAPPING (ESP32) ───
-#define PIN_LED_INDICATOR  2    // Onboard Status LED
-#define PIN_BUTTON_RESET   0    // Flash/Boot Button
+#define PIN_LED_INDICATOR  2    // Onboard Status LED (Blinks rapidly in Setup Mode)
+#define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0 - hold for 3s to reset setup)
 #define PIN_SOIL_MOISTURE  34  // Analog Soil Moisture Probe
 #define PIN_DHT_DATA       4   // Digital Air Temp & Humidity
 #define PIN_RELAY_PUMP     26   // Water Pump Relay (Active HIGH)
 #define PIN_FLOW_RATE      27   // Pulse Water Flow Sensor
 #define DHTTYPE            DHT11
 
+#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
+#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
+
 // ─── GLOBAL OBJECTS & STATE ───
 Preferences preferences;
 WebServer server(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-WiFiUDP udpSender;
 
 DHT dht(PIN_DHT_DATA, DHTTYPE);
 
@@ -40,13 +39,6 @@ String wifiPass = "";
 String deviceSerial = "";
 String macAddress = "";
 bool isProvisioned = false;
-
-enum ProvisioningMode { MODE_EZ_FAST_BLINK, MODE_AP_SLOW_BLINK, MODE_CONNECTING_HEARTBEAT };
-ProvisioningMode currentBlinkMode = MODE_AP_SLOW_BLINK;
-
-bool toolConnected = false;
-unsigned long lastToolConnectTime = 0;
-unsigned long lastUdpBroadcast = 0;
 
 unsigned long lastLedToggle = 0;
 bool ledState = LOW;
