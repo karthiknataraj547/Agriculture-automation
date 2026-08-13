@@ -30,6 +30,5 @@ if (!fs.existsSync(outDir)) {
 }
 
 fs.writeFileSync(path.join(outDir, 'AgriFlow-Setup.exe'), binaryData);
-fs.writeFileSync(path.join(outDir, 'agriflow-mobile.apk'), binaryData);
 
-console.log("✅ Standalone AgriFlow-Setup.exe and agriflow-mobile.apk generated successfully!");
+console.log("✅ Standalone AgriFlow-Setup.exe generated successfully!");
