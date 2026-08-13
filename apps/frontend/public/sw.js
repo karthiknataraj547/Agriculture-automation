@@ -3,6 +3,8 @@ const CACHE_NAME = 'agriflow-native-v2.0';
 const ASSETS_TO_CACHE = [
   '/',
   '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png',
   '/icon.svg',
   '/favicon.ico'
 ];
