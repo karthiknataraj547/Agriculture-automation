@@ -99,9 +99,16 @@ export async function POST(req: Request) {
 
     liveTelemetry.set(deviceId, updatedPacket);
 
-    // If device was explicitly deleted by user, do NOT re-register it in liveDevices inventory
-    if (!deletedDevicesSet.has(deviceId) && !deletedDevicesSet.has(deviceId.toLowerCase())) {
-      const existingDev = liveDevices.get(deviceId);
+    // If device was explicitly deleted by user, return RESET_PROVISIONING to trigger hardware setup mode
+    if (deletedDevicesSet.has(deviceId) || deletedDevicesSet.has(deviceId.toLowerCase()) || deletedDevicesSet.has(deviceId.toUpperCase())) {
+      return NextResponse.json({
+        success: false,
+        action: 'RESET_PROVISIONING',
+        message: 'Device unbound from dashboard. Hardware resetting...'
+      }, { status: 200 });
+    }
+
+    const existingDev = liveDevices.get(deviceId);
       if (existingDev) {
         existingDev.status = 'ONLINE';
         existingDev.lastSeen = nowIso;
@@ -124,7 +131,6 @@ export async function POST(req: Request) {
           sensorsAttached: ['SOIL_MOISTURE', 'AIR_TEMP', 'HUMIDITY', 'WATER_FLOW'],
         });
       }
-    }
 
     // Check if there is an OTA Wi-Fi configuration command pending for this physical board
     const pendingConfig = pendingConfigsMap.get(deviceId) || pendingConfigsMap.get(deviceId.toLowerCase()) || pendingConfigsMap.get('global');

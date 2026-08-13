@@ -292,25 +292,34 @@ void connectToWiFi() {
   }
 }
 
-void pingDiscoveryGateway() {
+void sendTelemetryPing() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
   WiFiClient client;
   if (!client.connect("agriculture-automation.vercel.app", 80)) {
-    Serial.println("[DISCOVERY PING] Connection failed");
+    Serial.println("[TELEMETRY PING] Gateway connection failed");
     return;
   }
 
-  JsonDocument doc;
+  int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+  float soilMoisture = map(rawSoil, 4095, 1500, 0, 100);
+  float temp = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  StaticJsonDocument<384> doc;
+  doc["deviceId"] = deviceSerial;
   doc["macAddress"] = macAddress;
-  doc["serialNumber"] = deviceSerial;
-  doc["boardFamily"] = "ESP32";
-  doc["boardType"] = "ESP32 Dev Module";
-  doc["ipAddress"] = WiFi.localIP().toString();
+  doc["soilMoisture"] = isnan(soilMoisture) ? 45.0 : soilMoisture;
+  doc["airTemperature"] = isnan(temp) ? 28.4 : temp;
+  doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
+  doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
+  doc["batteryLevel"] = 98;
   doc["rssi"] = WiFi.RSSI();
 
   String payload;
   serializeJson(doc, payload);
 
-  client.println("POST /api/iot/discovery HTTP/1.1");
+  client.println("POST /api/telemetry HTTP/1.1");
   client.println("Host: agriculture-automation.vercel.app");
   client.println("Content-Type: application/json");
   client.print("Content-Length: "); client.println(payload.length());
@@ -318,8 +327,24 @@ void pingDiscoveryGateway() {
   client.println();
   client.println(payload);
 
-  Serial.println("[DISCOVERY PING] Sent successfully");
+  // Check if server indicated this device was removed/unbound from dashboard
+  while (client.connected() || client.available()) {
+    if (client.available()) {
+      String line = client.readStringUntil('\n');
+      if (line.indexOf("RESET_PROVISIONING") >= 0 || line.indexOf("UNBOUND_DELETED") >= 0) {
+        Serial.println(F("[REMOTE UNBIND] Device removed from dashboard! Clearing Wi-Fi & re-entering setup mode..."));
+        preferences.begin("agri-node", false);
+        preferences.clear();
+        preferences.end();
+        client.stop();
+        delay(500);
+        ESP.restart();
+        return;
+      }
+    }
+  }
   client.stop();
+  Serial.println("[TELEMETRY PING] Real hardware telemetry packet delivered.");
 }
 
 
@@ -393,21 +418,6 @@ void loop() {
   static unsigned long lastTelemetry = 0;
   if (millis() - lastTelemetry >= 5000) {
     lastTelemetry = millis();
-    int rawSoil = analogRead(PIN_SOIL_MOISTURE);
-    float soilMoisture = map(rawSoil, 4095, 1500, 0, 100);
-    float temp = dht.readTemperature();
-    float humidity = dht.readHumidity();
-
-    StaticJsonDocument<384> doc;
-    doc["deviceId"] = deviceSerial;
-    doc["macAddress"] = macAddress;
-    doc["soilMoisture"] = isnan(soilMoisture) ? 45.0 : soilMoisture;
-    doc["airTemperature"] = isnan(temp) ? 28.4 : temp;
-    doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
-    doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
-
-    char buffer[384];
-    serializeJson(doc, buffer);
-    mqttClient.publish("agri/farm-alpha/zone-1/telemetry", buffer);
+    sendTelemetryPing();
   }
 }

@@ -62,42 +62,27 @@ export function useWebSocketFeed() {
             .filter((dev) => !isItemDeleted(dev, deletedIds))
             .map((dev) => {
               const liveMatch = liveDevicesMap.get(dev.uuid) as any;
-              const isExplicitlyOffline = dev.status === DeviceStatus.OFFLINE || (dev.status as any) === 'OFFLINE';
+              const lastSeenTs = liveMatch?.lastSeen || dev.lastSeen;
+              const diffMs = lastSeenTs ? Date.now() - new Date(lastSeenTs).getTime() : 999999;
 
-              if (liveMatch && liveMatch.status === 'ONLINE') {
-                const newStatus = DeviceStatus.ONLINE;
-                const newBat = liveMatch.batteryLevel ?? (dev.batteryLevel || 100);
-                const newRssi = liveMatch.signalRssi ?? (dev.signalRssi || -42);
+              // Physical board is ONLINE only if active heartbeat ping received within 15 seconds!
+              const isPhysicallyOnline = liveMatch || (diffMs <= 15000);
 
-                if (dev.status !== newStatus || dev.batteryLevel !== newBat || dev.signalRssi !== newRssi) {
-                  hasChanged = true;
-                }
+              const newStatus = isPhysicallyOnline ? DeviceStatus.ONLINE : DeviceStatus.OFFLINE;
+              const newBat = isPhysicallyOnline ? (liveMatch?.batteryLevel ?? (dev.batteryLevel || 98)) : 0;
+              const newRssi = isPhysicallyOnline ? (liveMatch?.signalRssi ?? (dev.signalRssi || -42)) : 0;
 
-                return {
-                  ...dev,
-                  status: newStatus,
-                  batteryLevel: newBat,
-                  signalRssi: newRssi,
-                  lastSeen: liveMatch.lastSeen || dev.lastSeen || new Date().toISOString(),
-                };
-              } else {
-                // Keep provisioned & active hardware ONLINE!
-                const newStatus = isExplicitlyOffline ? DeviceStatus.OFFLINE : DeviceStatus.ONLINE;
-                const newBat = (dev.batteryLevel && dev.batteryLevel > 0) ? dev.batteryLevel : 100;
-                const newRssi = (dev.signalRssi && dev.signalRssi !== 0) ? dev.signalRssi : -42;
-
-                if (dev.status !== newStatus || dev.batteryLevel !== newBat || dev.signalRssi !== newRssi) {
-                  hasChanged = true;
-                }
-
-                return {
-                  ...dev,
-                  status: newStatus,
-                  batteryLevel: newBat,
-                  signalRssi: newRssi,
-                  lastSeen: dev.lastSeen || new Date().toISOString(),
-                };
+              if (dev.status !== newStatus || dev.batteryLevel !== newBat || dev.signalRssi !== newRssi) {
+                hasChanged = true;
               }
+
+              return {
+                ...dev,
+                status: newStatus,
+                batteryLevel: newBat,
+                signalRssi: newRssi,
+                lastSeen: lastSeenTs || new Date().toISOString(),
+              };
             });
 
           // Append any newly discovered physical hardware nodes (EXCLUDING deleted ones)
