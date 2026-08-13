@@ -94,8 +94,20 @@ export async function POST(req: Request) {
       }
     }
 
-    // Store OTA Wi-Fi configuration command for hardware retrieval
-    if (commandType === 'UPDATE_WIFI_CONFIG' && body.wifiSsid) {
+    // Store HARD_RESET or OTA Wi-Fi configuration command for hardware retrieval
+    if (commandType === 'HARD_RESET') {
+      if (!global._aether_pending_configs) global._aether_pending_configs = new Map();
+      if (!global._aether_deleted_devices) global._aether_deleted_devices = new Set();
+
+      const resetConfig = { action: 'RESET_PROVISIONING', wifiSsid: '', wifiPass: '' };
+      global._aether_pending_configs.set(targetDevId, resetConfig);
+      global._aether_pending_configs.set(targetDevId.toLowerCase(), resetConfig);
+      global._aether_pending_configs.set(targetDevId.toUpperCase(), resetConfig);
+
+      global._aether_deleted_devices.add(targetDevId);
+      global._aether_deleted_devices.add(targetDevId.toLowerCase());
+      global._aether_deleted_devices.add(targetDevId.toUpperCase());
+    } else if (commandType === 'UPDATE_WIFI_CONFIG' && body.wifiSsid) {
       if (!global._aether_pending_configs) {
         global._aether_pending_configs = new Map();
       }

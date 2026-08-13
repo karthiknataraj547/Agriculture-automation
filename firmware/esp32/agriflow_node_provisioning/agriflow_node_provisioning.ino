@@ -1,9 +1,8 @@
 /*
- * Commercial Smart Agriculture Node Firmware (Provisioning + Real-Time Telemetry)
+ * Commercial Smart Agriculture Node Firmware (Provisioning + MQTT Telemetry + Remote Hard Reset)
  * Product: AgriFlow Smart Irrigation Controller
- * Internal SKU: ESP32-IRRIGATION-V1
- * Microcontroller: ESP32 (Xtensa LX6 ESP32)
- * Version: v1.4.2
+ * Microcontroller: ESP32 (Xtensa LX6)
+ * Version: v1.5.0 (MQTT + Auth Code + Strong Hard Reset)
  */
 
 #include <WiFi.h>
@@ -17,7 +16,7 @@
 
 // ─── HARDWARE GPIO PIN MAPPING (ESP32) ───
 #define PIN_LED_INDICATOR  2    // Onboard Status LED
-#define PIN_BUTTON_RESET   0    // Flash/Boot Button
+#define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0 - Hold 3s to Hard Reset)
 #define PIN_SOIL_MOISTURE  34  // Analog Soil Moisture Probe
 #define PIN_DHT_DATA       4   // Digital Air Temp & Humidity
 #define PIN_RELAY_PUMP     26   // Water Pump Relay (Active HIGH)
@@ -37,6 +36,7 @@ String wifiSsid = "";
 String wifiPass = "";
 String deviceSerial = "";
 String macAddress = "";
+String authCode = "ATH-8085-7013";
 bool isProvisioned = false;
 
 enum ProvisioningMode { MODE_EZ_FAST_BLINK, MODE_AP_SLOW_BLINK, MODE_CONNECTING_HEARTBEAT };
@@ -48,10 +48,14 @@ unsigned long lastBeaconTime = 0;
 unsigned long lastLedToggle = 0;
 bool ledState = LOW;
 
+const char* MQTT_BROKER = "broker.hivemq.com";
+const int   MQTT_PORT   = 1883;
+
 void setupProvisioningMode();
 void handleProvisioningRequest();
 void connectToWiFi();
-void pingDiscoveryGateway();
+void sendTelemetryPing();
+void executeStrongHardReset();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 void setup() {
@@ -73,7 +77,7 @@ void setup() {
   deviceSerial.toUpperCase();
 
   Serial.println("\n==========================================");
-  Serial.println(" AgriFlow Smart Wireless Node (Beacon V3)");
+  Serial.println(" AgriFlow Smart Wireless Node (MQTT + Auth)");
   Serial.println(" Serial Number: " + deviceSerial);
   Serial.println(" MAC Address:   " + macAddress);
   Serial.println(" Certificate:   AGRI-CERT-WIPRO-AUTHENTICATED-V2");
@@ -82,6 +86,7 @@ void setup() {
   preferences.begin("agri-node", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPass = preferences.getString("pass", "");
+  authCode = preferences.getString("authCode", "ATH-8085-7013");
   preferences.end();
 
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
@@ -123,13 +128,13 @@ void setupProvisioningMode() {
     server.sendHeader("Access-Control-Allow-Headers", "*");
     String json = "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + 
                   "\",\"mac\":\"" + macAddress + 
+                  "\",\"authCode\":\"" + authCode +
                   "\",\"vendor\":\"AgriFlow\",\"boardFamily\":\"ESP32\"," +
                   "\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\"," +
                   "\"protocol\":\"WIPRO_TUYA_BEACON_V3\"," +
                   "\"rssi\":-42," +
                   "\"toolConnected\":true}";
     server.send(200, "application/json", json);
-    Serial.println(F("[SIGNAL] Web Tool locked onto wireless signal! LED set to heartbeat mode."));
   });
 
   // GET /wifi-scan — Wireless 2.4GHz network scanner
@@ -153,7 +158,7 @@ void setupProvisioningMode() {
     toolConnected = true;
     lastToolConnectTime = millis();
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"error\":\"NONE\"}");
+    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"authCode\":\"" + authCode + "\"}");
   });
 
   // POST or GET /setup — Wireless Credentials Endpoint
@@ -164,9 +169,11 @@ void setupProvisioningMode() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     String reqSsid = server.arg("ssid");
     String reqPass = server.arg("password");
+    String reqAuth = server.arg("authCode");
     if (reqSsid.length() > 0) {
       wifiSsid = reqSsid;
       wifiPass = reqPass;
+      if (reqAuth.length() > 0) authCode = reqAuth;
       isProvisioned = true;
       server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials received! Connecting...\"}");
       return;
@@ -177,12 +184,8 @@ void setupProvisioningMode() {
   // POST or GET /reset — Wipe saved Wi-Fi credentials
   server.on("/reset", []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"success\":true,\"message\":\"Hardware Wi-Fi Credentials Erased! Rebooting into Setup Mode...\"}");
-    preferences.begin("agri-node", false);
-    preferences.clear();
-    preferences.end();
-    delay(800);
-    ESP.restart();
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Hardware Wi-Fi Credentials Erased! Rebooting...\"}");
+    executeStrongHardReset();
   });
 
   server.begin();
@@ -195,26 +198,30 @@ void setupProvisioningMode() {
     if (currentMillis - lastBeaconTime >= 1000) {
       lastBeaconTime = currentMillis;
       udpBeacon.beginPacket(IPAddress(255, 255, 255, 255), 7000);
-      udpBeacon.printf("{\"signal\":\"AGRI_WIRELESS_BEACON_V3\",\"serial\":\"%s\",\"mac\":\"%s\",\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\"}\n",
-                       deviceSerial.c_str(), macAddress.c_str());
+      udpBeacon.printf("{\"signal\":\"AGRI_WIRELESS_BEACON_V3\",\"serial\":\"%s\",\"mac\":\"%s\",\"authCode\":\"%s\",\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\"}\n",
+                       deviceSerial.c_str(), macAddress.c_str(), authCode.c_str());
       udpBeacon.endPacket();
     }
 
-    // Process USB Serial UART PING & SETUP commands
+    // Process USB Serial UART Commands
     if (Serial.available()) {
       String input = Serial.readStringUntil('\n');
       input.trim();
       if (input.startsWith("PING")) {
-        Serial.println("{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\",\"hardwareCertificate\":\"AGRI-CERT-WIPRO-AUTHENTICATED-V2\"}");
+        Serial.println("{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\",\"authCode\":\"" + authCode + "\"}");
+      } else if (input.startsWith("RESET") || input.startsWith("HARD_RESET")) {
+        executeStrongHardReset();
       } else if (input.startsWith("SETUP:")) {
         String jsonPayload = input.substring(6);
         StaticJsonDocument<256> doc;
         deserializeJson(doc, jsonPayload);
         const char* reqSsid = doc["ssid"];
         const char* reqPass = doc["password"];
+        const char* reqAuth = doc["authCode"];
         if (reqSsid && reqPass) {
           wifiSsid = String(reqSsid);
           wifiPass = String(reqPass);
+          if (reqAuth) authCode = String(reqAuth);
           isProvisioned = true;
           Serial.println("{\"success\":true,\"message\":\"Credentials Received! Rebooting...\"}");
         }
@@ -240,29 +247,13 @@ void setupProvisioningMode() {
   preferences.begin("agri-node", false);
   preferences.putString("ssid", wifiSsid);
   preferences.putString("pass", wifiPass);
+  preferences.putString("authCode", authCode);
   preferences.end();
 
-  Serial.println("[SETUP] Wi-Fi Credentials Received! Rebooting to connect...");
+  Serial.println("[SETUP] Wi-Fi & Auth Credentials Saved! Rebooting to connect...");
   digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON — Flashing STOPS!
   delay(1500);
   ESP.restart();
-}
-
-void handleProvisioningRequest() {
-  if (server.hasArg("plain")) {
-    StaticJsonDocument<256> doc;
-    deserializeJson(doc, server.arg("plain"));
-    const char* reqSsid = doc["ssid"];
-    const char* reqPass = doc["password"];
-    if (reqSsid && reqPass) {
-      wifiSsid = String(reqSsid);
-      wifiPass = String(reqPass);
-      isProvisioned = true;
-      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi Config Received! Connecting...\"}");
-      return;
-    }
-  }
-  server.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid Payload\"}");
 }
 
 void connectToWiFi() {
@@ -281,9 +272,9 @@ void connectToWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n[WiFi] Connected! Local IP: " + WiFi.localIP().toString());
     digitalWrite(PIN_LED_INDICATOR, HIGH); // SOLID ON = HEALTHY & CONNECTED
-    pingDiscoveryGateway();
 
-    mqttClient.setServer("mqtt.agritech.com", 1883);
+    // Configure MQTT Broker
+    mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
     mqttClient.setCallback(mqttCallback);
 
   } else {
@@ -295,110 +286,150 @@ void connectToWiFi() {
 void sendTelemetryPing() {
   if (WiFi.status() != WL_CONNECTED) return;
 
+  // 1. Send HTTP Telemetry Ping
   WiFiClient client;
-  if (!client.connect("agriculture-automation.vercel.app", 80)) {
-    Serial.println("[TELEMETRY PING] Gateway connection failed");
-    return;
-  }
+  if (client.connect("agriculture-automation.vercel.app", 80)) {
+    int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+    float soilMoisture = map(rawSoil, 4095, 1500, 0, 100);
+    float temp = dht.readTemperature();
+    float humidity = dht.readHumidity();
 
-  int rawSoil = analogRead(PIN_SOIL_MOISTURE);
-  float soilMoisture = map(rawSoil, 4095, 1500, 0, 100);
-  float temp = dht.readTemperature();
-  float humidity = dht.readHumidity();
+    StaticJsonDocument<384> doc;
+    doc["deviceId"] = deviceSerial;
+    doc["serialNumber"] = deviceSerial;
+    doc["macAddress"] = macAddress;
+    doc["authCode"] = authCode;
+    doc["soilMoisture"] = isnan(soilMoisture) ? 45.0 : soilMoisture;
+    doc["airTemperature"] = isnan(temp) ? 28.4 : temp;
+    doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
+    doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
+    doc["batteryLevel"] = 98;
+    doc["rssi"] = WiFi.RSSI();
 
-  StaticJsonDocument<384> doc;
-  doc["deviceId"] = deviceSerial;
-  doc["macAddress"] = macAddress;
-  doc["soilMoisture"] = isnan(soilMoisture) ? 45.0 : soilMoisture;
-  doc["airTemperature"] = isnan(temp) ? 28.4 : temp;
-  doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
-  doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
-  doc["batteryLevel"] = 98;
-  doc["rssi"] = WiFi.RSSI();
+    String payload;
+    serializeJson(doc, payload);
 
-  String payload;
-  serializeJson(doc, payload);
+    client.println("POST /api/telemetry HTTP/1.1");
+    client.println("Host: agriculture-automation.vercel.app");
+    client.println("Content-Type: application/json");
+    client.print("Content-Length: "); client.println(payload.length());
+    client.println("Connection: close");
+    client.println();
+    client.println(payload);
 
-  client.println("POST /api/telemetry HTTP/1.1");
-  client.println("Host: agriculture-automation.vercel.app");
-  client.println("Content-Type: application/json");
-  client.print("Content-Length: "); client.println(payload.length());
-  client.println("Connection: close");
-  client.println();
-  client.println(payload);
-
-  // Check if server indicated this device was removed/unbound from dashboard
-  while (client.connected() || client.available()) {
-    if (client.available()) {
-      String line = client.readStringUntil('\n');
-      if (line.indexOf("RESET_PROVISIONING") >= 0 || line.indexOf("UNBOUND_DELETED") >= 0) {
-        Serial.println(F("[REMOTE UNBIND] Device removed from dashboard! Clearing Wi-Fi & re-entering setup mode..."));
-        preferences.begin("agri-node", false);
-        preferences.clear();
-        preferences.end();
-        client.stop();
-        delay(500);
-        ESP.restart();
-        return;
+    // Read response to check if server commanded a remote hard reset
+    while (client.connected() || client.available()) {
+      if (client.available()) {
+        String line = client.readStringUntil('\n');
+        if (line.indexOf("RESET_PROVISIONING") >= 0 || line.indexOf("HARD_RESET") >= 0 || line.indexOf("UNBOUND_DELETED") >= 0) {
+          Serial.println(F("[REMOTE UNBIND] Device removed from dashboard! Triggering STRONG HARD RESET..."));
+          client.stop();
+          executeStrongHardReset();
+          return;
+        }
       }
     }
+    client.stop();
   }
-  client.stop();
-  Serial.println("[TELEMETRY PING] Real hardware telemetry packet delivered.");
+
+  // 2. Publish MQTT Telemetry
+  if (!mqttClient.connected()) {
+    String clientId = "AgriFlow-Node-" + deviceSerial;
+    if (mqttClient.connect(clientId.c_str())) {
+      mqttClient.subscribe("agri/commands/#");
+      mqttClient.subscribe(("agri/commands/" + deviceSerial).c_str());
+      mqttClient.subscribe(("agri/commands/" + authCode).c_str());
+      Serial.println("[MQTT] Connected to HiveMQ Broker! Subscribed to agri/commands/#");
+    }
+  }
+
+  if (mqttClient.connected()) {
+    int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+    float soilMoisture = map(rawSoil, 4095, 1500, 0, 100);
+    float temp = dht.readTemperature();
+    float humidity = dht.readHumidity();
+
+    StaticJsonDocument<384> doc;
+    doc["deviceId"] = deviceSerial;
+    doc["serialNumber"] = deviceSerial;
+    doc["macAddress"] = macAddress;
+    doc["authCode"] = authCode;
+    doc["status"] = "ONLINE";
+    doc["soilMoisture"] = isnan(soilMoisture) ? 45.0 : soilMoisture;
+    doc["airTemperature"] = isnan(temp) ? 28.4 : temp;
+    doc["humidity"] = isnan(humidity) ? 65.0 : humidity;
+    doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
+    doc["batteryLevel"] = 98;
+    doc["rssi"] = WiFi.RSSI();
+
+    char buffer[384];
+    serializeJson(doc, buffer);
+    mqttClient.publish("agri/telemetry", buffer);
+    mqttClient.publish(("agri/telemetry/" + deviceSerial).c_str(), buffer);
+  }
 }
 
+void executeStrongHardReset() {
+  Serial.println(F("=================================================="));
+  Serial.println(F("💥 STRONG HARD RESET TRIGGERED!"));
+  Serial.println(F(" Erasing all saved Wi-Fi credentials & Auth codes..."));
+  Serial.println(F("=================================================="));
+
+  preferences.begin("agri-node", false);
+  preferences.clear(); // Wipes NVS Storage Completely!
+  preferences.end();
+
+  // Rapid LED Flash Confirmation (15 Flashes)
+  for (int i = 0; i < 30; i++) {
+    digitalWrite(PIN_LED_INDICATOR, !digitalRead(PIN_LED_INDICATOR));
+    delay(50);
+  }
+
+  digitalWrite(PIN_LED_INDICATOR, LOW);
+  delay(500);
+  ESP.restart(); // Reboot into Provisioning / Setup Mode!
+}
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String msg = "";
   for (int i = 0; i < length; i++) msg += (char)payload[i];
-  Serial.println("[MQTT Command]: " + msg);
+  Serial.println("[MQTT Command Received]: " + msg);
 
   StaticJsonDocument<256> doc;
   deserializeJson(doc, msg);
   const char* type = doc["commandType"];
+  const char* cmd  = doc["command"];
 
-  if (String(type) == "START_PUMP") {
+  if ((type && String(type) == "HARD_RESET") || (cmd && String(cmd) == "HARD_RESET") || msg.indexOf("HARD_RESET") >= 0 || msg.indexOf("UNBIND") >= 0) {
+    Serial.println(F("[MQTT COMMAND] HARD RESET Received over MQTT!"));
+    executeStrongHardReset();
+  } else if (String(type) == "START_PUMP" || String(cmd) == "START_PUMP") {
     digitalWrite(PIN_RELAY_PUMP, HIGH);
-    Serial.println("[PUMP] RELAY TURNED ON");
-  } else if (String(type) == "STOP_PUMP") {
+    Serial.println("[PUMP] RELAY TURNED ON VIA MQTT");
+  } else if (String(type) == "STOP_PUMP" || String(cmd) == "STOP_PUMP") {
     digitalWrite(PIN_RELAY_PUMP, LOW);
-    Serial.println("[PUMP] RELAY TURNED OFF");
+    Serial.println("[PUMP] RELAY TURNED OFF VIA MQTT");
   }
 }
 
 void loop() {
-  // Physical BOOT Button Hold (GPIO 0) for 3 Seconds to Reset Hardware & Forget Wi-Fi
+  // 1. Physical BOOT Button Hold (GPIO 0) for 3 Seconds -> STRONG HARD RESET
   static unsigned long buttonPressStart = 0;
   if (digitalRead(PIN_BUTTON_RESET) == LOW) {
     if (buttonPressStart == 0) buttonPressStart = millis();
     if (millis() - buttonPressStart >= 3000) {
-      Serial.println(F("[RESET] BOOT Button held for 3 seconds! Erasing saved Wi-Fi credentials..."));
-      preferences.begin("agri-node", false);
-      preferences.clear(); // Wipes saved Wi-Fi SSID & Password from NVS!
-      preferences.end();
-      
-      // Fast LED Flash Confirmation
-      for (int i = 0; i < 10; i++) {
-        digitalWrite(PIN_LED_INDICATOR, !digitalRead(PIN_LED_INDICATOR));
-        delay(100);
-      }
-      ESP.restart();
+      executeStrongHardReset();
     }
   } else {
     buttonPressStart = 0;
   }
 
-  // Serial UART Command Listener over USB (Type 'RESET' in Serial Monitor)
+  // 2. USB Serial Command Listener
   if (Serial.available()) {
     String input = Serial.readStringUntil('\n');
     input.trim();
-    if (input.equalsIgnoreCase("RESET") || input.equalsIgnoreCase("FACTORY_RESET")) {
-      Serial.println(F("{\"success\":true,\"message\":\"Hardware Wi-Fi Credentials Erased! Rebooting into Setup Mode...\"}"));
-      preferences.begin("agri-node", false);
-      preferences.clear();
-      preferences.end();
-      delay(800);
-      ESP.restart();
+    if (input.equalsIgnoreCase("RESET") || input.equalsIgnoreCase("HARD_RESET") || input.equalsIgnoreCase("FACTORY_RESET")) {
+      executeStrongHardReset();
     }
   }
 
@@ -408,15 +439,10 @@ void loop() {
     return;
   }
 
-  if (!mqttClient.connected()) {
-    if (mqttClient.connect(deviceSerial.c_str())) {
-      mqttClient.subscribe("agri/farm-alpha/zone-1/commands");
-    }
-  }
   mqttClient.loop();
 
   static unsigned long lastTelemetry = 0;
-  if (millis() - lastTelemetry >= 5000) {
+  if (millis() - lastTelemetry >= 3000) {
     lastTelemetry = millis();
     sendTelemetryPing();
   }

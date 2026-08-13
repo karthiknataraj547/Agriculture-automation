@@ -381,6 +381,8 @@ export function DeviceGrid() {
   };
 
   const handleDeleteSingleDevice = (deviceUuid: string) => {
+    const targetSerial = editingDevice?.serialNumber || deviceUuid;
+
     deleteDevice(deviceUuid);
     deleteDevice(deviceUuid.toLowerCase());
     deleteDevice(deviceUuid.toUpperCase());
@@ -388,6 +390,26 @@ export function DeviceGrid() {
     if (editingDevice?.serialNumber) {
       deleteDevice(editingDevice.serialNumber);
     }
+
+    // 1. Dispatch Strong Hard Reset Command over MQTT & HTTP API
+    fetch('/api/devices/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: deviceUuid,
+        serialNumber: targetSerial,
+        commandType: 'HARD_RESET',
+        requestedValue: 'CLEAR_NVS_REBOOT',
+      }),
+    }).catch(() => {});
+
+    // 2. Add to deleted devices registry in /api/telemetry
+    fetch('/api/telemetry', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: targetSerial }),
+    }).catch(() => {});
+
     setModalMode('NONE');
     setEditingDevice(null);
     setConfirmDeleteUuid(null);
