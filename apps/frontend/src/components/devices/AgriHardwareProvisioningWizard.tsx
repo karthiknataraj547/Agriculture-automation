@@ -59,22 +59,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [wifiPass, setWifiPass] = useState('agrifarm2026');
   const [showPassword, setShowPassword] = useState(false);
 
-  // REAL Hardware Discovery States (100% WIRELESS GUARANTEED DISCOVERY)
-  const defaultHardwareNode = {
-    serialNumber: 'AGRI-ESP32-8A12',
-    macAddress: 'CC:50:E3:8A:12:34',
-    authCode: 'ATH-8600-4911',
-    boardFamily: 'ESP32',
-    protocol: 'WIPRO_TUYA_BEACON_V3',
-    hardwareCertificate: 'AGRI-CERT-WIPRO-AUTHENTICATED-V2',
-    mode: '100% Wireless Hardware Signal Lock',
-    rssi: -38,
-    productName: 'AgriFlow Smart Irrigation Controller (ESP32)'
-  };
-
+  // STRICT REAL HARDWARE DISCOVERY STATES (NO MOCK DATA)
   const [isScanning, setIsScanning] = useState(true);
-  const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([defaultHardwareNode]);
-  const [selectedDevice, setSelectedDevice] = useState<any | null>(defaultHardwareNode);
+  const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<any | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [isBleScanning, setIsBleScanning] = useState<boolean>(false);
 
@@ -131,8 +119,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setIsScanning(true);
     setScanError(null);
     setScanSecondsLeft(15);
-    setDiscoveredDevices([defaultHardwareNode]);
-    setSelectedDevice(defaultHardwareNode);
+    setDiscoveredDevices([]);
+    setSelectedDevice(null);
 
     let secondsLeft = 15;
     let foundHardware = false;
@@ -479,7 +467,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white">Wireless Device Discovery</h2>
                 <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-2 py-0.5 rounded-full font-mono">
-                  100% Wireless Radar
+                  Real Hardware Radar
                 </span>
               </div>
               <p className="text-xs text-slate-400">Automatic 15-second wireless hardware beacon scan</p>
@@ -546,10 +534,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  {isScanning ? 'Scanning Wireless Space (15s Radar)...' : 'Wireless Signal Locked!'}
+                  {isScanning ? 'Scanning Wireless Space (15s Radar)...' : discoveredDevices.length > 0 ? 'Real Hardware Signal Locked!' : 'Wireless Radar Scan Complete'}
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  Listening for wireless UDP signal beacons, Web Bluetooth &amp; mDNS broadcasts from ESP32 hardware...
+                  {isScanning
+                    ? 'Listening for UDP signal beacons, mDNS broadcasts & Bluetooth LE from physical ESP32...'
+                    : discoveredDevices.length > 0
+                    ? 'Found physical ESP32 wireless signal! Click Pair & Connect below.'
+                    : 'No active hardware beacon detected. Ensure board is powered ON & connect Wi-Fi to AGRI-SETUP-XXXX.'}
                 </p>
               </div>
 
@@ -576,12 +568,27 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               </div>
             </div>
 
-            {/* RENDER REAL DISCOVERED HARDWARE CARDS (ALWAYS GUARANTEED TO DISPLAY) */}
+            {/* INSTRUCTION GUIDE CARD WHEN NO HARDWARE DETECTED YET */}
+            {!isScanning && discoveredDevices.length === 0 && (
+              <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-800/60 space-y-3 text-amber-200 text-xs">
+                <div className="font-bold flex items-center gap-1.5 text-amber-400">
+                  <Wifi className="w-4 h-4" />
+                  <span>How to Connect Your Physical ESP32 Board Wirelessly:</span>
+                </div>
+                <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-amber-100">
+                  <li><strong>Power ON</strong> your physical ESP32 board.</li>
+                  <li>Open your laptop or phone Wi-Fi settings and connect to <strong>AGRI-SETUP-XXXX</strong>.</li>
+                  <li>Click <strong>Restart 15s Scan</strong> above or <strong>Bluetooth LE Scan</strong> to pair instantly!</li>
+                </ol>
+              </div>
+            )}
+
+            {/* RENDER REAL DISCOVERED HARDWARE CARDS (STRICTLY PHYSICAL BOARDS) */}
             {discoveredDevices.length > 0 && (
               <div className="space-y-3">
                 <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>Detected Hardware Signal (Wireless Ready)</span>
+                  <span>Real Physical Hardware Signal (Active &amp; Ready)</span>
                 </div>
 
                 {discoveredDevices.map((device) => (
