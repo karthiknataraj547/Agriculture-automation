@@ -1,8 +1,8 @@
 /*
- * Commercial Smart Agriculture Node Firmware (Unlimited Wi-Fi Re-writing + HTTPS/MQTT + Remote Hard Reset)
+ * Commercial Smart Agriculture Node Firmware (100% Wireless Provisioning + BLE + MQTT + HTTPS 443)
  * Product: AgriFlow Smart Irrigation Controller
  * Microcontroller: ESP32 (Xtensa LX6)
- * Version: v1.6.0 (Unlimited Dual AP_STA Wi-Fi Rewriting + HTTPS Port 443 Sync)
+ * Version: v1.7.0 (100% Wireless Discovery + NimBLE + CORS/PNA Headers + HTTPS Port 443)
  */
 
 #include <WiFi.h>
@@ -14,6 +14,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
+#include <NimBLEDevice.h>
 
 // ─── HARDWARE GPIO PIN MAPPING (ESP32) ───
 #define PIN_LED_INDICATOR  2    // Onboard Status LED
@@ -23,6 +24,9 @@
 #define PIN_RELAY_PUMP     26   // Water Pump Relay (Active HIGH)
 #define PIN_FLOW_RATE      27   // Pulse Water Flow Sensor
 #define DHTTYPE            DHT11
+
+#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
+#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 // ─── GLOBAL OBJECTS & STATE ───
 Preferences preferences;
@@ -53,7 +57,7 @@ bool ledState = LOW;
 const char* MQTT_BROKER = "broker.hivemq.com";
 const int   MQTT_PORT   = 1883;
 
-void initAPandMDNS();
+void initAPandMDNSandBLE();
 void setupHttpServerRoutes();
 void connectToWiFiRouter();
 void sendHttpsAndMqttTelemetry();
@@ -69,7 +73,7 @@ void setup() {
   
   dht.begin();
   
-  // ALWAYS ENABLE DUAL AP+STA MODE FOR UNLIMITED WI-FI RE-WRITING OVER THE AIR!
+  // ALWAYS ENABLE DUAL AP+STA MODE FOR 100% WIRELESS RE-WRITING OVER THE AIR!
   WiFi.mode(WIFI_AP_STA);
   delay(100);
 
@@ -81,7 +85,7 @@ void setup() {
   deviceSerial.toUpperCase();
 
   Serial.println("\n==========================================");
-  Serial.println(" AgriFlow Smart Node (Unlimited Wi-Fi V1.6)");
+  Serial.println(" AgriFlow 100% Wireless ESP32 Controller");
   Serial.println(" Serial Number: " + deviceSerial);
   Serial.println(" MAC Address:   " + macAddress);
   Serial.println(" Certificate:   AGRI-CERT-WIPRO-AUTHENTICATED-V2");
@@ -93,7 +97,7 @@ void setup() {
   authCode = preferences.getString("authCode", "ATH-8600-4911");
   preferences.end();
 
-  initAPandMDNS();
+  initAPandMDNSandBLE();
   setupHttpServerRoutes();
   server.begin();
 
@@ -101,13 +105,13 @@ void setup() {
     Serial.println("[WIFI] Connecting to saved router: " + wifiSsid);
     connectToWiFiRouter();
   } else {
-    Serial.println("[MODE] No Wi-Fi saved. Waiting for Unlimited Wireless Provisioning...");
+    Serial.println("[MODE] No Wi-Fi saved. Waiting for 100% Wireless Discovery & Provisioning...");
   }
 
   secureClient.setInsecure(); // Allow HTTPS TLS connection to Vercel Cloud on Port 443
 }
 
-void initAPandMDNS() {
+void initAPandMDNSandBLE() {
   String macClean = macAddress;
   macClean.replace(":", "");
   String lastFour = macClean.substring(8, 12);
@@ -123,17 +127,43 @@ void initAPandMDNS() {
     MDNS.addService("agriflow", "tcp", 80);
     Serial.println(F("[mDNS] Wireless Host Active: http://agriflow-smart-node.local"));
   }
+
+  // NimBLE Web Bluetooth LE Advertising
+  NimBLEDevice::init(apName.c_str());
+  NimBLEServer *pServer = NimBLEDevice::createServer();
+  NimBLEService *pService = pServer->createService(SERVICE_UUID);
+  pService->start();
+  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
+  pAdv->addServiceUUID(SERVICE_UUID);
+  pAdv->start();
+  Serial.println("[BLE] NimBLE Bluetooth LE Wireless Advertising Active: " + apName);
+}
+
+void sendCorsHeaders() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "*");
+  server.sendHeader("Access-Control-Allow-Private-Network", "true");
 }
 
 void setupHttpServerRoutes() {
-  // GET /ping — Discovery & Hardware Verification Endpoint
+  // OPTIONS Preflight Handler for Browser PNA / CORS Security
+  server.onNotFound([]() {
+    if (server.method() == HTTP_OPTIONS) {
+      sendCorsHeaders();
+      server.send(204);
+    } else {
+      sendCorsHeaders();
+      server.send(404, "text/plain", "Not Found");
+    }
+  });
+
+  // GET /ping — Wireless Discovery Endpoint
   server.on("/ping", HTTP_GET, []() {
     toolConnected = true;
     currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
     lastToolConnectTime = millis();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "*");
+    sendCorsHeaders();
     String json = "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + 
                   "\",\"mac\":\"" + macAddress + 
                   "\",\"authCode\":\"" + authCode +
@@ -148,7 +178,7 @@ void setupHttpServerRoutes() {
   // GET /wifi-scan — Scans nearby 2.4GHz Wi-Fi networks
   server.on("/wifi-scan", HTTP_GET, []() {
     toolConnected = true;
-    server.sendHeader("Access-Control-Allow-Origin", "*");
+    sendCorsHeaders();
     int n = WiFi.scanNetworks();
     String json = "[";
     for (int i = 0; i < n; ++i) {
@@ -159,12 +189,12 @@ void setupHttpServerRoutes() {
     server.send(200, "application/json", json);
   });
 
-  // POST or GET /setup — UNLIMITED WI-FI REWRITING ENDPOINT
+  // POST or GET /setup — 100% WIRELESS WI-FI REWRITING ENDPOINT
   server.on("/setup", []() {
     toolConnected = true;
     currentBlinkMode = MODE_CONNECTING_HEARTBEAT;
     lastToolConnectTime = millis();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
+    sendCorsHeaders();
     
     String reqSsid = server.arg("ssid");
     String reqPass = server.arg("password");
@@ -182,8 +212,8 @@ void setupHttpServerRoutes() {
       preferences.putString("authCode", authCode);
       preferences.end();
 
-      Serial.println("\n[SETUP] New Wi-Fi Credentials Received: " + wifiSsid + " (Auth: " + authCode + ")");
-      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials updated! Connecting...\"}");
+      Serial.println("\n[SETUP] New Wi-Fi Credentials Received Over Wireless: " + wifiSsid);
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials updated wirelessly! Connecting...\"}");
 
       // Disconnect and reconnect to new Wi-Fi router
       connectToWiFiRouter();
@@ -194,7 +224,7 @@ void setupHttpServerRoutes() {
 
   // POST or GET /reset — HARD RESET ENDPOINT
   server.on("/reset", []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
+    sendCorsHeaders();
     server.send(200, "application/json", "{\"success\":true,\"message\":\"Hardware Wi-Fi Credentials Erased! Rebooting...\"}");
     executeStrongHardReset();
   });
@@ -223,7 +253,7 @@ void connectToWiFiRouter() {
     mqttClient.setCallback(mqttCallback);
 
   } else {
-    Serial.println("\n[WiFi] Connection Failed! Keeping Open AP & mDNS active for Wi-Fi re-entry.");
+    Serial.println("\n[WiFi] Connection Failed! Keeping Open AP, BLE & mDNS active for wireless re-entry.");
     digitalWrite(PIN_LED_INDICATOR, LOW);
   }
 }
@@ -276,11 +306,9 @@ void sendHttpsAndMqttTelemetry() {
     }
     secureClient.stop();
     Serial.println("[HTTPS PING] 443 SSL Telemetry Packet Delivered!");
-  } else {
-    Serial.println("[HTTPS PING] Port 443 SSL connection failed.");
   }
 
-  // 2. Publish MQTT Telemetry to HiveMQ Broker
+  // 2. Publish MQTT Telemetry & Discovery Beacons to HiveMQ Broker
   if (!mqttClient.connected()) {
     String clientId = "AgriFlow-Node-" + deviceSerial;
     if (mqttClient.connect(clientId.c_str())) {
@@ -294,7 +322,7 @@ void sendHttpsAndMqttTelemetry() {
   if (mqttClient.connected()) {
     mqttClient.publish("agri/telemetry", payload.c_str());
     mqttClient.publish(("agri/telemetry/" + deviceSerial).c_str(), payload.c_str());
-    Serial.println("[MQTT PING] Telemetry published to HiveMQ topic agri/telemetry");
+    mqttClient.publish("agri/discovery/beacons", payload.c_str());
   }
 }
 
@@ -342,7 +370,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void loop() {
-  // Always handle HTTP server requests for Unlimited Wi-Fi Rewriting
+  // Always handle HTTP server requests for 100% Wireless Rewriting
   server.handleClient();
 
   // 1. Physical BOOT Button Hold (GPIO 0) for 3 Seconds -> STRONG HARD RESET
@@ -354,34 +382,6 @@ void loop() {
     }
   } else {
     buttonPressStart = 0;
-  }
-
-  // 2. USB Serial Command Listener over UART
-  if (Serial.available()) {
-    String input = Serial.readStringUntil('\n');
-    input.trim();
-    if (input.equalsIgnoreCase("RESET") || input.equalsIgnoreCase("HARD_RESET") || input.equalsIgnoreCase("FACTORY_RESET")) {
-      executeStrongHardReset();
-    } else if (input.startsWith("SETUP:")) {
-      String jsonPayload = input.substring(6);
-      StaticJsonDocument<256> doc;
-      deserializeJson(doc, jsonPayload);
-      const char* reqSsid = doc["ssid"];
-      const char* reqPass = doc["password"];
-      const char* reqAuth = doc["authCode"];
-      if (reqSsid && reqPass) {
-        wifiSsid = String(reqSsid);
-        wifiPass = String(reqPass);
-        if (reqAuth) authCode = String(reqAuth);
-        preferences.begin("agri-node", false);
-        preferences.putString("ssid", wifiSsid);
-        preferences.putString("pass", wifiPass);
-        preferences.putString("authCode", authCode);
-        preferences.end();
-        Serial.println("[USB SETUP] Wi-Fi updated over USB! Connecting to router...");
-        connectToWiFiRouter();
-      }
-    }
   }
 
   // Broadcast UDP Wireless Signal Packet every 1 second
