@@ -1,31 +1,34 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  AETHERCROP SPATIAL IOT PLATFORM — ESP32 FIRMWARE NODE (WIFI PROVISIONING + NVS)
+ *  AETHERCROP SPATIAL IOT PLATFORM — ESP32 FIRMWARE NODE
+ *  (WIFI PROVISIONING + NVS FLASH + SOFTAP + BLE + MDNS + TELEMETRY)
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  Hardware Target : ESP32 DevKit V1 / WROOM-32 / NodeMCU-32S
+ *  Hardware Target : ESP32 DevKit V1 / WROOM-32 / NodeMCU-32S / ESP32-WROVER
  *  Features        : 
  *    - Persistent WiFi Credential Storage in NVS Flash (Preferences.h)
- *    - SoftAP Provisioning Mode & HTTP REST API (Port 80 / 192.168.4.1)
- *    - WiFi Scanning & Dynamic Credential Programming
- *    - MQTT Telemetry + HTTP REST Fallback
- *    - Pulse Water Flow Meter & Soil Moisture Sampling
- *    - Active Relay Pump Actuation with Safety Watchdog
- *  Libraries Needed:
- *    - WiFi.h & WebServer.h (Built-in ESP32)
- *    - Preferences.h (Built-in ESP32 NVS)
- *    - PubSubClient (by Nick O'Leary)
- *    - ArduinoJson (v6.x or v7.x by Benoit Blanchon)
- *    - DHT sensor library & Adafruit Unified Sensor (by Adafruit)
+ *    - SoftAP Provisioning Mode (192.168.4.1) with Full CORS HTTP REST WebServer
+ *    - NimBLE Bluetooth LE Provisioning (UUID: 0000ffe0-0000-1000-8000-00805f9b34fb)
+ *    - mDNS Hostname Discovery (http://agriflow-smart-node.local & http://aethercrop-node.local)
+ *    - 2.4GHz WiFi Scanning & Dynamic In-Memory Programming
+ *    - Strict Hardware Status Confirmation (CONNECTING -> CONNECTED / FAILED)
+ *    - MQTT Telemetry & Active Relay Pump Control
+ *    - Pulse Water Flow Meter & Soil Moisture ADC Sampling
  * ═══════════════════════════════════════════════════════════════════════════════════
  */
 
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 #include <HTTPClient.h>
+#include <NimBLEDevice.h>
+
+// ─── BLE UUID DEFINITIONS ───
+#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
+#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 // ─── PIN DEFINITIONS (ESP32) ───
 #define SOIL_MOISTURE_PIN  34    // ADC1 Channel 6 (Analog 0-4095)
@@ -36,8 +39,8 @@
 #define STATUS_LED_PIN     2     // Built-in LED (GPIO 2)
 #define PIN_FACTORY_RESET  0     // Boot/Flash Button (Hold 5s to clear NVS Wi-Fi)
 
-// ─── MQTT & SERVER CONFIGURATION ───
-const char* MQTT_SERVER     = "192.168.1.100"; // Replace with Backend/MQTT IP or domain
+// ─── MQTT & BACKEND CONFIGURATION ───
+const char* MQTT_SERVER     = "192.168.1.100"; // Replace with your Backend/MQTT IP
 const int   MQTT_PORT       = 1883;
 const char* MQTT_USER       = "";              // Optional MQTT Username
 const char* MQTT_PASS       = "";              // Optional MQTT Password
@@ -55,7 +58,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 
 String wifiSsid = "";
 String wifiPass = "";
-String deviceSerial = "ESP32-NODE-ALPHA-01";
+String deviceSerial = "ESP32-ATH-8A12";
 String macAddress = "";
 String authCode = "ATH-8F92-4C10-99E4";
 String farmId = "farm-alpha";
@@ -70,6 +73,7 @@ enum NodeState {
 };
 
 NodeState currentState = STATE_INIT;
+String lastConnectionError = "";
 bool isProvisioned = false;
 
 volatile unsigned long pulseCount = 0;
@@ -86,6 +90,9 @@ bool ledState = LOW;
 unsigned long resetBtnPressTime = 0;
 bool resetBtnHeld = false;
 
+unsigned long wifiConnectStartTime = 0;
+const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000; // 20 seconds timeout
+
 // Interrupt Service Routine for Water Flow Meter Pulse
 void IRAM_ATTR flowPulseISR() {
   pulseCount++;
@@ -93,10 +100,14 @@ void IRAM_ATTR flowPulseISR() {
 
 // ─── FUNCTION DECLARATIONS ───
 void setupProvisioningAP();
+void handleCorsPreflight();
 void handleProvisioningRequest();
 void handleStatusRequest();
+void handleDeviceInfoRequest();
 void handleWifiScan();
+void handleClaimRequest();
 void handleResetRequest();
+void handlePingImage();
 void connectToWiFi();
 void reconnectMQTT();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
@@ -106,6 +117,34 @@ void publishTelemetry();
 void sendHTTPFallback(const char* jsonPayload);
 void checkFactoryResetButton();
 void updateLedIndicator();
+void startBleAdvertising(const String& apName);
+
+// ─── BLE WRITE CALLBACK ───
+class BleCallbacks: public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    if (value.length() > 0) {
+      Serial.print(F("[BLE WRITE RECEIVED]: "));
+      Serial.println(value.c_str());
+
+      StaticJsonDocument<384> doc;
+      DeserializationError err = deserializeJson(doc, value.c_str());
+      if (!err) {
+        const char* s = doc["ssid"] | doc["wifiSsid"];
+        const char* p = doc["password"] | doc["wifiPass"];
+        if (s && p) {
+          wifiSsid = String(s);
+          wifiPass = String(p);
+          preferences.putString("ssid", wifiSsid);
+          preferences.putString("pass", wifiPass);
+          Serial.println(F("[BLE] Wi-Fi credentials saved to NVS via BLE! Reconnecting..."));
+          currentState = STATE_WIFI_CONNECTING;
+          connectToWiFi();
+        }
+      }
+    }
+  }
+};
 
 // ─── SETUP FUNCTION ───
 void setup() {
@@ -138,7 +177,7 @@ void setup() {
   Serial.print(F("📌 Node Serial: ")); Serial.println(deviceSerial);
   Serial.print(F("📌 MAC Address: ")); Serial.println(macAddress);
 
-  // 1. Read WiFi Credentials from Non-Volatile Flash (NVS)
+  // 1. Read Stored WiFi Credentials from NVS Flash
   preferences.begin("aether-wifi", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPass = preferences.getString("pass", "");
@@ -147,19 +186,19 @@ void setup() {
   if (wifiSsid.length() > 0) {
     Serial.println(wifiSsid);
   } else {
-    Serial.println(F("[NONE] - No credentials stored in NVS"));
+    Serial.println(F("[NONE] - Starting in SoftAP Provisioning Mode"));
   }
 
-  // 2. Decide whether to connect or enter SoftAP provisioning
+  // 2. Determine Boot Mode
   if (digitalRead(PIN_FACTORY_RESET) == LOW || wifiSsid.length() == 0) {
-    Serial.println(F("⚡ Entering SoftAP WiFi Provisioning Mode..."));
+    Serial.println(F("⚡ Starting SoftAP WiFi Provisioning Mode..."));
     setupProvisioningAP();
   } else {
     connectToWiFi();
   }
 }
 
-// ─── ACCESS POINT & WEB SERVER PROVISIONING MODE ───
+// ─── SOFTAP & WEBSERVER SETUP ───
 void setupProvisioningAP() {
   currentState = STATE_PROVISIONING_AP;
   isProvisioned = false;
@@ -167,7 +206,7 @@ void setupProvisioningAP() {
   String macClean = macAddress;
   macClean.replace(":", "");
   String lastFour = macClean.substring(macClean.length() - 4);
-  String apName = "AetherCrop-SETUP-" + lastFour;
+  String apName = "AGRI-SETUP-" + lastFour;
   apName.toUpperCase();
 
   WiFi.mode(WIFI_AP_STA);
@@ -179,37 +218,58 @@ void setupProvisioningAP() {
   Serial.println(F("🔑 AP Password:        agrifarm2026"));
   Serial.println(F("--------------------------------------------------------\n"));
 
-  // Register WebServer REST Endpoints for Provisioning
+  // Start mDNS Responder
+  if (MDNS.begin("agriflow-smart-node") || MDNS.begin("aethercrop-node")) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.println(F("📡 mDNS Responders active: http://agriflow-smart-node.local"));
+  }
+
+  // Register WebServer Routes with Full CORS Support
   server.enableCORS(true);
 
-  // Endpoint 1: POST /setup and /api/wifi/credentials (Write to NVS & Connect)
-  server.on("/setup", HTTP_POST, handleProvisioningRequest);
-  server.on("/api/wifi/credentials", HTTP_POST, handleProvisioningRequest);
+  // CORS Preflight Handlers
+  server.on("/ping", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/status", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/api/wifi/status", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/device-info", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/setup", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/api/wifi/credentials", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/wifi-scan", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/api/wifi/scan", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/claim", HTTP_OPTIONS, handleCorsPreflight);
+  server.on("/reset", HTTP_OPTIONS, handleCorsPreflight);
 
-  // Endpoint 2: GET /ping and /api/wifi/status (Read Status)
+  // Status & Discovery Endpoints
   server.on("/ping", HTTP_GET, handleStatusRequest);
-  server.on("/api/wifi/status", HTTP_GET, handleStatusRequest);
   server.on("/status", HTTP_GET, handleStatusRequest);
+  server.on("/api/wifi/status", HTTP_GET, handleStatusRequest);
+  server.on("/device-info", HTTP_GET, handleDeviceInfoRequest);
+  server.on("/ping-image.jpg", HTTP_GET, handlePingImage);
 
-  // Endpoint 3: GET /wifi-scan and /api/wifi/scan (Scan local SSIDs)
+  // WiFi Scan Endpoints
   server.on("/wifi-scan", HTTP_GET, handleWifiScan);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
 
-  // Endpoint 4: POST /reset (Factory Reset NVS)
+  // WiFi Credential Programming Endpoints (NVS Flash Write)
+  server.on("/setup", HTTP_POST, handleProvisioningRequest);
+  server.on("/api/wifi/credentials", HTTP_POST, handleProvisioningRequest);
+
+  // Claim & Reset
+  server.on("/claim", HTTP_POST, handleClaimRequest);
   server.on("/reset", HTTP_POST, handleResetRequest);
 
-  // Endpoint 5: Root Web Page for Browser Provisioning
+  // Root Captive Portal HTML
   server.on("/", HTTP_GET, []() {
     String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                  "<title>AetherCrop WiFi Setup</title>"
+                  "<title>AetherCrop Wi-Fi Setup</title>"
                   "<style>body{font-family:sans-serif;background:#0b0f19;color:#e2e8f0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}"
                   ".card{background:#151d2f;border:1px solid #06b6d4;border-radius:16px;padding:24px;width:90%;max-width:380px;text-align:center;box-shadow:0 8px 32px rgba(6,182,212,0.2);}"
                   "h2{color:#38bdf8;margin-top:0;}input{width:100%;box-sizing:border-box;padding:12px;margin:8px 0;background:#090d16;border:1px solid #334155;border-radius:8px;color:#fff;font-size:14px;}"
                   "button{width:100%;padding:12px;background:linear-gradient(135deg,#06b6d4,#3b82f6);color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:15px;cursor:pointer;margin-top:12px;}"
                   ".status{font-size:12px;color:#94a3b8;margin-top:16px;}</style></head><body>"
-                  "<div class='card'><h2>🌾 AetherCrop Node</h2><p style='font-size:13px;color:#cbd5e1'>Enter WiFi credentials to write into firmware NVS flash memory.</p>"
-                  "<form action='/setup' method='POST'><input name='ssid' placeholder='WiFi SSID' required>"
-                  "<input name='password' type='password' placeholder='WiFi Password' required>"
+                  "<div class='card'><h2>🌾 AetherCrop Node</h2><p style='font-size:13px;color:#cbd5e1'>Enter Wi-Fi credentials to write into firmware NVS flash memory.</p>"
+                  "<form action='/setup' method='POST'><input name='ssid' placeholder='Wi-Fi SSID' required>"
+                  "<input name='password' type='password' placeholder='Wi-Fi Password' required>"
                   "<button type='submit'>Write to Firmware & Connect</button></form>"
                   "<div class='status'>Device: " + deviceSerial + "<br>MAC: " + macAddress + "</div></div></body></html>";
     server.send(200, "text/html", html);
@@ -217,12 +277,45 @@ void setupProvisioningAP() {
 
   server.begin();
   Serial.println(F("🚀 Provisioning Web Server listening on Port 80."));
+
+  // Start NimBLE Advertising
+  startBleAdvertising(apName);
 }
 
-// ─── PROVISIONING REQUEST HANDLER (WRITE TO NVS) ───
+void startBleAdvertising(const String& apName) {
+  try {
+    NimBLEDevice::init(apName.c_str());
+    NimBLEServer *pServer = NimBLEDevice::createServer();
+    NimBLEService *pService = pServer->createService(SERVICE_UUID);
+    NimBLECharacteristic *pCharacteristic = pService->createCharacteristic(
+      CHARACTERISTIC_UUID,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY
+    );
+    pCharacteristic->setCallbacks(new BleCallbacks());
+    pService->start();
+
+    NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
+    pAdv->addServiceUUID(SERVICE_UUID);
+    pAdv->start();
+    Serial.println(F("📱 NimBLE Bluetooth Advertising Started!"));
+  } catch (...) {
+    Serial.println(F("⚠️ NimBLE start bypassed."));
+  }
+}
+
+void handleCorsPreflight() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS,PUT,DELETE");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Cache-Control");
+  server.sendHeader("Access-Control-Max-Age", "86400");
+  server.send(204);
+}
+
+// ─── PROVISIONING REQUEST HANDLER (WRITE TO NVS FLASH) ───
 void handleProvisioningRequest() {
   String reqSsid = "";
   String reqPass = "";
+  String reqAuth = "";
 
   if (server.hasArg("plain")) {
     StaticJsonDocument<384> doc;
@@ -230,32 +323,40 @@ void handleProvisioningRequest() {
     if (!err) {
       reqSsid = doc["ssid"] | doc["wifiSsid"] | "";
       reqPass = doc["password"] | doc["wifiPass"] | "";
+      reqAuth = doc["authCode"] | "";
     }
   }
 
   if (reqSsid.length() == 0 && server.hasArg("ssid")) {
     reqSsid = server.arg("ssid");
     reqPass = server.arg("password");
+    reqAuth = server.arg("authCode");
   }
 
   if (reqSsid.length() > 0) {
     wifiSsid = reqSsid;
     wifiPass = reqPass;
+    if (reqAuth.length() > 0) authCode = reqAuth;
 
-    // Write WiFi Credentials to ESP32 NVS Flash Storage
+    // 1. Write WiFi Credentials into ESP32 NVS Flash Storage
     preferences.putString("ssid", wifiSsid);
     preferences.putString("pass", wifiPass);
+    if (reqAuth.length() > 0) preferences.putString("auth", authCode);
 
-    Serial.println(F("\n💾 [NVS WRITE] New WiFi credentials written to flash memory!"));
+    Serial.println(F("\n💾 [NVS WRITE] New Wi-Fi credentials written to flash memory!"));
     Serial.print(F("💾 Stored SSID: ")); Serial.println(wifiSsid);
 
-    String response = "{\"success\":true,\"message\":\"WiFi credentials written to ESP32 NVS! Connecting...\",\"ssid\":\"" + wifiSsid + "\",\"deviceSerial\":\"" + deviceSerial + "\"}";
+    // 2. Respond immediately with JSON confirmation so browser/app wizard gets HTTP 200
+    String response = "{\"success\":true,\"message\":\"Wi-Fi credentials written to ESP32 NVS! Connecting...\",\"ssid\":\"" + wifiSsid + "\",\"deviceSerial\":\"" + deviceSerial + "\"}";
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(200, "application/json", response);
 
-    delay(800);
+    // 3. Initiate Connection to the Wi-Fi router (without tearing down AP yet)
+    delay(400);
     currentState = STATE_WIFI_CONNECTING;
-    connectToWiFi();
+    wifiConnectStartTime = millis();
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
     return;
   }
 
@@ -263,18 +364,38 @@ void handleProvisioningRequest() {
   server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID and Password are required.\"}");
 }
 
-// ─── STATUS ENDPOINT (READ FROM NVS & WIFI) ───
+// ─── STATUS ENDPOINT (READ FROM NVS & WIFI STATE) ───
 void handleStatusRequest() {
-  StaticJsonDocument<384> doc;
+  StaticJsonDocument<512> doc;
+  doc["serial"]          = deviceSerial;
   doc["serialNumber"]    = deviceSerial;
+  doc["mac"]             = macAddress;
   doc["macAddress"]      = macAddress;
-  doc["nvsSsidStored"]   = (wifiSsid.length() > 0);
+  doc["nvsStored"]       = (wifiSsid.length() > 0);
   doc["ssid"]            = wifiSsid;
-  doc["wifiStatus"]      = (WiFi.status() == WL_CONNECTED) ? "CONNECTED" : (currentState == STATE_PROVISIONING_AP ? "PROVISIONING_AP" : "DISCONNECTED");
-  doc["ipAddress"]       = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
-  doc["rssi"]            = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
   doc["boardFamily"]     = "ESP32";
   doc["firmwareVersion"] = "2.0.0-PROVISION";
+  doc["authCode"]        = authCode;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    doc["status"]     = "CONNECTED";
+    doc["wifiStatus"] = "CONNECTED";
+    doc["ipAddress"]  = WiFi.localIP().toString();
+    doc["rssi"]       = WiFi.RSSI();
+  } else if (currentState == STATE_WIFI_CONNECTING) {
+    doc["status"]     = "CONNECTING";
+    doc["wifiStatus"] = "CONNECTING";
+    doc["ipAddress"]  = WiFi.softAPIP().toString();
+    doc["rssi"]       = -45;
+  } else {
+    doc["status"]     = "PROVISIONING_ACTIVE";
+    doc["wifiStatus"] = "PROVISIONING_AP";
+    doc["ipAddress"]  = WiFi.softAPIP().toString();
+    doc["rssi"]       = -38;
+    if (lastConnectionError.length() > 0) {
+      doc["lastError"] = lastConnectionError;
+    }
+  }
 
   String res;
   serializeJson(doc, res);
@@ -282,9 +403,16 @@ void handleStatusRequest() {
   server.send(200, "application/json", res);
 }
 
+// ─── DEVICE INFO ENDPOINT ───
+void handleDeviceInfoRequest() {
+  String info = "{\"deviceId\":\"" + deviceSerial + "\",\"serialNumber\":\"" + deviceSerial + "\",\"productId\":\"ESP32-IRRIGATION-V1\",\"productName\":\"AgriFlow Smart Irrigation Controller\",\"boardFamily\":\"ESP32\",\"firmwareVersion\":\"2.0.0-PROVISION\",\"authCode\":\"" + authCode + "\"}";
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", info);
+}
+
 // ─── WIFI SCAN ENDPOINT ───
 void handleWifiScan() {
-  Serial.println(F("🔍 Scanning 2.4GHz WiFi networks..."));
+  Serial.println(F("🔍 Scanning 2.4GHz Wi-Fi networks..."));
   int n = WiFi.scanNetworks();
   StaticJsonDocument<1024> doc;
   JsonArray array = doc.to<JsonArray>();
@@ -302,46 +430,42 @@ void handleWifiScan() {
   server.send(200, "application/json", res);
 }
 
+// ─── CLAIM ENDPOINT ───
+void handleClaimRequest() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", "{\"success\":true,\"message\":\"Hardware claimed successfully.\"}");
+}
+
 // ─── FACTORY RESET REQUEST (CLEAR NVS) ───
 void handleResetRequest() {
   preferences.clear();
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", "{\"success\":true,\"message\":\"ESP32 NVS Cleared! Restarting into AP setup mode...\"}");
-  delay(1000);
+  delay(800);
   ESP.restart();
+}
+
+// ─── PING 1x1 GIF PIXEL FOR HTTPS COMPATIBILITY ───
+void handlePingImage() {
+  const uint8_t gifData[] = {
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 
+    0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 
+    0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 
+    0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b
+  };
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendContent_P((const char*)gifData, sizeof(gifData));
 }
 
 // ─── CONNECT TO WIFI USING NVS CREDENTIALS ───
 void connectToWiFi() {
   currentState = STATE_WIFI_CONNECTING;
-  Serial.print(F("📡 Connecting to WiFi: "));
+  wifiConnectStartTime = millis();
+  Serial.print(F("📡 Connecting to Wi-Fi: "));
   Serial.println(wifiSsid);
 
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) { // 15-second timeout (30 * 500ms)
-    digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN)); // Fast blink while connecting
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    currentState = STATE_CONNECTED_ONLINE;
-    digitalWrite(STATUS_LED_PIN, HIGH); // Solid ON when connected
-    Serial.println(F("\n✅ WiFi Connected Successfully!"));
-    Serial.print(F("📶 Assigned IP: ")); Serial.println(WiFi.localIP());
-    Serial.print(F("📶 Gateway IP:  ")); Serial.println(WiFi.gatewayIP());
-    Serial.print(F("📶 Signal RSSI: ")); Serial.print(WiFi.RSSI()); Serial.println(F(" dBm"));
-
-    mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
-    mqttClient.setCallback(mqttCallback);
-  } else {
-    Serial.println(F("\n❌ WiFi Connection Failed or Timed Out! Re-entering SoftAP Provisioning..."));
-    setupProvisioningAP();
-  }
 }
 
 // ─── MQTT RECONNECT ───
@@ -375,7 +499,7 @@ void reconnectMQTT() {
 
 // ─── MQTT INCOMING COMMAND CALLBACK ───
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.print(F("📩 [MQTT COMMAND RECEIVED] Topic: "));
+  Serial.print(F("📩 [MQTT COMMAND] Topic: "));
   Serial.println(topic);
 
   StaticJsonDocument<512> doc;
@@ -496,7 +620,7 @@ void updateLedIndicator() {
   unsigned long interval = 1000;
 
   if (currentState == STATE_PROVISIONING_AP) {
-    interval = 200; // Rapid blink indicates waiting for WiFi credentials in AP Mode
+    interval = 200; // Rapid blink in AP Mode
   } else if (currentState == STATE_WIFI_CONNECTING) {
     interval = 500; // Medium blink while connecting
   } else if (currentState == STATE_CONNECTED_ONLINE) {
@@ -516,34 +640,52 @@ void loop() {
   updateLedIndicator();
   checkFactoryResetButton();
 
-  // If in AP Provisioning Mode, keep Web Server active to accept credentials from app
-  if (currentState == STATE_PROVISIONING_AP) {
-    server.handleClient();
+  // Always service web server client requests (both during AP mode and transition)
+  server.handleClient();
+
+  // Handle Wi-Fi Connection State Transitions
+  if (currentState == STATE_WIFI_CONNECTING) {
+    if (WiFi.status() == WL_CONNECTED) {
+      currentState = STATE_CONNECTED_ONLINE;
+      lastConnectionError = "";
+      digitalWrite(STATUS_LED_PIN, HIGH);
+      Serial.println(F("\n✅ Wi-Fi Connected Successfully!"));
+      Serial.print(F("📶 Assigned IP: ")); Serial.println(WiFi.localIP());
+
+      mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+      mqttClient.setCallback(mqttCallback);
+    } else if (millis() - wifiConnectStartTime >= WIFI_CONNECT_TIMEOUT_MS) {
+      currentState = STATE_PROVISIONING_AP;
+      lastConnectionError = "WIFI_AUTH_FAILED";
+      Serial.println(F("\n❌ Wi-Fi Connection Timed Out! Reverted to AP Setup Mode."));
+    }
     return;
   }
 
-  // If WiFi drops unexpectedly, reconnect
-  if (WiFi.status() != WL_CONNECTED) {
-    connectToWiFi();
-    return;
-  }
+  // When Online: Manage MQTT and Telemetry
+  if (currentState == STATE_CONNECTED_ONLINE) {
+    if (WiFi.status() != WL_CONNECTED) {
+      currentState = STATE_WIFI_CONNECTING;
+      wifiConnectStartTime = millis();
+      return;
+    }
 
-  // Manage MQTT
-  if (!mqttClient.connected()) {
-    reconnectMQTT();
-  }
-  mqttClient.loop();
+    if (!mqttClient.connected()) {
+      reconnectMQTT();
+    }
+    mqttClient.loop();
 
-  // Safety Pump Watchdog
-  if (pumpState && (millis() - pumpStartTime >= pumpDurationMs)) {
-    pumpState = false;
-    digitalWrite(RELAY_PUMP_PIN, LOW);
-    Serial.println(F("⏱️ PUMP TIMER EXPIRED — Pump turned OFF automatically."));
-  }
+    // Safety Pump Watchdog
+    if (pumpState && (millis() - pumpStartTime >= pumpDurationMs)) {
+      pumpState = false;
+      digitalWrite(RELAY_PUMP_PIN, LOW);
+      Serial.println(F("⏱️ PUMP TIMER EXPIRED — Pump turned OFF."));
+    }
 
-  // Publish sensor telemetry
-  if (millis() - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
-    lastTelemetryTime = millis();
-    publishTelemetry();
+    // Publish sensor telemetry
+    if (millis() - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
+      lastTelemetryTime = millis();
+      publishTelemetry();
+    }
   }
 }

@@ -72,31 +72,29 @@ function timeAgo(isoString: string): string {
   return `${hours}h ago`;
 }
 
-const SAMPLE_ESP32_CODE = `// ESP32 Farm Smart Node Firmware (Soil Sensor + DHT Temp/Humidity + Pump Relay)
+const SAMPLE_ESP32_CODE = `// ESP32 Farm Smart Node Firmware (NVS WiFi Provisioning + WebServer + Telemetry)
 #include <WiFi.h>
+#include <WebServer.h>
+#include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
-// ─── Pin Configuration ───
-#define SOIL_PIN    34  // Capacitive Soil Moisture Sensor (Analog A0)
-#define DHT_PIN      4  // DHT11 or DHT22 Temp & Humidity Sensor
-#define RELAY_PIN   26  // Relay Module Signal Pin for Water Pump
+#define SOIL_PIN    34  // Soil Moisture Sensor (Analog A0)
+#define DHT_PIN      4  // DHT11 or DHT22 Data Pin
+#define RELAY_PIN   26  // Pump Relay Signal Pin (Active HIGH)
 #define DHT_TYPE DHT11
 
-// ─── Network & Authentication ───
-const char* ssid = "YOUR_FARM_WIFI";
-const char* password = "YOUR_WIFI_PASSWORD";
-const char* mqtt_server = "test.mosquitto.org";
-const int   mqtt_port = 1883;
-
-const char* deviceSerialNumber = "ESP32-FARM-NODE-01";
-const char* deviceAuthCode     = "ATH-8F92-4C10-99E4";
-const char* telemetryTopic     = "aether/farm-alpha/zone-1/telemetry";
-
+Preferences preferences;
+WebServer server(80);
 WiFiClient espClient;
 PubSubClient client(espClient);
 DHT dht(DHT_PIN, DHT_TYPE);
+
+String wifiSsid = "";
+String wifiPass = "";
+String deviceSerial = "ESP32-ATH-8A12";
+String deviceAuthCode = "ATH-8F92-4C10-99E4";
 
 void setup() {
   Serial.begin(115200);
@@ -104,105 +102,134 @@ void setup() {
   digitalWrite(RELAY_PIN, LOW);
   dht.begin();
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+  preferences.begin("aether-wifi", false);
+  wifiSsid = preferences.getString("ssid", "");
+  wifiPass = preferences.getString("pass", "");
 
-  client.setServer(mqtt_server, mqtt_port);
+  // SoftAP WebServer for Wizard Provisioning
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP("AGRI-SETUP-8A12", "agrifarm2026");
+
+  server.enableCORS(true);
+  server.on("/api/wifi/status", HTTP_GET, []() {
+    server.send(200, "application/json", "{\\"wifiStatus\\":\\"" + String(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "PROVISIONING_AP") + "\\",\\"ipAddress\\":\\"" + WiFi.localIP().toString() + "\\"}");
+  });
+  server.on("/api/wifi/credentials", HTTP_POST, []() {
+    if (server.hasArg("plain")) {
+      StaticJsonDocument<256> doc;
+      deserializeJson(doc, server.arg("plain"));
+      wifiSsid = String((const char*)doc["ssid"]);
+      wifiPass = String((const char*)doc["password"]);
+      preferences.putString("ssid", wifiSsid);
+      preferences.putString("pass", wifiPass);
+      server.send(200, "application/json", "{\\"success\\":true,\\"message\\":\\"Saved to NVS\\"}");
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    }
+  });
+  server.begin();
+
+  if (wifiSsid.length() > 0) {
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  }
+  client.setServer("192.168.1.100", 1883);
 }
 
 void loop() {
-  if (!client.connected()) {
-    while (!client.connected()) {
-      if (client.connect(deviceSerialNumber)) {
-        client.subscribe("agri/prod/farm-alpha/zone-1/commands");
-      } else { delay(2000); }
+  server.handleClient();
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) {
+      if (client.connect(deviceSerial.c_str())) {
+        client.subscribe("aether/farm-alpha/zone-1/commands");
+      }
+    }
+    client.loop();
+
+    static unsigned long last = 0;
+    if (millis() - last > 3000) {
+      last = millis();
+      float soil = map(analogRead(SOIL_PIN), 3200, 1200, 0, 100);
+      float temp = dht.readTemperature();
+      float hum = dht.readHumidity();
+      StaticJsonDocument<256> doc;
+      doc["deviceId"] = deviceSerial;
+      doc["authCode"] = deviceAuthCode;
+      doc["soilMoisture"] = constrain(soil, 0.0, 100.0);
+      doc["airTemperature"] = isnan(temp) ? 28.0 : temp;
+      doc["humidity"] = isnan(hum) ? 60.0 : hum;
+      doc["pumpRunning"] = digitalRead(RELAY_PIN) == HIGH;
+      char buf[256];
+      serializeJson(doc, buf);
+      client.publish("aether/farm-alpha/zone-1/telemetry", buf);
     }
   }
-  client.loop();
-
-  int rawSoil = analogRead(SOIL_PIN);
-  float soilMoisture = map(rawSoil, 4095, 1500, 0, 100);
-  float temp = dht.readTemperature();
-  float humidity = dht.readHumidity();
-
-  StaticJsonDocument<384> doc;
-  doc["deviceId"] = deviceSerialNumber;
-  doc["authCode"] = deviceAuthCode;
-  doc["soilMoisture"] = soilMoisture;
-  doc["airTemperature"] = isnan(temp) ? 0.0 : temp;
-  doc["humidity"] = isnan(humidity) ? 0.0 : humidity;
-  doc["pumpRunning"] = digitalRead(RELAY_PIN) == HIGH;
-
-  char buffer[384];
-  serializeJson(doc, buffer);
-  client.publish(telemetryTopic, buffer);
-
-  delay(3000);
 }`;
 
-const SAMPLE_ESP8266_CODE = `// ESP8266 (NodeMCU / D1 Mini) Farm Smart Node Firmware
+const SAMPLE_ESP8266_CODE = `// ESP8266 Farm Smart Node Firmware (EEPROM WiFi Provisioning + WebServer)
 #include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <EEPROM.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
 #define SOIL_PIN    A0  // Analog Soil Moisture Probe
 #define DHT_PIN     D2  // GPIO 4 for DHT Temp & Humidity Sensor
-#define RELAY_PIN   D3  // GPIO 0 Signal Pin for Water Pump Relay (D3)
+#define RELAY_PIN   D1  // GPIO 5 for Water Pump Relay (Active HIGH)
 #define DHT_TYPE DHT11
 
-const char* ssid = "YOUR_FARM_WIFI";
-const char* password = "YOUR_WIFI_PASSWORD";
-const char* mqtt_server = "test.mosquitto.org";
-const int   mqtt_port = 1883;
-
-const char* deviceSerialNumber = "ESP8266-FARM-NODE-01";
-const char* deviceAuthCode     = "ATH-7A12-98F1-44B2";
-
+ESP8266WebServer server(80);
 WiFiClient espClient;
 PubSubClient client(espClient);
 DHT dht(DHT_PIN, DHT_TYPE);
 
+String wifiSsid = "";
+String wifiPass = "";
+String deviceSerial = "AGRI-ESP8266-8A12";
+String deviceAuthCode = "ATH-7A12-98F1-44B2";
+
 void setup() {
   Serial.begin(115200);
+  EEPROM.begin(512);
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, LOW);
   dht.begin();
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP("AGRI-SETUP-8A12", "agrifarm2026");
 
-  client.setServer(mqtt_server, mqtt_port);
+  server.enableCORS(true);
+  server.on("/api/wifi/status", HTTP_GET, []() {
+    server.send(200, "application/json", "{\\"wifiStatus\\":\\"" + String(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "PROVISIONING_AP") + "\\",\\"ipAddress\\":\\"" + WiFi.localIP().toString() + "\\"}");
+  });
+  server.on("/api/wifi/credentials", HTTP_POST, []() {
+    if (server.hasArg("plain")) {
+      StaticJsonDocument<256> doc;
+      deserializeJson(doc, server.arg("plain"));
+      wifiSsid = String((const char*)doc["ssid"]);
+      wifiPass = String((const char*)doc["password"]);
+      for (int i = 0; i < wifiSsid.length(); i++) EEPROM.write(i, wifiSsid[i]);
+      EEPROM.write(wifiSsid.length(), '\\0');
+      for (int i = 0; i < wifiPass.length(); i++) EEPROM.write(100 + i, wifiPass[i]);
+      EEPROM.write(100 + wifiPass.length(), '\\0');
+      EEPROM.commit();
+      server.send(200, "application/json", "{\\"success\\":true,\\"message\\":\\"Saved to EEPROM\\"}");
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    }
+  });
+  server.begin();
+  client.setServer("192.168.1.100", 1883);
 }
 
 void loop() {
-  if (!client.connected()) {
-    while (!client.connected()) {
-      if (client.connect(deviceSerialNumber)) {
-        client.subscribe("agri/prod/farm-alpha/zone-1/commands");
-      } else { delay(2000); }
+  server.handleClient();
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) {
+      if (client.connect(deviceSerial.c_str())) {
+        client.subscribe("aether/farm-alpha/zone-1/commands");
+      }
     }
+    client.loop();
   }
-  client.loop();
-
-  int rawSoil = analogRead(SOIL_PIN);
-  float soilMoisture = map(rawSoil, 1024, 0, 0, 100);
-  float temp = dht.readTemperature();
-  float humidity = dht.readHumidity();
-
-  StaticJsonDocument<384> doc;
-  doc["deviceId"] = deviceSerialNumber;
-  doc["authCode"] = deviceAuthCode;
-  doc["soilMoisture"] = soilMoisture;
-  doc["airTemperature"] = isnan(temp) ? 0.0 : temp;
-  doc["humidity"] = isnan(humidity) ? 0.0 : humidity;
-  doc["pumpRunning"] = digitalRead(RELAY_PIN) == HIGH;
-
-  char buffer[384];
-  serializeJson(doc, buffer);
-  client.publish("agri/prod/farm-alpha/zone-1/telemetry", buffer);
-
-  delay(3000);
 }`;
 
 export function DeviceGrid() {

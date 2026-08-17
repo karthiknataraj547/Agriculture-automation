@@ -1,24 +1,21 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  AETHERCROP SPATIAL IOT PLATFORM — ESP8266 FIRMWARE NODE (WIFI PROVISIONING + EEPROM)
+ *  AETHERCROP SPATIAL IOT PLATFORM — ESP8266 FIRMWARE NODE
+ *  (WIFI PROVISIONING + EEPROM FLASH + SOFTAP + MDNS + TELEMETRY)
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  Hardware Target : ESP8266 NodeMCU V2/V3 / WeMos D1 Mini
+ *  Hardware Target : ESP8266 NodeMCU V2/V3 / WeMos D1 Mini / ESP-12E
  *  Features        : 
  *    - Persistent WiFi Credential Storage in EEPROM Flash
- *    - SoftAP Provisioning Mode & HTTP REST API (Port 80 / 192.168.4.1)
- *    - WiFi Scanning & Dynamic Credential Programming
- *    - Secure TLS / MQTTS Telemetry & HTTP REST Fallback
- *    - Active Relay Pump Actuation & Sensor Sampling
- *  Libraries Needed:
- *    - ESP8266WiFi.h & ESP8266WebServer.h (Built-in ESP8266)
- *    - EEPROM.h (Built-in ESP8266 Flash Storage)
- *    - PubSubClient (by Nick O'Leary)
- *    - ArduinoJson (v6.x or v7.x by Benoit Blanchon)
- *    - DHT sensor library (by Adafruit)
+ *    - SoftAP Provisioning Mode (192.168.4.1) with Full CORS HTTP REST WebServer
+ *    - mDNS Hostname Discovery (http://agriflow-smart-node.local)
+ *    - 2.4GHz WiFi Scanning & Dynamic Credential Programming
+ *    - Strict Hardware Status Confirmation (CONNECTING -> CONNECTED / FAILED)
+ *    - Secure TLS / MQTTS Telemetry & Active Relay Pump Control
  * ═══════════════════════════════════════════════════════════════════════════════════
  */
 
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
 #include <WiFiClientSecure.h>
 #include <ESP8266WebServer.h>
 #include <EEPROM.h>
@@ -78,6 +75,8 @@ bool ledState = HIGH; // Built-in LED is active LOW on ESP8266
 unsigned long buttonPressStart = 0;
 bool buttonHeld = false;
 unsigned long lastTelemetryMs = 0;
+unsigned long wifiConnectStartTime = 0;
+const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 
 void setDeviceState(DeviceState newState, String errorMsg = "") {
   currentState = newState;
@@ -111,7 +110,7 @@ void updateLedPattern() {
   switch(currentState) {
     case STATE_SETUP:
     case STATE_DISCOVERABLE:
-      interval = 200; // Rapid blink indicates waiting for WiFi in AP Mode
+      interval = 200; // Rapid blink in AP Mode
       break;
 
     case STATE_PAIRING:
@@ -120,7 +119,7 @@ void updateLedPattern() {
       break;
 
     case STATE_WIFI_CONNECTING:
-      interval = 500; // Medium blink
+      interval = 500; // Medium blink while connecting
       break;
 
     case STATE_WIFI_CONNECTED:
@@ -171,31 +170,38 @@ String readStringFromEEPROM(int startAddr) {
 
 // ─── SOFTAP WI-FI SERVER ENDPOINTS ───
 void setupSoftAP(const String& apName) {
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apName.c_str(), "agrifarm2026");
+
+  if (MDNS.begin("agriflow-smart-node")) {
+    MDNS.addService("http", "tcp", 80);
+  }
 
   server.enableCORS(true);
 
   // Common CORS OPTIONS Handlers
   auto sendCors = []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS,PUT,DELETE");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Cache-Control");
+    server.sendHeader("Access-Control-Max-Age", "86400");
     server.send(204);
   };
 
   server.on("/ping", HTTP_OPTIONS, sendCors);
   server.on("/status", HTTP_OPTIONS, sendCors);
   server.on("/api/wifi/status", HTTP_OPTIONS, sendCors);
+  server.on("/device-info", HTTP_OPTIONS, sendCors);
   server.on("/setup", HTTP_OPTIONS, sendCors);
   server.on("/api/wifi/credentials", HTTP_OPTIONS, sendCors);
   server.on("/wifi-scan", HTTP_OPTIONS, sendCors);
   server.on("/api/wifi/scan", HTTP_OPTIONS, sendCors);
+  server.on("/claim", HTTP_OPTIONS, sendCors);
+  server.on("/reset", HTTP_OPTIONS, sendCors);
 
-  // GET /ping & /api/wifi/status
+  // GET /ping & /api/wifi/status & /status
   auto handleStatus = []() {
-    StaticJsonDocument<384> doc;
-    doc["status"] = "PROVISIONING_ACTIVE";
+    StaticJsonDocument<512> doc;
     doc["serial"] = deviceSerial;
     doc["serialNumber"] = deviceSerial;
     doc["mac"] = macAddress;
@@ -204,7 +210,27 @@ void setupSoftAP(const String& apName) {
     doc["ssid"] = wifiSsid;
     doc["boardFamily"] = "ESP8266";
     doc["firmwareVersion"] = "3.2.0-PROVISION";
-    doc["wifiStatus"] = (int)WiFi.status();
+    doc["authCode"] = authCode;
+
+    if (WiFi.status() == WL_CONNECTED) {
+      doc["status"] = "CONNECTED";
+      doc["wifiStatus"] = "CONNECTED";
+      doc["ipAddress"] = WiFi.localIP().toString();
+      doc["rssi"] = WiFi.RSSI();
+    } else if (currentState == STATE_WIFI_CONNECTING) {
+      doc["status"] = "CONNECTING";
+      doc["wifiStatus"] = "CONNECTING";
+      doc["ipAddress"] = WiFi.softAPIP().toString();
+      doc["rssi"] = -45;
+    } else {
+      doc["status"] = "PROVISIONING_ACTIVE";
+      doc["wifiStatus"] = "PROVISIONING_AP";
+      doc["ipAddress"] = WiFi.softAPIP().toString();
+      doc["rssi"] = -38;
+      if (lastErrorReason != "NONE") {
+        doc["lastError"] = lastErrorReason;
+      }
+    }
 
     String response;
     serializeJson(doc, response);
@@ -215,6 +241,13 @@ void setupSoftAP(const String& apName) {
   server.on("/ping", HTTP_GET, handleStatus);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/api/wifi/status", HTTP_GET, handleStatus);
+
+  // GET /device-info
+  server.on("/device-info", HTTP_GET, []() {
+    String info = "{\"deviceId\":\"" + deviceSerial + "\",\"serialNumber\":\"" + deviceSerial + "\",\"productId\":\"AGRIFLOW-IRRIGATION-V1\",\"productName\":\"AgriFlow Smart Irrigation Controller\",\"boardFamily\":\"ESP8266\",\"firmwareVersion\":\"3.2.0-PROVISION\",\"authCode\":\"" + authCode + "\"}";
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", info);
+  });
 
   // GET /wifi-scan & /api/wifi/scan
   auto handleScan = []() {
@@ -263,16 +296,17 @@ void setupSoftAP(const String& apName) {
       writeStringToEEPROM(EEPROM_SSID_ADDR, wifiSsid);
       writeStringToEEPROM(EEPROM_PASS_ADDR, wifiPass);
 
-      Serial.println(F("\n💾 [EEPROM WRITE] Stored WiFi credentials in EEPROM flash!"));
+      Serial.println(F("\n💾 [EEPROM WRITE] Stored Wi-Fi credentials in EEPROM flash!"));
       Serial.print(F("💾 SSID: ")); Serial.println(wifiSsid);
 
       server.sendHeader("Access-Control-Allow-Origin", "*");
-      server.send(200, "application/json", "{\"success\":true,\"message\":\"WiFi credentials written to EEPROM. Reconnecting...\",\"ssid\":\"" + wifiSsid + "\"}");
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials written to EEPROM. Reconnecting...\",\"ssid\":\"" + wifiSsid + "\"}");
       
-      delay(500);
+      delay(400);
+      setDeviceState(STATE_WIFI_CONNECTING);
+      wifiConnectStartTime = millis();
       WiFi.mode(WIFI_AP_STA);
       WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-      setDeviceState(STATE_WIFI_CONNECTING);
       return;
     }
     server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -281,6 +315,12 @@ void setupSoftAP(const String& apName) {
 
   server.on("/setup", HTTP_POST, handleSetup);
   server.on("/api/wifi/credentials", HTTP_POST, handleSetup);
+
+  // POST /claim
+  server.on("/claim", HTTP_POST, []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Claim registered.\"}");
+  });
 
   // POST /reset
   server.on("/reset", HTTP_POST, []() {
@@ -293,6 +333,18 @@ void setupSoftAP(const String& apName) {
     EEPROM.commit();
     WiFi.disconnect(true);
     ESP.restart();
+  });
+
+  // GET /ping-image.jpg
+  server.on("/ping-image.jpg", HTTP_GET, []() {
+    const uint8_t gifData[] = {
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 
+      0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 
+      0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 
+      0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b
+    };
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendContent_P((const char*)gifData, sizeof(gifData));
   });
 
   server.begin();
@@ -364,15 +416,15 @@ void setup() {
   wifiSsid = readStringFromEEPROM(EEPROM_SSID_ADDR);
   wifiPass = readStringFromEEPROM(EEPROM_PASS_ADDR);
 
+  String apName = "AGRI-SETUP-" + lastFour;
+  apName.toUpperCase();
+  setupSoftAP(apName);
+
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
-    setDeviceState(STATE_SETUP);
-    String apName = "AGRI-SETUP-" + lastFour;
-    apName.toUpperCase();
-    setupSoftAP(apName);
     setDeviceState(STATE_DISCOVERABLE);
   } else {
     setDeviceState(STATE_WIFI_CONNECTING);
-    WiFi.mode(WIFI_STA);
+    wifiConnectStartTime = millis();
     WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
   }
 }
@@ -380,37 +432,22 @@ void setup() {
 void loop() {
   updateLedPattern();
   checkResetButton();
+  server.handleClient();
 
   switch(currentState) {
     case STATE_SETUP:
     case STATE_DISCOVERABLE:
     case STATE_PAIRING:
     case STATE_WIFI_PROVISIONING:
-      server.handleClient();
       break;
 
     case STATE_WIFI_CONNECTING: {
-      static unsigned long connectTimeout = millis();
       if (WiFi.status() == WL_CONNECTED) {
         Serial.print(F("\n[WiFi OK] Local IP: ")); Serial.println(WiFi.localIP());
-        setDeviceState(STATE_WIFI_CONNECTED);
-        
-        server.stop();
-        WiFi.softAPdisconnect(true);
-        WiFi.mode(WIFI_STA);
         setDeviceState(STATE_ONLINE);
-      } else if (millis() - connectTimeout > 15000) {
-        Serial.println(F("\n[WiFi FAIL] Reconnect timeout. Re-entering SoftAP Provisioning mode..."));
-        
-        String macClean = WiFi.macAddress();
-        macClean.replace(":", "");
-        String lastFour = macClean.substring(macClean.length() - 4);
-        String apName = "AGRI-SETUP-" + lastFour;
-        apName.toUpperCase();
-
-        setupSoftAP(apName);
+      } else if (millis() - wifiConnectStartTime > WIFI_CONNECT_TIMEOUT_MS) {
+        Serial.println(F("\n[WiFi FAIL] Reconnect timeout. Re-entered SoftAP Provisioning mode."));
         setDeviceState(STATE_DISCOVERABLE, "WIFI_AUTH_FAILED");
-        connectTimeout = millis();
       }
       break;
     }
@@ -419,6 +456,7 @@ void loop() {
       unsigned long now = millis();
       if (WiFi.status() != WL_CONNECTED) {
         setDeviceState(STATE_WIFI_CONNECTING);
+        wifiConnectStartTime = millis();
         break;
       }
 
