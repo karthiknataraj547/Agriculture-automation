@@ -204,6 +204,61 @@ app.post('/api/v1/devices/verify-auth', (req, res) => {
   }
 });
 
+// -------------------------------------------------------------
+// WiFi Provisioning Endpoints
+// -------------------------------------------------------------
+app.post('/api/v1/devices/wifi-provision', (req, res) => {
+  const { serialNumber, ssid, password, authCode } = req.body;
+  if (!serialNumber || !ssid) {
+    return res.status(400).json({
+      success: false,
+      error: 'serialNumber and ssid are required for WiFi provisioning.'
+    });
+  }
+
+  const record = deviceManager.recordWifiProvision(serialNumber, ssid, authCode);
+  auditService.logAction(
+    'usr-admin-01',
+    'Alex Mercer',
+    UserRole.SUPER_ADMIN,
+    'WIFI_PROVISION',
+    serialNumber,
+    { serialNumber, ssid, status: record.status }
+  );
+
+  res.status(200).json({
+    success: true,
+    message: `WiFi configuration for '${ssid}' recorded. Firmware writing to NVS flash...`,
+    provisionRecord: record
+  });
+});
+
+app.get('/api/v1/devices/wifi-status', (req, res) => {
+  const { serialNumber } = req.query;
+  if (serialNumber && typeof serialNumber === 'string') {
+    const record = deviceManager.getWifiProvisionRecordBySerial(serialNumber);
+    if (!record) {
+      return res.status(404).json({ success: false, message: 'No provisioning record found for serialNumber.' });
+    }
+    return res.json({ success: true, record });
+  }
+  res.json({ success: true, records: deviceManager.getWifiProvisionRecords() });
+});
+
+app.post('/api/v1/devices/wifi-scan', (req, res) => {
+  // Simulated / aggregated WiFi scan response
+  res.json({
+    success: true,
+    timestamp: new Date().toISOString(),
+    networks: [
+      { ssid: 'Farm_Mesh_WiFi_5G', rssi: -45, secure: true },
+      { ssid: 'AetherCrop_Orchard_Ext', rssi: -58, secure: true },
+      { ssid: 'AgriTech_Field_Gateway', rssi: -64, secure: true },
+      { ssid: 'Guest_Farm_IoT', rssi: -72, secure: false }
+    ]
+  });
+});
+
 // Rules Engine Endpoints
 app.get('/api/v1/rules', (req, res) => {
   res.json(rulesEngine.getRules());

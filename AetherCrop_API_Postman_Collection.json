@@ -1,0 +1,523 @@
+{
+  "info": {
+    "_postman_id": "aethercrop-api-collection-v2",
+    "name": "🌾 AetherCrop Spatial IoT & Automated Irrigation Platform API",
+    "description": "Complete Postman Collection for AetherCrop / AgriFlow IoT Platform.\nIncludes:\n- ESP32 / ESP8266 Microcontroller Direct SoftAP WiFi Provisioning & NVS Read/Write APIs\n- Backend Gateway REST APIs (Port 4000)\n- Real-Time Telemetry Ingestion & Analytics\n- Hardware Auth Code Verification & Device Pairing\n- Automation Rules Engine & Pump Actuation\n- Local Agronomist AI Assistant\n- Audit & Security Logging",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "📡 1. WiFi Provisioning & Firmware NVS",
+      "description": "AP mode and Gateway endpoints for writing WiFi credentials into firmware NVS/EEPROM memory until connected.",
+      "item": [
+        {
+          "name": "1.1 Write WiFi Credentials to Firmware NVS (Node SoftAP)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ssid\": \"{{wifiSsid}}\",\n  \"password\": \"{{wifiPassword}}\",\n  \"authCode\": \"{{authCode}}\"\n}"
+            },
+            "url": {
+              "raw": "{{nodeApUrl}}/api/wifi/credentials",
+              "host": ["{{nodeApUrl}}"],
+              "path": ["api", "wifi", "credentials"]
+            },
+            "description": "Sends WiFi credentials to the ESP32/ESP8266 SoftAP (192.168.4.1). The firmware writes them into Non-Volatile Flash Storage (NVS Preferences on ESP32 / EEPROM on ESP8266), commits to flash, and attempts connection."
+          },
+          "response": []
+        },
+        {
+          "name": "1.2 Provision WiFi via /setup Form/JSON (Node SoftAP)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ssid\": \"{{wifiSsid}}\",\n  \"password\": \"{{wifiPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{nodeApUrl}}/setup",
+              "host": ["{{nodeApUrl}}"],
+              "path": ["setup"]
+            },
+            "description": "Standard SoftAP /setup endpoint for writing WiFi credentials into microcontroller flash memory."
+          },
+          "response": []
+        },
+        {
+          "name": "1.3 Query Firmware WiFi & NVS Status (Node SoftAP)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{nodeApUrl}}/api/wifi/status",
+              "host": ["{{nodeApUrl}}"],
+              "path": ["api", "wifi", "status"]
+            },
+            "description": "Checks whether WiFi is connected or in AP provisioning mode, and verifies whether SSID credentials exist in NVS flash memory."
+          },
+          "response": []
+        },
+        {
+          "name": "1.4 Scan 2.4GHz WiFi Networks (Node SoftAP)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{nodeApUrl}}/api/wifi/scan",
+              "host": ["{{nodeApUrl}}"],
+              "path": ["api", "wifi", "scan"]
+            },
+            "description": "Triggers the microcontroller to scan nearby 2.4GHz WiFi SSIDs, signal strengths (RSSI), and encryption types."
+          },
+          "response": []
+        },
+        {
+          "name": "1.5 Factory Reset Node NVS Flash Memory (Node SoftAP)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{nodeApUrl}}/reset",
+              "host": ["{{nodeApUrl}}"],
+              "path": ["reset"]
+            },
+            "description": "Clears all stored WiFi credentials in NVS/EEPROM and restarts the microcontroller into AP Setup Mode."
+          },
+          "response": []
+        },
+        {
+          "name": "1.6 Record WiFi Provisioning (Backend Gateway)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serialNumber\": \"{{deviceId}}\",\n  \"ssid\": \"{{wifiSsid}}\",\n  \"password\": \"{{wifiPassword}}\",\n  \"authCode\": \"{{authCode}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/wifi-provision",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "devices", "wifi-provision"]
+            },
+            "description": "Registers device WiFi configuration on the backend gateway and tracks provisioning audit status."
+          },
+          "response": []
+        },
+        {
+          "name": "1.7 Get Device WiFi Provisioning Status (Backend Gateway)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/wifi-status?serialNumber={{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "devices", "wifi-status"],
+              "query": [
+                {
+                  "key": "serialNumber",
+                  "value": "{{deviceId}}"
+                }
+              ]
+            },
+            "description": "Retrieves registered WiFi provisioning status from the backend device manager."
+          },
+          "response": []
+        },
+        {
+          "name": "1.8 Scan WiFi Networks via Gateway (Backend Gateway)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/wifi-scan",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "devices", "wifi-scan"]
+            },
+            "description": "Returns available farm WiFi networks list from the Gateway."
+          },
+          "response": []
+        },
+        {
+          "name": "1.9 Proxy WiFi Provisioning (Next.js Frontend Route)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serialNumber\": \"{{deviceId}}\",\n  \"ssid\": \"{{wifiSsid}}\",\n  \"password\": \"{{wifiPassword}}\",\n  \"authCode\": \"{{authCode}}\",\n  \"nodeIp\": \"192.168.4.1\"\n}"
+            },
+            "url": {
+              "raw": "{{frontendUrl}}/api/devices/wifi-provision",
+              "host": ["{{frontendUrl}}"],
+              "path": ["api", "devices", "wifi-provision"]
+            },
+            "description": "Proxies WiFi provisioning from the web frontend to the hardware node."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🏥 2. System Health & Gateway",
+      "item": [
+        {
+          "name": "2.1 System Health & Service Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "health"]
+            },
+            "description": "Returns backend gateway health, active services (MQTT, TimescaleDB, RulesEngine, AI), and uptime."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "📊 3. Telemetry & Sensor Readings",
+      "item": [
+        {
+          "name": "3.1 Ingest Telemetry from Node (POST)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"authCode\": \"{{authCode}}\",\n  \"zoneId\": \"{{zoneId}}\",\n  \"soilMoisture\": 38.5,\n  \"airTemperature\": 29.4,\n  \"humidity\": 58.2,\n  \"waterFlowRate\": 4.2,\n  \"tankLevelPercent\": 85,\n  \"batteryLevelPercent\": 96\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/ingest",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "telemetry", "ingest"]
+            },
+            "description": "Hardware telemetry ingestion endpoint used by ESP32 / ESP8266 nodes. Authenticates device via Auth Code."
+          },
+          "response": []
+        },
+        {
+          "name": "3.2 Get Latest Telemetry Snapshot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/latest",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "telemetry", "latest"]
+            },
+            "description": "Returns latest sensor telemetry readings for all monitored zones."
+          },
+          "response": []
+        },
+        {
+          "name": "3.3 Get Zone Telemetry History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/history/{{zoneId}}?limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "telemetry", "history", "{{zoneId}}"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Returns historical time-series data for a specified agricultural zone."
+          },
+          "response": []
+        },
+        {
+          "name": "3.4 Get Farm Aggregated Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/stats/{{farmId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "telemetry", "stats", "{{farmId}}"]
+            },
+            "description": "Returns aggregated statistics (average moisture, temp, total water consumed) for a farm."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🔌 4. Devices & Hardware Authentication",
+      "item": [
+        {
+          "name": "4.1 List All Registered Devices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "devices"]
+            },
+            "description": "Returns list of all active and paired IoT devices."
+          },
+          "response": []
+        },
+        {
+          "name": "4.2 Register New IoT Device",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uuid\": \"node-001\",\n  \"serialNumber\": \"{{deviceId}}\",\n  \"name\": \"North Corn Sector ESP32 Controller\",\n  \"macAddress\": \"CC:50:E3:8A:12:34\",\n  \"boardFamily\": \"ESP32\",\n  \"boardType\": \"ESP32 Dev Module\",\n  \"firmwareVersion\": \"2.0.0-PROVISION\",\n  \"farmId\": \"{{farmId}}\",\n  \"zoneId\": \"{{zoneId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "devices", "register"]
+            },
+            "description": "Registers a new hardware device on the backend manager."
+          },
+          "response": []
+        },
+        {
+          "name": "4.3 Verify Hardware Auth Code Pairing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serialNumber\": \"{{deviceId}}\",\n  \"authCode\": \"{{authCode}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/verify-auth",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "devices", "verify-auth"]
+            },
+            "description": "Validates 16-character Hardware Auth Code (e.g. ATH-8F92-4C10-99E4) generated for the microcontroller."
+          },
+          "response": []
+        },
+        {
+          "name": "4.4 Claim Hardware into User Account (Frontend API)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serialNumber\": \"{{deviceId}}\",\n  \"macAddress\": \"CC:50:E3:8A:12:34\",\n  \"authCode\": \"{{authCode}}\",\n  \"nodeName\": \"AgriFlow Smart Irrigation Controller\",\n  \"farmId\": \"{{farmId}}\",\n  \"zoneId\": \"{{zoneId}}\",\n  \"wifiSsid\": \"{{wifiSsid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{frontendUrl}}/api/devices/claim",
+              "host": ["{{frontendUrl}}"],
+              "path": ["api", "devices", "claim"]
+            },
+            "description": "Claims provisioned device into the active user's account and spatial farm canvas."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "⚙️ 5. Rules Engine & Automation",
+      "item": [
+        {
+          "name": "5.1 List Automation Rules",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rules",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "rules"]
+            },
+            "description": "Returns list of active automated irrigation rules and triggers."
+          },
+          "response": []
+        },
+        {
+          "name": "5.2 Create New Automation Rule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"rule-auto-pump-dry\",\n  \"name\": \"Emergency Dry Soil Auto-Irrigation\",\n  \"condition\": \"soilMoisture < 30\",\n  \"action\": \"ACTUATE_PUMP\",\n  \"targetId\": \"pump-main-01\",\n  \"params\": {\n    \"durationSec\": 120\n  },\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rules",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "rules"]
+            },
+            "description": "Adds a new trigger rule to automate pump/valve actuation based on sensor readings."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🤖 6. Local Agronomist AI Assistant",
+      "item": [
+        {
+          "name": "6.1 Get AI Crop & Farm Insights",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/insights/{{farmId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "insights", "{{farmId}}"]
+            },
+            "description": "Retrieves AI predictive analytics, soil health assessments, and water optimization recommendations."
+          },
+          "response": []
+        },
+        {
+          "name": "6.2 Ask Local Agronomist AI",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"My corn parcel soil moisture is at 32% and temperature is 31C. Should I run the pump now or wait until evening?\",\n  \"farmContext\": {\n    \"crop\": \"Corn\",\n    \"currentMoisture\": 32,\n    \"currentTemp\": 31,\n    \"zone\": \"zone-1\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ai/chat",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ai", "chat"]
+            },
+            "description": "Submits questions to the on-device AI agronomist for actionable crop and irrigation advice."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🛡️ 7. Security & Audit Logs",
+      "item": [
+        {
+          "name": "7.1 Get System Audit Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/audit/logs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "audit", "logs"]
+            },
+            "description": "Fetches security audit trail for all user actuations, device pairings, and provisioning events."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "frontendUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "nodeApUrl",
+      "value": "http://192.168.4.1",
+      "type": "string"
+    },
+    {
+      "key": "deviceId",
+      "value": "ESP32-ATH-8A12",
+      "type": "string"
+    },
+    {
+      "key": "authCode",
+      "value": "ATH-8F92-4C10-99E4",
+      "type": "string"
+    },
+    {
+      "key": "wifiSsid",
+      "value": "Farm_Mesh_WiFi_5G",
+      "type": "string"
+    },
+    {
+      "key": "wifiPassword",
+      "value": "agrifarm2026",
+      "type": "string"
+    },
+    {
+      "key": "farmId",
+      "value": "farm-alpha",
+      "type": "string"
+    },
+    {
+      "key": "zoneId",
+      "value": "zone-1",
+      "type": "string"
+    }
+  ]
+}

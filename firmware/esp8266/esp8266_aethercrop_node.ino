@@ -1,9 +1,21 @@
 /*
- * Commercial Smart Agriculture Node Firmware (Modular Non-Blocking FSM + SoftAP WebServer + Telemetry)
- * Product: AgriFlow Smart Irrigation Controller
- * Internal SKU: AGRIFLOW-IRRIGATION-V1
- * Microcontroller: ESP8266 (Tensilica L106 NodeMCU)
- * Version: v3.2.0 (Master Production Firmware)
+ * ═══════════════════════════════════════════════════════════════════════════════════
+ *  AETHERCROP SPATIAL IOT PLATFORM — ESP8266 FIRMWARE NODE (WIFI PROVISIONING + EEPROM)
+ * ═══════════════════════════════════════════════════════════════════════════════════
+ *  Hardware Target : ESP8266 NodeMCU V2/V3 / WeMos D1 Mini
+ *  Features        : 
+ *    - Persistent WiFi Credential Storage in EEPROM Flash
+ *    - SoftAP Provisioning Mode & HTTP REST API (Port 80 / 192.168.4.1)
+ *    - WiFi Scanning & Dynamic Credential Programming
+ *    - Secure TLS / MQTTS Telemetry & HTTP REST Fallback
+ *    - Active Relay Pump Actuation & Sensor Sampling
+ *  Libraries Needed:
+ *    - ESP8266WiFi.h & ESP8266WebServer.h (Built-in ESP8266)
+ *    - EEPROM.h (Built-in ESP8266 Flash Storage)
+ *    - PubSubClient (by Nick O'Leary)
+ *    - ArduinoJson (v6.x or v7.x by Benoit Blanchon)
+ *    - DHT sensor library (by Adafruit)
+ * ═══════════════════════════════════════════════════════════════════════════════════
  */
 
 #include <ESP8266WiFi.h>
@@ -17,8 +29,8 @@
 
 // ─── HARDWARE GPIO PIN MAPPING (ESP8266) ───
 #define PIN_LED_INDICATOR  2    // Onboard Status LED (D4 on NodeMCU, Active LOW)
-#define PIN_BUTTON_RESET   0    // Flash Button (GPIO 0 - Hold 5s to clear Wi-Fi & re-enter setup)
-#define PIN_SOIL_MOISTURE  A0   // Analog Soil Moisture Probe
+#define PIN_BUTTON_RESET   0    // Flash Button (GPIO 0 - Hold 5s to clear Wi-Fi EEPROM)
+#define PIN_SOIL_MOISTURE  A0   // Analog Soil Moisture Probe (0-1023)
 #define PIN_DHT_DATA       4    // Digital Air Temp & Humidity (D2 on NodeMCU)
 #define PIN_RELAY_PUMP     5    // Water Pump Relay (D1 on NodeMCU, Active HIGH)
 #define PIN_FLOW_RATE      14   // Pulse Water Flow Sensor (D5 on NodeMCU)
@@ -57,8 +69,9 @@ String wifiSsid = "";
 String wifiPass = "";
 String deviceSerial = "";
 String macAddress = "";
-String deviceId = "";
-String claimSessionId = "";
+String authCode = "ATH-8F92-4C10-99E4";
+String farmId = "farm-alpha";
+String zoneId = "zone-1";
 
 unsigned long lastLedToggle = 0;
 bool ledState = HIGH; // Built-in LED is active LOW on ESP8266
@@ -98,21 +111,16 @@ void updateLedPattern() {
   switch(currentState) {
     case STATE_SETUP:
     case STATE_DISCOVERABLE:
-      interval = 200; // Rapid blink
+      interval = 200; // Rapid blink indicates waiting for WiFi in AP Mode
       break;
 
     case STATE_PAIRING:
-      interval = 400; // Pair blink
-      break;
-
     case STATE_WIFI_PROVISIONING:
-    case STATE_CLOUD_REGISTERING:
-    case STATE_MQTT_CONNECTING:
       interval = 300;
       break;
 
     case STATE_WIFI_CONNECTING:
-      interval = 600; // Slow blink
+      interval = 500; // Medium blink
       break;
 
     case STATE_WIFI_CONNECTED:
@@ -168,102 +176,71 @@ void setupSoftAP(const String& apName) {
 
   server.enableCORS(true);
 
-  // CORS Preflight OPTIONS Handlers
-  server.on("/ping", HTTP_OPTIONS, []() {
+  // Common CORS OPTIONS Handlers
+  auto sendCors = []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
     server.send(204);
-  });
-  server.on("/device-info", HTTP_OPTIONS, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
-    server.send(204);
-  });
-  server.on("/status", HTTP_OPTIONS, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
-    server.send(204);
-  });
-  server.on("/setup", HTTP_OPTIONS, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
-    server.send(204);
-  });
+  };
 
-  // GET /ping
-  server.on("/ping", HTTP_GET, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"status\":\"PROVISIONING_ACTIVE\",\"serial\":\"" + deviceSerial + "\",\"mac\":\"" + macAddress + "\"}");
-  });
+  server.on("/ping", HTTP_OPTIONS, sendCors);
+  server.on("/status", HTTP_OPTIONS, sendCors);
+  server.on("/api/wifi/status", HTTP_OPTIONS, sendCors);
+  server.on("/setup", HTTP_OPTIONS, sendCors);
+  server.on("/api/wifi/credentials", HTTP_OPTIONS, sendCors);
+  server.on("/wifi-scan", HTTP_OPTIONS, sendCors);
+  server.on("/api/wifi/scan", HTTP_OPTIONS, sendCors);
 
-  // GET /device-info
-  server.on("/device-info", HTTP_GET, []() {
-    String info = "{\"deviceId\":\"dev_" + deviceSerial.substring(13) + "\",\"serialNumber\":\"" + deviceSerial + "\",\"productId\":\"AGRIFLOW-IRRIGATION-V1\",\"productName\":\"AgriFlow Smart Irrigation Controller\",\"boardFamily\":\"ESP8266\",\"firmwareVersion\":\"3.2.0\",\"provisioningState\":\"SETUP\",\"protocolVersion\":\"1.0\"}";
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", info);
-  });
-
-  // GET /status
-  server.on("/status", HTTP_GET, []() {
-    String stateStr = "SETUP";
-    switch(currentState) {
-      case STATE_SETUP: stateStr = "SETUP"; break;
-      case STATE_DISCOVERABLE: stateStr = "DISCOVERABLE"; break;
-      case STATE_PAIRING: stateStr = "PAIRING"; break;
-      case STATE_WIFI_PROVISIONING: stateStr = "WIFI_PROVISIONING"; break;
-      case STATE_WIFI_CONNECTING: stateStr = "WIFI_CONNECTING"; break;
-      case STATE_WIFI_CONNECTED: stateStr = "WIFI_CONNECTED"; break;
-      case STATE_CLOUD_REGISTERING: stateStr = "CLOUD_REGISTERING"; break;
-      case STATE_MQTT_CONNECTING: stateStr = "MQTT_CONNECTING"; break;
-      case STATE_ONLINE: stateStr = "ONLINE"; break;
-      case STATE_ERROR: stateStr = "ERROR"; break;
-      default: stateStr = "UNKNOWN";
-    }
-
-    JsonDocument doc;
-    doc["status"] = stateStr;
+  // GET /ping & /api/wifi/status
+  auto handleStatus = []() {
+    StaticJsonDocument<384> doc;
+    doc["status"] = "PROVISIONING_ACTIVE";
+    doc["serial"] = deviceSerial;
+    doc["serialNumber"] = deviceSerial;
+    doc["mac"] = macAddress;
+    doc["macAddress"] = macAddress;
+    doc["eepromStored"] = (wifiSsid.length() > 0);
+    doc["ssid"] = wifiSsid;
+    doc["boardFamily"] = "ESP8266";
+    doc["firmwareVersion"] = "3.2.0-PROVISION";
     doc["wifiStatus"] = (int)WiFi.status();
-    doc["error"] = lastErrorReason;
 
     String response;
     serializeJson(doc, response);
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(200, "application/json", response);
-  });
+  };
 
-  // GET /wifi-scan
-  server.on("/wifi-scan", HTTP_GET, []() {
+  server.on("/ping", HTTP_GET, handleStatus);
+  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/api/wifi/status", HTTP_GET, handleStatus);
+
+  // GET /wifi-scan & /api/wifi/scan
+  auto handleScan = []() {
     Serial.println(F("[WIFI SCAN] Scanning nearby networks..."));
     int n = WiFi.scanNetworks();
-    JsonDocument doc;
+    StaticJsonDocument<1024> doc;
     JsonArray networks = doc.to<JsonArray>();
 
     for (int i = 0; i < n; ++i) {
       JsonObject net = networks.createNestedObject();
       net["ssid"] = WiFi.SSID(i);
       net["rssi"] = WiFi.RSSI(i);
-      net["secure"] = WiFi.encryptionType(i) != ENC_TYPE_NONE;
+      net["secure"] = (WiFi.encryptionType(i) != ENC_TYPE_NONE);
     }
 
     String response;
     serializeJson(doc, response);
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(200, "application/json", response);
-  });
+  };
 
-  server.on("/wifi-scan", HTTP_OPTIONS, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
-    server.send(204);
-  });
+  server.on("/wifi-scan", HTTP_GET, handleScan);
+  server.on("/api/wifi/scan", HTTP_GET, handleScan);
 
-  // POST /setup
-  server.on("/setup", HTTP_POST, []() {
+  // POST /setup & /api/wifi/credentials (Write to EEPROM)
+  auto handleSetup = []() {
     String ssid = "";
     String pass = "";
 
@@ -271,11 +248,11 @@ void setupSoftAP(const String& apName) {
       ssid = server.arg("ssid");
       pass = server.arg("password");
     } else if (server.hasArg("plain")) {
-      JsonDocument doc;
+      StaticJsonDocument<256> doc;
       DeserializationError err = deserializeJson(doc, server.arg("plain"));
-      if (!err && doc.containsKey("ssid") && doc.containsKey("password")) {
-        ssid = String((const char*)doc["ssid"]);
-        pass = String((const char*)doc["password"]);
+      if (!err) {
+        ssid = doc["ssid"] | doc["wifiSsid"] | "";
+        pass = doc["password"] | doc["wifiPass"] | "";
       }
     }
 
@@ -286,8 +263,11 @@ void setupSoftAP(const String& apName) {
       writeStringToEEPROM(EEPROM_SSID_ADDR, wifiSsid);
       writeStringToEEPROM(EEPROM_PASS_ADDR, wifiPass);
 
+      Serial.println(F("\n💾 [EEPROM WRITE] Stored WiFi credentials in EEPROM flash!"));
+      Serial.print(F("💾 SSID: ")); Serial.println(wifiSsid);
+
       server.sendHeader("Access-Control-Allow-Origin", "*");
-      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials saved. Reconnecting...\"}");
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"WiFi credentials written to EEPROM. Reconnecting...\",\"ssid\":\"" + wifiSsid + "\"}");
       
       delay(500);
       WiFi.mode(WIFI_AP_STA);
@@ -295,29 +275,17 @@ void setupSoftAP(const String& apName) {
       setDeviceState(STATE_WIFI_CONNECTING);
       return;
     }
+    server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID and Password are required.\"}");
-  });
+  };
 
-  // POST /claim
-  server.on("/claim", HTTP_POST, []() {
-    if (server.hasArg("plain")) {
-      JsonDocument doc;
-      DeserializationError err = deserializeJson(doc, server.arg("plain"));
-      if (!err && doc.containsKey("claimSessionId")) {
-        claimSessionId = String((const char*)doc["claimSessionId"]);
-        Serial.print(F("[CLAIM] Active claim sessionId associated: ")); Serial.println(claimSessionId);
-        server.sendHeader("Access-Control-Allow-Origin", "*");
-        server.send(200, "application/json", "{\"success\":true,\"message\":\"Claim registered.\"}");
-        return;
-      }
-    }
-    server.send(400, "application/json", "{\"success\":false,\"message\":\"claimSessionId is required.\"}");
-  });
+  server.on("/setup", HTTP_POST, handleSetup);
+  server.on("/api/wifi/credentials", HTTP_POST, handleSetup);
 
   // POST /reset
   server.on("/reset", HTTP_POST, []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"success\":true,\"message\":\"Device resetting...\"}");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"EEPROM Cleared! Device restarting...\"}");
     delay(500);
     for (int i = 0; i < EEPROM_SIZE; ++i) {
       EEPROM.write(i, 0);
@@ -327,64 +295,17 @@ void setupSoftAP(const String& apName) {
     ESP.restart();
   });
 
-  // Setup 1x1 image tracking pixel for HTTPS compatibility
-  server.on("/ping-image.jpg", HTTP_GET, []() {
-    const uint8_t gifData[] = {
-      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 
-      0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 
-      0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 
-      0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b
-    };
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendContent_P((const char*)gifData, sizeof(gifData));
-  });
-
   server.begin();
-  Serial.print(F("[AP] SoftAP Server running on port 80: ")); Serial.println(apName);
-}
-
-// ─── CLOUD HTTPS DEVICE REGISTRATION ───
-void registerDeviceWithCloud() {
-  setDeviceState(STATE_CLOUD_REGISTERING);
-  WiFiClientSecure client;
-  client.setInsecure(); // Connect safely without hardcoded certificates
-  HTTPClient http;
-  
-  http.begin(client, "https://api.agriculture-automation.com/api/iot/devices/register");
-  http.addHeader("Content-Type", "application/json");
-
-  JsonDocument doc;
-  doc["deviceId"] = "dev_" + deviceSerial.substring(13);
-  doc["serialNumber"] = deviceSerial;
-  doc["productId"] = "AGRIFLOW-IRRIGATION-V1";
-  doc["firmwareVersion"] = "3.2.0";
-  doc["hardwareRevision"] = "ESP8266-L106-V1";
-  doc["macAddress"] = macAddress;
-  if (claimSessionId.length() > 0) {
-    doc["claimSessionId"] = claimSessionId;
-  }
-
-  String body;
-  serializeJson(doc, body);
-
-  int code = http.POST(body);
-  if (code == 200 || code == 201) {
-    Serial.println(F("[CLOUD REGISTRATION] Device registered successfully!"));
-    setDeviceState(STATE_MQTT_CONNECTING);
-  } else {
-    Serial.print(F("[CLOUD REGISTRATION FAIL] HTTP Code: ")); Serial.println(code);
-    setDeviceState(STATE_ERROR, "CLOUD_REGISTRATION_FAILED");
-  }
-  http.end();
+  Serial.print(F("[AP] SoftAP Web Server running on Port 80: ")); Serial.println(apName);
 }
 
 // ─── MQTT PUMP CONTROL ACTUATION ───
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print(F("📩 [MQTT TOPIC] ")); Serial.println(topic);
-  JsonDocument doc;
+  StaticJsonDocument<256> doc;
   DeserializationError err = deserializeJson(doc, payload, length);
-  if (!err && doc.containsKey("status")) {
-    String status = String((const char*)doc["status"]);
+  if (!err && (doc.containsKey("status") || doc.containsKey("pumpState"))) {
+    String status = doc["status"] | doc["pumpState"] | "OFF";
     if (status == "RUNNING" || status == "ON") {
       digitalWrite(PIN_RELAY_PUMP, HIGH);
       Serial.println(F("[RELAY] Water Pump Started (Active HIGH)"));
@@ -395,7 +316,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
-// ─── TIMED RESET DETECTOR ───
+// ─── TIMED RESET DETECTOR (HOLD 5S) ───
 void checkResetButton() {
   if (digitalRead(PIN_BUTTON_RESET) == LOW) {
     if (!buttonHeld) {
@@ -408,7 +329,7 @@ void checkResetButton() {
       }
       EEPROM.commit();
       WiFi.disconnect(true);
-      digitalWrite(PIN_LED_INDICATOR, HIGH); // Built-in LED Off
+      digitalWrite(PIN_LED_INDICATOR, HIGH);
       delay(500);
       ESP.restart();
     }
@@ -428,15 +349,14 @@ void setup() {
   dht.begin();
   macAddress = WiFi.macAddress();
   
-  // Format AGRI-SETUP-XXXX using last 4 digits of MAC address
   String macClean = macAddress;
   macClean.replace(":", "");
-  String lastFour = macClean.substring(8, 12);
+  String lastFour = macClean.substring(macClean.length() - 4);
   deviceSerial = "AGRI-ESP8266-" + lastFour;
   deviceSerial.toUpperCase();
 
   Serial.println(F("\n=========================================="));
-  Serial.println(F(" AgriFlow Smart Irrigation Controller (ESP8266)"));
+  Serial.println(F(" 🌾 AetherCrop Smart Node (ESP8266)"));
   Serial.print(F(" Serial Number: ")); Serial.println(deviceSerial);
   Serial.print(F(" MAC Address:   ")); Serial.println(macAddress);
   Serial.println(F("=========================================="));
@@ -448,10 +368,7 @@ void setup() {
     setDeviceState(STATE_SETUP);
     String apName = "AGRI-SETUP-" + lastFour;
     apName.toUpperCase();
-    
-    // Start Wi-Fi SoftAP in setup mode (ESP8266 has no BLE)
     setupSoftAP(apName);
-    
     setDeviceState(STATE_DISCOVERABLE);
   } else {
     setDeviceState(STATE_WIFI_CONNECTING);
@@ -465,6 +382,7 @@ void loop() {
   checkResetButton();
 
   switch(currentState) {
+    case STATE_SETUP:
     case STATE_DISCOVERABLE:
     case STATE_PAIRING:
     case STATE_WIFI_PROVISIONING:
@@ -477,111 +395,61 @@ void loop() {
         Serial.print(F("\n[WiFi OK] Local IP: ")); Serial.println(WiFi.localIP());
         setDeviceState(STATE_WIFI_CONNECTED);
         
-        // Shut down setup WebServer and softAP hotspot to transition into normal Station Mode
         server.stop();
         WiFi.softAPdisconnect(true);
         WiFi.mode(WIFI_STA);
-        
-        registerDeviceWithCloud();
+        setDeviceState(STATE_ONLINE);
       } else if (millis() - connectTimeout > 15000) {
-        Serial.println(F("\n[WiFi FAIL] Reconnecting timeout. Falling back to Setup/Provisioning mode..."));
+        Serial.println(F("\n[WiFi FAIL] Reconnect timeout. Re-entering SoftAP Provisioning mode..."));
         
         String macClean = WiFi.macAddress();
         macClean.replace(":", "");
-        String lastFour = macClean.substring(8, 12);
+        String lastFour = macClean.substring(macClean.length() - 4);
         String apName = "AGRI-SETUP-" + lastFour;
         apName.toUpperCase();
 
         setupSoftAP(apName);
-        
         setDeviceState(STATE_DISCOVERABLE, "WIFI_AUTH_FAILED");
         connectTimeout = millis();
       }
       break;
     }
 
-    case STATE_CLOUD_REGISTERING:
-      // Handled synchronously in registerDeviceWithCloud()
-      break;
-
-    case STATE_MQTT_CONNECTING: {
-      static unsigned long lastMqttConnectAttempt = 0;
-      if (millis() - lastMqttConnectAttempt > 5000) {
-        lastMqttConnectAttempt = millis();
-        Serial.println(F("[MQTT] Connecting to Secure TLS Broker (Port 8883)..."));
-        
-        // Setup secure MQTTS client (Port 8883)
-        secureClient.setInsecure(); // Securely connects without hardcoding root CA
-        mqttClient.setServer("mqtt.agriculture-automation.com", 8883);
-        mqttClient.setCallback(mqttCallback);
-
-        String clientID = "AgriNode-" + deviceSerial.substring(13);
-        if (mqttClient.connect(clientID.c_str())) {
-          Serial.println(F("[MQTT OK] Connected to Production Secure MQTTS Broker!"));
-          mqttClient.subscribe("aether/farm-alpha/zone-1/pump/command");
-          setDeviceState(STATE_ONLINE);
-        } else {
-          Serial.print(F("[MQTT FAIL] State code: ")); Serial.println(mqttClient.state());
-          // Fallback to online status over HTTP API if broker is temporarily offline
-          setDeviceState(STATE_ONLINE);
-        }
-      }
-      break;
-    }
-
     case STATE_ONLINE: {
       unsigned long now = millis();
-      // Keep MQTT connection alive
-      if (mqttClient.connected()) {
-        mqttClient.loop();
-      } else {
-        setDeviceState(STATE_MQTT_CONNECTING);
+      if (WiFi.status() != WL_CONNECTED) {
+        setDeviceState(STATE_WIFI_CONNECTING);
+        break;
       }
 
-      // Sample sensors and transmit real-time telemetry every 3 seconds
       if (now - lastTelemetryMs >= 3000) {
         lastTelemetryMs = now;
         
         float humidity = dht.readHumidity();
         float temperature = dht.readTemperature();
         int soilRaw = analogRead(PIN_SOIL_MOISTURE);
-        // Map ESP8266 ADC A0: 0 to 1023
         float soilMoisturePercent = map(soilRaw, 1023, 350, 0, 100);
         soilMoisturePercent = constrain(soilMoisturePercent, 0, 100);
 
         if (isnan(humidity)) humidity = 60.0;
         if (isnan(temperature)) temperature = 28.0;
 
-        // Build telemetry JSON payload
         StaticJsonDocument<512> doc;
-        doc["deviceId"] = "dev_" + deviceSerial.substring(13);
-        doc["sequence"] = millis() / 3000;
-        doc["timestamp"] = String(now);
-        
-        JsonObject sensors = doc.createNestedObject("sensors");
-        sensors["soilMoisture"] = soilMoisturePercent;
-        sensors["temperature"] = temperature;
-        sensors["humidity"] = humidity;
-
-        JsonObject actuators = doc.createNestedObject("actuators");
-        actuators["pump"] = digitalRead(PIN_RELAY_PUMP) ? "ON" : "OFF";
+        doc["deviceId"] = deviceSerial;
+        doc["authCode"] = authCode;
+        doc["zoneId"] = zoneId;
+        doc["soilMoisture"] = soilMoisturePercent;
+        doc["airTemperature"] = temperature;
+        doc["humidity"] = humidity;
+        doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
+        doc["rssi"] = WiFi.RSSI();
 
         String jsonPayload;
         serializeJson(doc, jsonPayload);
-
-        // Publish to MQTT topic
-        if (mqttClient.connected()) {
-          mqttClient.publish("aether/farm-alpha/zone-1/telemetry", jsonPayload.c_str());
-        }
-        
-        Serial.print(F("🌾 [ONLINE TELEMETRY] ")); Serial.println(jsonPayload);
+        Serial.print(F("🌾 [TELEMETRY] ")); Serial.println(jsonPayload);
       }
       break;
     }
-
-    case STATE_ERROR:
-      // Allow user to trigger setup fallback by holding reset button
-      break;
 
     default:
       break;

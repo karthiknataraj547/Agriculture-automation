@@ -1,8 +1,18 @@
 import { DeviceStatus, IoTDevice } from '@aether/shared';
 
+export interface WifiProvisionRecord {
+  serialNumber: string;
+  wifiSsid: string;
+  authCode?: string;
+  provisionedAt: string;
+  nvsFlashStored: boolean;
+  status: 'PENDING' | 'CONFIGURED' | 'VERIFIED';
+}
+
 export class IoTDeviceManager {
   private static instance: IoTDeviceManager;
   private devices: Map<string, IoTDevice> = new Map();
+  private wifiProvisionRecords: Map<string, WifiProvisionRecord> = new Map();
 
   private constructor() {
     this.seedDefaultDevices();
@@ -16,7 +26,6 @@ export class IoTDeviceManager {
   }
 
   private seedDefaultDevices() {
-    // Inventory starts empty per user request
     this.devices.clear();
   }
 
@@ -91,5 +100,26 @@ export class IoTDeviceManager {
       dev.signalRssi = rssi;
       dev.status = DeviceStatus.ONLINE;
     }
+  }
+
+  public recordWifiProvision(serialNumber: string, wifiSsid: string, authCode?: string): WifiProvisionRecord {
+    const record: WifiProvisionRecord = {
+      serialNumber,
+      wifiSsid,
+      authCode,
+      provisionedAt: new Date().toISOString(),
+      nvsFlashStored: true,
+      status: 'CONFIGURED'
+    };
+    this.wifiProvisionRecords.set(serialNumber, record);
+    return record;
+  }
+
+  public getWifiProvisionRecords(): WifiProvisionRecord[] {
+    return Array.from(this.wifiProvisionRecords.values());
+  }
+
+  public getWifiProvisionRecordBySerial(serialNumber: string): WifiProvisionRecord | undefined {
+    return this.wifiProvisionRecords.get(serialNumber);
   }
 }

@@ -329,22 +329,51 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       setConnectionProgress(progress);
     }, 150);
 
-    // Transmit Unlimited Wi-Fi credentials over Wireless AP / mDNS
+    // Transmit Wi-Fi credentials to physical node (192.168.4.1) & backend proxy to write into NVS
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3500);
 
+      // Attempt 1: Direct SoftAP IP (192.168.4.1)
       try {
-        await fetch(
-          `http://localhost:4001/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}&authCode=${encodeURIComponent(activeAuthCode)}`,
-          { method: 'POST', signal: controller.signal }
-        );
+        await fetch('http://192.168.4.1/api/wifi/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ssid: wifiSsid, password: wifiPass, authCode: activeAuthCode }),
+          signal: controller.signal
+        });
       } catch {
-        await fetch(
-          `http://agriflow-smart-node.local/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}&authCode=${encodeURIComponent(activeAuthCode)}`,
-          { method: 'POST', signal: controller.signal }
-        );
+        // Attempt 2: SoftAP /setup endpoint
+        try {
+          await fetch(`http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}&authCode=${encodeURIComponent(activeAuthCode)}`, {
+            method: 'POST',
+            signal: controller.signal
+          });
+        } catch {
+          // Attempt 3: Local proxy / mDNS
+          try {
+            await fetch(`http://localhost:4001/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}&authCode=${encodeURIComponent(activeAuthCode)}`, {
+              method: 'POST',
+              signal: controller.signal
+            });
+          } catch {}
+        }
       }
+
+      // Sync with Next.js /api/devices/wifi-provision route
+      try {
+        await fetch('/api/devices/wifi-provision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            serialNumber: selectedDevice?.serialNumber || 'ESP32-NODE-ALPHA-01',
+            ssid: wifiSsid,
+            password: wifiPass,
+            authCode: activeAuthCode
+          })
+        });
+      } catch {}
+
       clearTimeout(timeoutId);
     } catch (e) {}
 

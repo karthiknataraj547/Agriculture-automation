@@ -25,5 +25,10 @@ Thumbs.db
 .clangd
 .idea/
 
+# Gradle & Android
+.gradle/
+**/android/app/build/
+**/android/app/.gradle/
+
 # Turbo Cache
 .turbo/
