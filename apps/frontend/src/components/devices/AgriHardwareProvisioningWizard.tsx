@@ -33,6 +33,9 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { useSpatialStore } from '../../store/useSpatialStore';
 import { DeviceStatus } from '@aether/shared';
 
+const BLE_SERVICE_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
+const BLE_CHAR_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
+
 interface DetectedSignal {
   ssid: string;
   bssid: string;
@@ -45,6 +48,7 @@ interface DetectedSignal {
   serialNumber: string;
   authCode: string;
   productName: string;
+  connectionMethod?: 'BLE' | 'WIFI_AP' | 'AIRWAVE';
 }
 
 interface AgriHardwareProvisioningWizardProps {
@@ -56,22 +60,19 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   onClose,
   onSuccess,
 }) => {
-  // Steps:
-  // 1: Scan for Hardware Wi-Fi Signal in the Air (Zero mock data - real airwave scan)
-  // 2: Enter Wi-Fi Credentials ONLY (Farm & Zone selection strictly forbidden here)
-  // 3: Wireless Push & Strict 100% Verification (Only 100% when hardware is connected)
-  // 4: Assign Farm Location & Parcel Zone (Only unlocked after hardware connects)
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Countdown timer for airwave scan
-  const [scanSecondsLeft, setScanSecondsLeft] = useState<number>(12);
+  // Scan & Detection States
   const [isScanning, setIsScanning] = useState(true);
-
-  // Discovered Wi-Fi Air Signals & Hardware Nodes
   const [detectedWifiSignals, setDetectedWifiSignals] = useState<DetectedSignal[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<DetectedSignal | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [isNativeApp, setIsNativeApp] = useState<boolean>(false);
+  const [isWebBleAvailable, setIsWebBleAvailable] = useState<boolean>(false);
+  const [isBleConnecting, setIsBleConnecting] = useState<boolean>(false);
+
+  // Active Web Bluetooth GATT References
+  const bleGattCharRef = useRef<any>(null);
 
   // Step 2: Wi-Fi Credentials
   const [wifiSsid, setWifiSsid] = useState('Farm_Mesh_WiFi_5G');
@@ -94,12 +95,15 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // 1. Detect Native Android Environment
+  // 1. Detect Native Android Kotlin App or Web Bluetooth in Browser
   useEffect(() => {
     const isNative =
       typeof window !== 'undefined' &&
       (Boolean((window as any).AndroidNative) || Boolean((window as any).AgriNativeBridge));
     setIsNativeApp(isNative);
+
+    const hasWebBle = typeof navigator !== 'undefined' && Boolean((navigator as any).bluetooth);
+    setIsWebBleAvailable(hasWebBle);
 
     if (isNative) {
       (window as any).onNativeWifiSignalsFound = (signals: any) => {
@@ -107,9 +111,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         if (Array.isArray(list) && list.length > 0) {
           setDetectedWifiSignals(list);
           const hardware = list.find((s) => s.isHardwareNode);
-          if (hardware) {
-            setSelectedDevice(hardware);
-          }
+          if (hardware) setSelectedDevice(hardware);
           setIsScanning(false);
         }
       };
@@ -119,13 +121,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         const mapped: DetectedSignal = {
           ssid: dev.serialNumber,
           bssid: dev.macAddress || 'CC:50:E3:8A:12:34',
-          signalPercent: 95,
+          signalPercent: 98,
           rssi: dev.rssi || -35,
           isHardwareNode: true,
           boardFamily: dev.boardFamily || 'ESP32',
           serialNumber: dev.serialNumber,
           authCode: dev.authCode || 'ATH-8F92-4C10-99E4',
-          productName: dev.productName || 'AgriFlow Smart Irrigation Controller'
+          productName: dev.productName || 'AgriFlow Smart Irrigation Controller',
+          connectionMethod: 'BLE'
         };
         setDetectedWifiSignals((prev) => [mapped, ...prev.filter((p) => p.ssid !== mapped.ssid)]);
         setSelectedDevice(mapped);
@@ -134,11 +137,73 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     }
   }, []);
 
-  // 2. Airwave Wi-Fi Signal Scanner
+  // 2. Web Bluetooth Scan & Pair (Runs natively in Chrome/Edge on Web)
+  const connectViaWebBluetooth = async () => {
+    if (typeof navigator === 'undefined' || !(navigator as any).bluetooth) {
+      setScanError('Web Bluetooth is not supported on this browser. Please use Google Chrome or Edge.');
+      return;
+    }
+
+    setIsBleConnecting(true);
+    setScanError(null);
+
+    try {
+      const device = await (navigator as any).bluetooth.requestDevice({
+        acceptAllDevices: false,
+        filters: [
+          { namePrefix: 'AGRI' },
+          { namePrefix: 'ESP32' },
+          { namePrefix: 'Aether' },
+          { namePrefix: 'ATH' },
+          { services: [BLE_SERVICE_UUID] }
+        ],
+        optionalServices: [BLE_SERVICE_UUID]
+      });
+
+      if (!device) {
+        setIsBleConnecting(false);
+        return;
+      }
+
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+      const characteristic = await service.getCharacteristic(BLE_CHAR_UUID);
+      bleGattCharRef.current = characteristic;
+
+      const cleanName = device.name || 'ESP32-ATH-8A12';
+      const cleanMac = (device.id || 'CC50E38A1234').slice(-4).toUpperCase();
+
+      const bleHardwareSignal: DetectedSignal = {
+        ssid: cleanName,
+        bssid: device.id || 'CC:50:E3:8A:12:34',
+        signalPercent: 99,
+        rssi: -30,
+        isHardwareNode: true,
+        boardFamily: 'ESP32',
+        serialNumber: cleanName,
+        authCode: `ATH-${cleanMac}-99E4`,
+        productName: 'AgriFlow Smart Irrigation Controller (Web BLE Paired)',
+        connectionMethod: 'BLE'
+      };
+
+      setDetectedWifiSignals((prev) => [bleHardwareSignal, ...prev.filter((p) => p.ssid !== cleanName)]);
+      setSelectedDevice(bleHardwareSignal);
+      setIsBleConnecting(false);
+      setIsScanning(false);
+      setStep(2);
+    } catch (err: any) {
+      console.warn('[Web BLE Pair Error]', err);
+      setIsBleConnecting(false);
+      if (err.name !== 'NotFoundError') {
+        setScanError(err.message || 'Bluetooth connection failed.');
+      }
+    }
+  };
+
+  // 3. Airwave Wi-Fi & Gateway Scanner
   const runAirwaveWifiScan = async () => {
     setIsScanning(true);
     setScanError(null);
-    setScanSecondsLeft(12);
 
     if (typeof window !== 'undefined' && (window as any).AndroidNative) {
       try {
@@ -154,16 +219,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         if (data.signals && Array.isArray(data.signals) && data.signals.length > 0) {
           setDetectedWifiSignals(data.signals);
           const topHardware = data.signals.find((s: DetectedSignal) => s.isHardwareNode) || data.signals[0];
-          if (topHardware) {
-            setSelectedDevice(topHardware);
-          }
+          if (topHardware) setSelectedDevice(topHardware);
           setIsScanning(false);
           return;
         }
       }
     } catch (e) {}
 
-    // Direct local IP / SoftAP fallback probe
+    // Direct local IP / SoftAP fallback probe (http://192.168.4.1/api/wifi/status)
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1200);
@@ -181,7 +244,8 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           boardFamily: pingData.boardFamily || 'ESP32',
           serialNumber: pingData.serialNumber || 'AGRI-ESP32-8A12',
           authCode: pingData.authCode || 'ATH-8F92-4C10-99E4',
-          productName: 'AgriFlow Smart Irrigation Controller'
+          productName: 'AgriFlow Smart Irrigation Controller',
+          connectionMethod: 'WIFI_AP'
         };
         setDetectedWifiSignals([fallbackSignal]);
         setSelectedDevice(fallbackSignal);
@@ -200,13 +264,11 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   // Cleanup polling interval
   useEffect(() => {
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, []);
 
-  // ─── STEP 3: STRICT WI-FI CONNECTION (WILL NOT HIT 100% UNLESS HARDWARE CONFIRMS CONNECTION) ───
+  // ─── STEP 3: STRICT WI-FI CONNECTION (BLE GATT WRITE + SOFTAP + MQTT CONFIRMATION) ───
   const startStrictConnectionFlow = async () => {
     setStep(3);
     setConnectionStage('PAIRING_HARDWARE');
@@ -217,13 +279,41 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     const activeAuthCode = selectedDevice?.authCode || 'ATH-8F92-4C10-99E4';
     const targetSerial = selectedDevice?.serialNumber || 'ESP32-ATH-8A12';
 
-    // 1. Push credentials wirelessly to hardware
+    // 1. If connected via Web Bluetooth GATT, write directly to ESP32 BLE Characteristic
+    if (bleGattCharRef.current) {
+      try {
+        const payload = JSON.stringify({
+          ssid: wifiSsid,
+          password: wifiPass,
+          authCode: activeAuthCode
+        });
+        const encoder = new TextEncoder();
+        await bleGattCharRef.current.writeValueWithResponse(encoder.encode(payload));
+        console.log('[Web BLE] Wi-Fi credentials written to hardware over BLE GATT!');
+      } catch (bleErr) {
+        console.warn('[Web BLE Write Error]', bleErr);
+      }
+    }
+
+    // 2. If running in Android Kotlin App, write via Android Kotlin Native Bridge
     if (typeof window !== 'undefined' && (window as any).AndroidNative) {
       try {
-        (window as any).AndroidNative.writeWifiCredentialsToHardware('192.168.4.1', wifiSsid, wifiPass, activeAuthCode);
+        (window as any).AndroidNative.writeWifiCredentialsViaBle(
+          selectedDevice?.bssid || '',
+          wifiSsid,
+          wifiPass,
+          activeAuthCode
+        );
+        (window as any).AndroidNative.writeWifiCredentialsToHardware(
+          '192.168.4.1',
+          wifiSsid,
+          wifiPass,
+          activeAuthCode
+        );
       } catch (e) {}
     }
 
+    // 3. Also push via SoftAP HTTP REST endpoints
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -233,47 +323,34 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         body: JSON.stringify({ ssid: wifiSsid, password: wifiPass, authCode: activeAuthCode }),
         signal: controller.signal
       }).catch(() =>
-        fetch(`http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(wifiPass)}&authCode=${encodeURIComponent(activeAuthCode)}`, {
-          method: 'POST',
-          signal: controller.signal
-        })
+        fetch(
+          `http://192.168.4.1/setup?ssid=${encodeURIComponent(wifiSsid)}&password=${encodeURIComponent(
+            wifiPass
+          )}&authCode=${encodeURIComponent(activeAuthCode)}`,
+          { method: 'POST', signal: controller.signal }
+        )
       );
       clearTimeout(timeoutId);
-    } catch (e) {}
-
-    // Inform backend wifi-provision route
-    try {
-      await fetch('/api/devices/wifi-provision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          serialNumber: targetSerial,
-          ssid: wifiSsid,
-          password: wifiPass,
-          authCode: activeAuthCode,
-          nodeIp: '192.168.4.1'
-        })
-      });
     } catch (e) {}
 
     // Phase 2: Connecting
     setConnectionStage('CONNECTING_WIFI');
     setConnectionProgress(45);
 
-    // Phase 3: Hardware Verification Loop (Holds at 75% until confirmed)
+    // Phase 3: Verification Loop
     setTimeout(() => {
       setConnectionStage('VERIFYING_CONNECTION');
       setConnectionProgress(75);
 
       let attempts = 0;
-      const maxAttempts = 16; // 16 * 1.5s = 24s timeout
+      const maxAttempts = 16;
 
       pollIntervalRef.current = setInterval(async () => {
         attempts++;
         let isHardwareConnected = false;
         let assignedIp = '';
 
-        // Direct hardware check
+        // Check Direct Hardware SoftAP
         try {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 1200);
@@ -282,14 +359,18 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
           if (res && res.ok) {
             const data = await res.json();
-            if (data.wifiStatus === 'CONNECTED' || data.status === 'CONNECTED' || (data.ipAddress && !data.ipAddress.startsWith('192.168.4.'))) {
+            if (
+              data.wifiStatus === 'CONNECTED' ||
+              data.status === 'CONNECTED' ||
+              (data.ipAddress && !data.ipAddress.startsWith('192.168.4.'))
+            ) {
               isHardwareConnected = true;
               assignedIp = data.ipAddress;
             }
           }
         } catch (e) {}
 
-        // Backend gateway verification check
+        // Check Backend Gateway Status
         if (!isHardwareConnected) {
           try {
             const res = await fetch(`/api/devices/wifi-provision?nodeIp=192.168.4.1`);
@@ -301,7 +382,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           } catch (e) {}
         }
 
-        // Live Telemetry check
+        // Check Live Telemetry Feed
         if (!isHardwareConnected) {
           try {
             const res = await fetch('/api/telemetry');
@@ -335,14 +416,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
           setConnectionStage('FAILED');
           setVerificationError(
-            `Wi-Fi Connection Failed: Hardware was unable to connect to "${wifiSsid}". Please verify password.`
+            `Wi-Fi Connection Failed: Hardware was unable to connect to "${wifiSsid}". Please verify credentials.`
           );
         }
       }, 1500);
     }, 2000);
   };
 
-  // ─── STEP 4: FINAL CLAIM & DASHBOARD ACTIVATION (ONLY AFTER VERIFIED 100% CONNECTION) ───
+  // ─── STEP 4: FINAL CLAIM & DASHBOARD ACTIVATION ───
   const handleFinalClaimAndActivate = async () => {
     setIsSubmitting(true);
     setFeedback(null);
@@ -370,7 +451,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       customerProductName: 'AgriFlow Smart Irrigation Controller',
       boardFamily: selectedDevice?.boardFamily || 'ESP32',
       boardType: 'ESP32 Dev Module',
-      firmwareVersion: '2.0.0-PROVISION',
+      firmwareVersion: '2.2.0-PROVISION',
       status: DeviceStatus.ONLINE,
       accountId: 'acc_demo_user',
       farmId: selectedFarm,
@@ -443,14 +524,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             </div>
             <div className="text-left">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">Hardware Wi-Fi Scanner</h2>
+                <h2 className="text-base font-bold text-white">Hardware Wi-Fi &amp; BLE Scanner</h2>
                 <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-2 py-0.5 rounded-full font-mono flex items-center gap-1">
-                  <Radio className="w-3 h-3 text-cyan-400" />
-                  Airwave Radar
+                  {isNativeApp ? <Smartphone className="w-3 h-3 text-cyan-400" /> : <Bluetooth className="w-3 h-3 text-cyan-400" />}
+                  {isNativeApp ? 'Android Kotlin Native' : 'Web Bluetooth & Airwave'}
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Scanning visible Wi-Fi beacons &amp; ESP hardware access points in the air
+                Direct physical hardware detection via Web Bluetooth and Wi-Fi airwaves
               </p>
             </div>
           </div>
@@ -465,7 +546,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
         {/* STEP PROGRESS TABS */}
         <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 px-2">
-          <span className={step >= 1 ? 'text-cyan-400 font-bold' : ''}>1. Wi-Fi Signal</span>
+          <span className={step >= 1 ? 'text-cyan-400 font-bold' : ''}>1. Scan Device</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className={step >= 2 ? 'text-cyan-400 font-bold' : ''}>2. Wi-Fi Password</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
@@ -491,17 +572,42 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 1: SCAN FOR HARDWARE WI-FI SIGNALS IN THE AIR */}
+        {/* STEP 1: SCAN FOR PHYSICAL HARDWARE VIA WEB BLUETOOTH & AIRWAVES */}
         {step === 1 && (
           <div className="space-y-4 text-left">
-            <div className="flex items-center justify-between">
+            {/* WEB BLUETOOTH DIRECT SCAN BANNER (FOR WEB BROWSERS) */}
+            {isWebBleAvailable && (
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-950 to-indigo-950 border border-blue-500/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Bluetooth className="w-5 h-5 text-cyan-400 animate-pulse" />
+                    <div>
+                      <div className="text-xs font-bold text-white">Browser Bluetooth Pairing (Web BLE)</div>
+                      <div className="text-[10px] text-slate-300">Scan &amp; write credentials directly to ESP32 without typing IP addresses</div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={connectViaWebBluetooth}
+                  disabled={isBleConnecting}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition-all flex items-center justify-center gap-2"
+                >
+                  {isBleConnecting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Bluetooth className="w-4 h-4" />}
+                  <span>{isBleConnecting ? 'Pairing Bluetooth...' : 'Pair via Browser Bluetooth (One-Click)'}</span>
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-1">
               <div>
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
                   <Signal className="w-4 h-4 text-cyan-400" />
                   <span>Wi-Fi Signals Detected in the Air ({detectedWifiSignals.length})</span>
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  Select your ESP microcontroller or farm router signal to begin pairing.
+                  Select your ESP microcontroller beacon or local Wi-Fi signal.
                 </p>
               </div>
 
@@ -517,7 +623,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             </div>
 
             {/* DETECTED SIGNALS LIST */}
-            <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
               {detectedWifiSignals.map((signal) => {
                 const isSelected = selectedDevice?.ssid === signal.ssid;
                 return (
@@ -559,7 +665,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                           )}
                         </div>
                         <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          BSSID: {signal.bssid} {signal.band && `\u2022 ${signal.band}`}
+                          MAC: {signal.bssid} {signal.band && `\u2022 ${signal.band}`}
                         </div>
                       </div>
                     </div>
@@ -596,38 +702,26 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               })}
 
               {detectedWifiSignals.length === 0 && !isScanning && (
-                <div className="p-6 bg-slate-900/60 border border-slate-800 rounded-2xl text-center space-y-2">
-                  <Wifi className="w-8 h-8 text-slate-600 mx-auto" />
-                  <div className="text-xs font-bold text-slate-300">No Wi-Fi signals found yet</div>
+                <div className="p-5 bg-slate-900/60 border border-slate-800 rounded-2xl text-center space-y-2">
+                  <Wifi className="w-7 h-7 text-slate-600 mx-auto" />
+                  <div className="text-xs font-bold text-slate-300">No signals detected</div>
                   <div className="text-[11px] text-slate-500">
-                    Make sure your ESP32 or ESP8266 board is powered ON and broadcasting its Wi-Fi beacon.
+                    Use the <strong>"Pair via Browser Bluetooth"</strong> button above or ensure your ESP32 is powered ON.
                   </div>
                 </div>
               )}
             </div>
 
-            {selectedDevice && (
-              <div className="p-3 bg-emerald-950/40 border border-emerald-800/40 rounded-2xl flex items-center justify-between text-xs">
-                <div className="flex items-center space-x-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span className="text-emerald-300">
-                    Selected Node: <strong className="text-white font-mono">{selectedDevice.serialNumber}</strong> ({selectedDevice.boardFamily})
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setStep(2)}
-                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1"
-                >
-                  <span>Proceed</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
+            {scanError && (
+              <div className="p-3 bg-red-950/40 border border-red-900/40 rounded-xl text-left text-red-300 text-[11px] flex items-start space-x-1.5">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <span>{scanError}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* STEP 2: ENTER WI-FI CREDENTIALS ONLY (NO FARM/ZONE SELECTION ALLOWED HERE) */}
+        {/* STEP 2: ENTER WI-FI CREDENTIALS ONLY */}
         {step === 2 && (
           <div className="space-y-4 text-left">
             <div className="space-y-1">
@@ -804,7 +898,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 4: ASSIGN FARM & ZONE LOCATION (ONLY AFTER VERIFIED 100% CONNECTION) */}
+        {/* STEP 4: ASSIGN FARM & ZONE LOCATION */}
         {step === 4 && (
           <div className="space-y-5 text-left animate-scale-up">
             <div className="text-center space-y-2">
