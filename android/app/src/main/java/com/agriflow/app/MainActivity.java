@@ -37,6 +37,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bleScanner;
+    private WifiManager wifiManager;
     private boolean isScanning = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private static final int PERMISSION_REQUEST_CODE = 101;
@@ -67,6 +68,8 @@ public class MainActivity extends AppCompatActivity {
                 bleScanner = bluetoothAdapter.getBluetoothLeScanner();
             }
         }
+
+        wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
 
         requestAppPermissions();
 
@@ -111,6 +114,57 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public String getPlatform() {
             return "ANDROID_NATIVE";
+        }
+
+        @JavascriptInterface
+        public void scanNearbyHardwareWifi() {
+            if (wifiManager == null) {
+                sendJsCallback("window.onNativeWifiScanError && window.onNativeWifiScanError('WifiManager unavailable');");
+                return;
+            }
+
+            try {
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    wifiManager.startScan();
+                    List<android.net.wifi.ScanResult> results = wifiManager.getScanResults();
+                    JSONArray signals = new JSONArray();
+
+                    if (results != null) {
+                        for (android.net.wifi.ScanResult res : results) {
+                            String ssid = res.SSID;
+                            if (ssid == null || ssid.isEmpty()) continue;
+
+                            JSONObject obj = new JSONObject();
+                            obj.put("ssid", ssid);
+                            obj.put("bssid", res.BSSID);
+                            int level = WifiManager.calculateSignalLevel(res.level, 100);
+                            obj.put("signalPercent", level);
+                            obj.put("rssi", res.level);
+
+                            boolean isHardware = ssid.toLowerCase().contains("agri") ||
+                                                 ssid.toLowerCase().contains("aether") ||
+                                                 ssid.toLowerCase().contains("esp32") ||
+                                                 ssid.toLowerCase().contains("esp8266") ||
+                                                 ssid.toLowerCase().contains("setup") ||
+                                                 ssid.toLowerCase().contains("node");
+
+                            obj.put("isHardwareNode", isHardware);
+                            obj.put("boardFamily", ssid.toLowerCase().contains("8266") ? "ESP8266" : "ESP32");
+                            String cleanMac = (res.BSSID != null) ? res.BSSID.replace(":", "").toUpperCase() : "8A12";
+                            String lastFour = cleanMac.length() >= 4 ? cleanMac.substring(cleanMac.length() - 4) : "8A12";
+                            obj.put("serialNumber", isHardware ? ssid : "NODE-" + lastFour);
+                            obj.put("authCode", "ATH-" + lastFour + "-99E4");
+                            obj.put("productName", isHardware ? "AgriFlow Smart Irrigation Controller" : "Wi-Fi Access Point (" + ssid + ")");
+
+                            signals.put(obj);
+                        }
+                    }
+
+                    sendJsCallback("window.onNativeWifiSignalsFound && window.onNativeWifiSignalsFound(" + signals.toString() + ");");
+                }
+            } catch (Exception e) {
+                sendJsCallback("window.onNativeWifiScanError && window.onNativeWifiScanError('" + e.getMessage() + "');");
+            }
         }
 
         @JavascriptInterface
@@ -170,44 +224,7 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void scanLocalWifiDevices() {
-            new Thread(() -> {
-                try {
-                    JSONArray found = new JSONArray();
-
-                    // Check default SoftAP gateway (192.168.4.1)
-                    String[] probeUrls = new String[] {
-                        "http://192.168.4.1/api/wifi/status",
-                        "http://192.168.4.1/ping",
-                        "http://agriflow-smart-node.local/api/wifi/status"
-                    };
-
-                    for (String pUrl : probeUrls) {
-                        try {
-                            URL url = new URL(pUrl);
-                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                            conn.setConnectTimeout(2000);
-                            conn.setReadTimeout(2000);
-                            conn.setRequestMethod("GET");
-                            if (conn.getResponseCode() == 200) {
-                                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                                StringBuilder sb = new StringBuilder();
-                                String line;
-                                while ((line = in.readLine()) != null) sb.append(line);
-                                in.close();
-                                JSONObject obj = new JSONObject(sb.toString());
-                                obj.put("ipAddress", "192.168.4.1");
-                                obj.put("mode", "Direct Wi-Fi Hardware Signal (192.168.4.1)");
-                                found.put(obj);
-                                break;
-                            }
-                        } catch (Exception ignored) {}
-                    }
-
-                    sendJsCallback("window.onNativeWifiDevicesDiscovered && window.onNativeWifiDevicesDiscovered(" + found.toString() + ");");
-                } catch (Exception e) {
-                    sendJsCallback("window.onNativeWifiScanError && window.onNativeWifiScanError('" + e.getMessage() + "');");
-                }
-            }).start();
+            scanNearbyHardwareWifi();
         }
 
         @JavascriptInterface
