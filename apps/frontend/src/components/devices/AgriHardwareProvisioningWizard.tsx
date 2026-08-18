@@ -27,8 +27,7 @@ import {
   Radar,
   Smartphone,
   Server,
-  Signal,
-  Cable
+  Signal
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useSpatialStore } from '../../store/useSpatialStore';
@@ -49,7 +48,7 @@ interface DetectedSignal {
   serialNumber: string;
   authCode: string;
   productName: string;
-  connectionMethod?: 'BLE' | 'SERIAL' | 'WIFI_AP' | 'AIRWAVE';
+  connectionMethod?: 'BLE' | 'WIFI_AP' | 'AIRWAVE';
 }
 
 interface AgriHardwareProvisioningWizardProps {
@@ -63,21 +62,18 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 }) => {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Scan & Detection States
+  // Scan & Detection States (100% Wireless)
   const [isScanning, setIsScanning] = useState(true);
   const [detectedWifiSignals, setDetectedWifiSignals] = useState<DetectedSignal[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<DetectedSignal | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [isNativeApp, setIsNativeApp] = useState<boolean>(false);
   const [isWebBleAvailable, setIsWebBleAvailable] = useState<boolean>(false);
-  const [isWebSerialAvailable, setIsWebSerialAvailable] = useState<boolean>(false);
   const [isBleConnecting, setIsBleConnecting] = useState<boolean>(false);
-  const [isSerialConnecting, setIsSerialConnecting] = useState<boolean>(false);
 
-  // Active Hardware References
+  // Active Wireless Bluetooth References
   const bleDeviceRef = useRef<any>(null);
   const bleGattCharRef = useRef<any>(null);
-  const serialPortRef = useRef<any>(null);
 
   // Step 2: Wi-Fi Credentials
   const [wifiSsid, setWifiSsid] = useState('Farm_Mesh_WiFi_5G');
@@ -108,9 +104,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
     const hasWebBle = typeof navigator !== 'undefined' && Boolean((navigator as any).bluetooth);
     setIsWebBleAvailable(hasWebBle);
-
-    const hasWebSerial = typeof navigator !== 'undefined' && Boolean((navigator as any).serial);
-    setIsWebSerialAvailable(hasWebSerial);
 
     if (isNative) {
       (window as any).onNativeWifiSignalsFound = (signals: any) => {
@@ -144,10 +137,10 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     }
   }, []);
 
-  // 1. Resilient Web Bluetooth Connection with Auto-Retry
-  const connectViaWebBluetooth = async () => {
+  // 1. 100% Wireless Bluetooth LE Connection with Safe GATT Handshake
+  const connectViaWirelessBluetooth = async () => {
     if (typeof navigator === 'undefined' || !(navigator as any).bluetooth) {
-      setScanError('Web Bluetooth is not supported on this browser. Please use Google Chrome or Edge.');
+      setScanError('Web Bluetooth is supported on Google Chrome, Microsoft Edge, and Android Chrome. Ensure Bluetooth is ON on your device.');
       return;
     }
 
@@ -155,7 +148,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     setScanError(null);
 
     try {
-      // Request device with both name prefixes and acceptAllDevices fallback
+      // Request device with primary service filter and fallback
       const device = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [
@@ -174,25 +167,37 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
       bleDeviceRef.current = device;
 
-      // Resilient GATT Connect with retry loop
+      // Handle disconnect event gracefully
+      device.addEventListener('gattserverdisconnected', () => {
+        console.log('[BLE] Disconnected from device.');
+      });
+
+      // Connect to GATT Server
       let server = device.gatt;
+      if (!server.connected) {
+        server = await device.gatt.connect();
+      }
+
+      // Small delay to allow GATT services to populate on Windows/Android
+      await new Promise((r) => setTimeout(r, 300));
+
       let characteristic = null;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          if (!server.connected) {
-            console.log(`[BLE] Connecting to GATT Server (Attempt ${attempt + 1})...`);
-            await server.connect();
-            await new Promise((r) => setTimeout(r, 450));
-          }
-
-          const service = await server.getPrimaryService(BLE_SERVICE_UUID);
-          characteristic = await service.getCharacteristic(BLE_CHAR_UUID);
-          bleGattCharRef.current = characteristic;
-          break;
-        } catch (gattErr: any) {
-          console.warn(`[BLE Attempt ${attempt + 1} Failed]`, gattErr.message);
-          await new Promise((r) => setTimeout(r, 600));
+      try {
+        const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+        characteristic = await service.getCharacteristic(BLE_CHAR_UUID);
+        bleGattCharRef.current = characteristic;
+      } catch (svcErr) {
+        // Fallback: search all services
+        const services = await server.getPrimaryServices();
+        for (const s of services) {
+          try {
+            const chars = await s.getCharacteristics();
+            if (chars.length > 0) {
+              characteristic = chars[0];
+              bleGattCharRef.current = characteristic;
+              break;
+            }
+          } catch (e) {}
         }
       }
 
@@ -218,56 +223,15 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       setIsScanning(false);
       setStep(2);
     } catch (err: any) {
-      console.warn('[Web BLE Error]', err);
+      console.warn('[Wireless BLE Error]', err);
       setIsBleConnecting(false);
       if (err.name !== 'NotFoundError') {
-        setScanError(err.message || 'Bluetooth connection failed.');
+        setScanError(err.message || 'Bluetooth connection failed. Ensure your ESP32 is powered on and in range.');
       }
     }
   };
 
-  // 2. Web Serial (USB Cable) One-Click Connection (100% Reliable Hardware Fallback)
-  const connectViaWebSerial = async () => {
-    if (typeof navigator === 'undefined' || !(navigator as any).serial) {
-      setScanError('Web Serial is supported on Google Chrome and Microsoft Edge on Desktop.');
-      return;
-    }
-
-    setIsSerialConnecting(true);
-    setScanError(null);
-
-    try {
-      const port = await (navigator as any).serial.requestPort();
-      await port.open({ baudRate: 115200 });
-      serialPortRef.current = port;
-
-      const serialHardwareSignal: DetectedSignal = {
-        ssid: 'ESP32-USB-DIRECT',
-        bssid: 'USB-UART-BRIDGE',
-        signalPercent: 100,
-        rssi: 0,
-        isHardwareNode: true,
-        boardFamily: 'ESP32',
-        serialNumber: 'ESP32-ATH-8A12',
-        authCode: 'ATH-8F92-4C10-99E4',
-        productName: 'AgriFlow Smart Irrigation Controller (USB Cable Connected)',
-        connectionMethod: 'SERIAL'
-      };
-
-      setDetectedWifiSignals((prev) => [serialHardwareSignal, ...prev.filter((p) => p.ssid !== 'ESP32-USB-DIRECT')]);
-      setSelectedDevice(serialHardwareSignal);
-      setIsSerialConnecting(false);
-      setIsScanning(false);
-      setStep(2);
-    } catch (err: any) {
-      setIsSerialConnecting(false);
-      if (err.name !== 'NotFoundError') {
-        setScanError(err.message || 'Serial USB connection failed.');
-      }
-    }
-  };
-
-  // 3. Airwave Wi-Fi & Gateway Scanner
+  // 2. Wireless Wi-Fi Airwave Scanner
   const runAirwaveWifiScan = async () => {
     setIsScanning(true);
     setScanError(null);
@@ -334,7 +298,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     };
   }, []);
 
-  // ─── STEP 3: STRICT WI-FI CONNECTION (BLE GATT + SERIAL + SOFTAP + MQTT CONFIRMATION) ───
+  // ─── STEP 3: STRICT 100% WIRELESS WI-FI CONNECTION (BLE GATT + SOFTAP + MQTT) ───
   const startStrictConnectionFlow = async () => {
     setStep(3);
     setConnectionStage('PAIRING_HARDWARE');
@@ -345,13 +309,13 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     const activeAuthCode = selectedDevice?.authCode || 'ATH-8F92-4C10-99E4';
     const targetSerial = selectedDevice?.serialNumber || 'ESP32-ATH-8A12';
 
-    // 1. If connected via Web Bluetooth GATT, write directly to ESP32 BLE Characteristic
+    // 1. If paired via Web Bluetooth, transmit wirelessly over BLE GATT
     if (bleGattCharRef.current) {
       try {
         if (bleDeviceRef.current?.gatt && !bleDeviceRef.current.gatt.connected) {
           console.log('[BLE] Reconnecting before write...');
           await bleDeviceRef.current.gatt.connect();
-          await new Promise((r) => setTimeout(r, 400));
+          await new Promise((r) => setTimeout(r, 300));
         }
 
         const payload = JSON.stringify({
@@ -361,28 +325,13 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         });
         const encoder = new TextEncoder();
         await bleGattCharRef.current.writeValue(encoder.encode(payload));
-        console.log('[Web BLE] Wi-Fi credentials written to hardware over BLE GATT!');
+        console.log('[Wireless BLE] Wi-Fi credentials pushed to hardware wirelessly!');
       } catch (bleErr) {
-        console.warn('[Web BLE Write Error]', bleErr);
+        console.warn('[Wireless BLE Write Warning]', bleErr);
       }
     }
 
-    // 2. If connected via Web Serial USB
-    if (serialPortRef.current?.writable) {
-      try {
-        const textEncoder = new TextEncoderStream();
-        const writableStreamClosed = textEncoder.readable.pipeTo(serialPortRef.current.writable);
-        const writer = textEncoder.writable.getWriter();
-        const cmd = `SET_WIFI:{"ssid":"${wifiSsid}","password":"${wifiPass}"}\n`;
-        await writer.write(cmd);
-        writer.releaseLock();
-        console.log('[Web Serial] Wi-Fi credentials written via USB!');
-      } catch (serialErr) {
-        console.warn('[Web Serial Write Error]', serialErr);
-      }
-    }
-
-    // 3. If running in Android Kotlin App, write via Android Kotlin Native Bridge
+    // 2. If running in Android Kotlin App, write wirelessly via Android Native Bridge
     if (typeof window !== 'undefined' && (window as any).AndroidNative) {
       try {
         (window as any).AndroidNative.writeWifiCredentialsViaBle(
@@ -400,7 +349,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       } catch (e) {}
     }
 
-    // 4. Also push via SoftAP HTTP REST endpoints
+    // 3. Also push wirelessly via SoftAP HTTP REST endpoints
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -611,14 +560,14 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             </div>
             <div className="text-left">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">Hardware Connection Wizard</h2>
+                <h2 className="text-base font-bold text-white">Wireless Hardware Provisioning</h2>
                 <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-2 py-0.5 rounded-full font-mono flex items-center gap-1">
-                  {isNativeApp ? <Smartphone className="w-3 h-3 text-cyan-400" /> : <Bluetooth className="w-3 h-3 text-cyan-400" />}
-                  {isNativeApp ? 'Android Kotlin Native' : 'Web Bluetooth / Serial'}
+                  <Bluetooth className="w-3 h-3 text-cyan-400" />
+                  100% Wireless
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Direct physical hardware pairing via Bluetooth, USB Serial, and Wi-Fi
+                Direct wireless discovery via Bluetooth LE and Wi-Fi airwave signals
               </p>
             </div>
           </div>
@@ -633,7 +582,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
 
         {/* STEP PROGRESS TABS */}
         <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 px-2">
-          <span className={step >= 1 ? 'text-cyan-400 font-bold' : ''}>1. Scan Device</span>
+          <span className={step >= 1 ? 'text-cyan-400 font-bold' : ''}>1. Wireless Scan</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className={step >= 2 ? 'text-cyan-400 font-bold' : ''}>2. Wi-Fi Password</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
@@ -659,54 +608,38 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
           </div>
         )}
 
-        {/* STEP 1: SCAN FOR PHYSICAL HARDWARE VIA WEB BLUETOOTH, USB SERIAL, OR WI-FI */}
+        {/* STEP 1: SCAN FOR PHYSICAL HARDWARE 100% WIRELESS */}
         {step === 1 && (
           <div className="space-y-4 text-left">
-            {/* DIRECT HARDWARE PAIRING OPTIONS */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {/* Web Bluetooth Option */}
+            {/* WIRELESS BLUETOOTH LE ONE-CLICK PAIRING */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-950 to-indigo-950 border border-blue-500/50 space-y-3 shadow-lg shadow-blue-500/10">
+              <div className="flex items-center space-x-2">
+                <Bluetooth className="w-5 h-5 text-cyan-400 animate-pulse shrink-0" />
+                <div>
+                  <div className="text-xs font-bold text-white">Wireless Bluetooth LE Pairing</div>
+                  <div className="text-[10px] text-slate-300">Discover and write credentials wirelessly to your ESP32 board</div>
+                </div>
+              </div>
+
               <button
                 type="button"
-                onClick={connectViaWebBluetooth}
+                onClick={connectViaWirelessBluetooth}
                 disabled={isBleConnecting}
-                className="p-3.5 rounded-2xl bg-gradient-to-br from-blue-950/90 to-indigo-950/80 border border-blue-500/50 hover:border-blue-400 text-left transition-all group"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 transition-all flex items-center justify-center gap-2"
               >
-                <div className="flex items-center space-x-2 mb-1.5">
-                  <Bluetooth className="w-5 h-5 text-cyan-400 group-hover:animate-bounce" />
-                  <span className="text-xs font-bold text-white">Browser Bluetooth</span>
-                </div>
-                <p className="text-[10px] text-slate-300 leading-tight">
-                  {isBleConnecting ? 'Pairing via BLE...' : 'Auto-reconnect & write credentials wirelessly via BLE GATT'}
-                </p>
+                {isBleConnecting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Bluetooth className="w-4 h-4" />}
+                <span>{isBleConnecting ? 'Pairing Bluetooth Device...' : '📡 Scan & Pair via Bluetooth (Wireless)'}</span>
               </button>
-
-              {/* Web Serial (USB Cable) Option */}
-              {isWebSerialAvailable && (
-                <button
-                  type="button"
-                  onClick={connectViaWebSerial}
-                  disabled={isSerialConnecting}
-                  className="p-3.5 rounded-2xl bg-gradient-to-br from-emerald-950/90 to-teal-950/80 border border-emerald-500/50 hover:border-emerald-400 text-left transition-all group"
-                >
-                  <div className="flex items-center space-x-2 mb-1.5">
-                    <Cable className="w-5 h-5 text-emerald-400 group-hover:animate-pulse" />
-                    <span className="text-xs font-bold text-white">USB Cable (Serial)</span>
-                  </div>
-                  <p className="text-[10px] text-slate-300 leading-tight">
-                    {isSerialConnecting ? 'Connecting USB...' : '100% Guaranteed connection via standard USB COM port'}
-                  </p>
-                </button>
-              )}
             </div>
 
             <div className="flex items-center justify-between pt-1">
               <div>
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
                   <Signal className="w-4 h-4 text-cyan-400" />
-                  <span>Detected Hardware &amp; Wi-Fi Signals ({detectedWifiSignals.length})</span>
+                  <span>Wi-Fi Signals in the Air ({detectedWifiSignals.length})</span>
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  Select your ESP microcontroller beacon or local Wi-Fi signal.
+                  Select your ESP microcontroller wireless beacon or local Wi-Fi router.
                 </p>
               </div>
 
@@ -722,7 +655,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
             </div>
 
             {/* DETECTED SIGNALS LIST */}
-            <div className="space-y-2.5 max-h-52 overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
               {detectedWifiSignals.map((signal) => {
                 const isSelected = selectedDevice?.ssid === signal.ssid;
                 return (
@@ -749,8 +682,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                       >
                         {signal.connectionMethod === 'BLE' ? (
                           <Bluetooth className="w-5 h-5 text-cyan-400" />
-                        ) : signal.connectionMethod === 'SERIAL' ? (
-                          <Cable className="w-5 h-5 text-emerald-400" />
                         ) : signal.isHardwareNode ? (
                           <RadioTower className="w-5 h-5 animate-pulse" />
                         ) : (
@@ -763,12 +694,12 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                           <span>{signal.ssid}</span>
                           {signal.isHardwareNode && (
                             <span className="px-2 py-0.2 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/60 text-[9px] font-mono">
-                              {signal.connectionMethod === 'BLE' ? 'BLE LOCKED' : signal.connectionMethod === 'SERIAL' ? 'USB LOCKED' : 'ESP HARDWARE'}
+                              {signal.connectionMethod === 'BLE' ? 'BLE LOCKED' : 'ESP HARDWARE'}
                             </span>
                           )}
                         </div>
                         <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          ID: {signal.bssid} {signal.band && `\u2022 ${signal.band}`}
+                          MAC: {signal.bssid} {signal.band && `\u2022 ${signal.band}`}
                         </div>
                       </div>
                     </div>
@@ -807,9 +738,9 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               {detectedWifiSignals.length === 0 && !isScanning && (
                 <div className="p-5 bg-slate-900/60 border border-slate-800 rounded-2xl text-center space-y-2">
                   <Wifi className="w-7 h-7 text-slate-600 mx-auto" />
-                  <div className="text-xs font-bold text-slate-300">No signals detected</div>
+                  <div className="text-xs font-bold text-slate-300">No wireless beacons found yet</div>
                   <div className="text-[11px] text-slate-500">
-                    Click <strong>"Browser Bluetooth"</strong> or <strong>"USB Cable"</strong> above to connect directly.
+                    Click <strong>"Scan &amp; Pair via Bluetooth"</strong> above or make sure your ESP32 board is powered ON.
                   </div>
                 </div>
               )}
@@ -871,7 +802,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
               </div>
 
               <div className="p-3 bg-cyan-950/40 border border-cyan-800/40 rounded-xl text-[11px] text-cyan-200">
-                🔒 Credentials will be written directly into the microcontroller's NVS flash memory and verified in real-time.
+                🔒 Credentials will be transmitted wirelessly into the microcontroller's NVS flash memory and verified in real-time.
               </div>
             </div>
 
