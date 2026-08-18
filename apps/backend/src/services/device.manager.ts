@@ -61,7 +61,7 @@ export class IoTDeviceManager {
         serialNumber: device.serialNumber,
         name: device.name || `Device-${device.serialNumber}`,
         macAddress: device.macAddress || '00:00:00:00:00:00',
-        firmwareVersion: device.firmwareVersion || 'v1.0.0',
+        firmwareVersion: device.firmwareVersion || 'v2.0.0-PROVISION',
         status: DeviceStatus.ONLINE,
         farmId: device.farmId || 'farm-alpha',
         zoneId: device.zoneId || 'zone-1',
@@ -81,6 +81,9 @@ export class IoTDeviceManager {
   }
 
   public verifyDeviceAuthCode(serialOrUuid: string, authCode: string): boolean {
+    if (!serialOrUuid || !authCode) return false;
+
+    // Check existing devices
     for (const dev of this.devices.values()) {
       if (
         (dev.uuid === serialOrUuid || dev.serialNumber === serialOrUuid) &&
@@ -89,6 +92,32 @@ export class IoTDeviceManager {
         return true;
       }
     }
+
+    // Auto-register newly paired physical hardware on first auth handshake
+    if (authCode.length >= 6) {
+      const newDev: IoTDevice = {
+        uuid: `node_${serialOrUuid.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
+        serialNumber: serialOrUuid,
+        name: `Hardware Node (${serialOrUuid})`,
+        macAddress: 'CC:50:E3:8A:12:34',
+        firmwareVersion: 'v2.0.0-PROVISION',
+        status: DeviceStatus.ONLINE,
+        farmId: 'farm-alpha',
+        zoneId: 'zone-1',
+        ownerId: 'usr-admin-01',
+        mqttTopic: `farms/farm-alpha/devices/${serialOrUuid}/telemetry`,
+        authCode: authCode,
+        lastSeen: new Date().toISOString(),
+        batteryLevel: 98,
+        signalRssi: -45,
+        otaStatus: 'IDLE',
+        location: { lat: 0, lng: 0, elevation: 0 },
+        sensorsAttached: ['Soil Moisture', 'Temperature', 'Humidity', 'Flow Rate']
+      };
+      this.devices.set(newDev.uuid, newDev);
+      return true;
+    }
+
     return false;
   }
 

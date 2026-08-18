@@ -9,7 +9,6 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.net.wifi.ScanResult as WifiScanResult;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -148,7 +147,7 @@ public class MainActivity extends AppCompatActivity {
                     isScanning = false;
                     sendJsCallback("window.onNativeBleScanFinished && window.onNativeBleScanFinished();");
                 }
-            }, 12000); // 12-second BLE scan window
+            }, 12000);
 
             try {
                 bleScanner.startScan(scanCallback);
@@ -176,24 +175,33 @@ public class MainActivity extends AppCompatActivity {
                     JSONArray found = new JSONArray();
 
                     // Check default SoftAP gateway (192.168.4.1)
-                    try {
-                        URL url = new URL("http://192.168.4.1/api/wifi/status");
-                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                        conn.setConnectTimeout(1800);
-                        conn.setReadTimeout(1800);
-                        conn.setRequestMethod("GET");
-                        if (conn.getResponseCode() == 200) {
-                            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                            StringBuilder sb = new StringBuilder();
-                            String line;
-                            while ((line = in.readLine()) != null) sb.append(line);
-                            in.close();
-                            JSONObject obj = new JSONObject(sb.toString());
-                            obj.put("ipAddress", "192.168.4.1");
-                            obj.put("mode", "WiFi Direct SoftAP");
-                            found.put(obj);
-                        }
-                    } catch (Exception ignored) {}
+                    String[] probeUrls = new String[] {
+                        "http://192.168.4.1/api/wifi/status",
+                        "http://192.168.4.1/ping",
+                        "http://agriflow-smart-node.local/api/wifi/status"
+                    };
+
+                    for (String pUrl : probeUrls) {
+                        try {
+                            URL url = new URL(pUrl);
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setConnectTimeout(2000);
+                            conn.setReadTimeout(2000);
+                            conn.setRequestMethod("GET");
+                            if (conn.getResponseCode() == 200) {
+                                BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                                StringBuilder sb = new StringBuilder();
+                                String line;
+                                while ((line = in.readLine()) != null) sb.append(line);
+                                in.close();
+                                JSONObject obj = new JSONObject(sb.toString());
+                                obj.put("ipAddress", "192.168.4.1");
+                                obj.put("mode", "Direct Wi-Fi Hardware Signal (192.168.4.1)");
+                                found.put(obj);
+                                break;
+                            }
+                        } catch (Exception ignored) {}
+                    }
 
                     sendJsCallback("window.onNativeWifiDevicesDiscovered && window.onNativeWifiDevicesDiscovered(" + found.toString() + ");");
                 } catch (Exception e) {
