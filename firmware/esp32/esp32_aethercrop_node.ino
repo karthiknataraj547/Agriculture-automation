@@ -1,17 +1,9 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════════════
  *  AETHERCROP SPATIAL IOT PLATFORM — ESP32 FIRMWARE NODE
- *  (WIFI PROVISIONING + NVS FLASH + SOFTAP + BLE GATT + MDNS + MQTT TELEMETRY)
+ *  (STABLE BLE GATT + WEB SERIAL + NVS WIFI PROVISIONING + SOFTAP + MQTT)
  * ═══════════════════════════════════════════════════════════════════════════════════
  *  Hardware Target : ESP32 DevKit V1 / WROOM-32 / NodeMCU-32S / ESP32-WROVER
- *  Features        : 
- *    - Persistent WiFi Credential Storage in NVS Flash (Preferences.h)
- *    - SoftAP Provisioning Mode (192.168.4.1) with Full CORS HTTP REST WebServer
- *    - NimBLE / ESP32 BLE GATT Characteristic (0000ffe0-0000-1000-8000-00805f9b34fb)
- *    - High-MTU UTF-8 JSON BLE WiFi Credential Parser & NVS Write
- *    - BLE Notification Broadcast on State Change (CONNECTING -> CONNECTED)
- *    - mDNS Hostname Discovery (http://agriflow-smart-node.local & http://aethercrop-node.local)
- *    - MQTT Telemetry & Active Relay Pump Control (Broker IP / Topic Sync)
  * ═══════════════════════════════════════════════════════════════════════════════════
  */
 
@@ -22,13 +14,12 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
-#include <HTTPClient.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
-// ─── BLE UUID DEFINITIONS ───
+// ─── BLE UUID DEFINITIONS (Standard 16-bit & 128-bit compatible) ───
 #define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
 #define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
 
@@ -39,18 +30,15 @@
 #define FLOW_SENSOR_PIN    18    // Interrupt Pin for Pulse Counting
 #define RELAY_PUMP_PIN     26    // GPIO 26 for Pump Relay (Active HIGH)
 #define STATUS_LED_PIN     2     // Built-in LED (GPIO 2)
-#define PIN_FACTORY_RESET  0     // Boot/Flash Button (Hold 5s to clear NVS Wi-Fi)
+#define PIN_FACTORY_RESET  0     // Boot/Flash Button (Hold 5s to clear NVS)
 
 // ─── MQTT CONFIGURATION ───
-const char* MQTT_SERVER     = "192.168.1.100"; // Backend / MQTT Broker IP
+const char* MQTT_SERVER     = "192.168.1.100";
 const int   MQTT_PORT       = 1883;
-const char* MQTT_USER       = "";              // Optional MQTT Username
-const char* MQTT_PASS       = "";              // Optional MQTT Password
-
 const char* TOPIC_TELEMETRY = "aether/farm-alpha/zone-1/telemetry";
 const char* TOPIC_COMMANDS  = "aether/farm-alpha/zone-1/commands";
 
-// ─── GLOBAL INSTANCES & STATE ───
+// ─── GLOBAL INSTANCES ───
 Preferences preferences;
 WebServer server(80);
 WiFiClient espClient;
@@ -59,7 +47,8 @@ DHT dht(DHT_PIN, DHT_TYPE);
 
 BLEServer* pBleServer = NULL;
 BLECharacteristic* pBleCharacteristic = NULL;
-bool bleDeviceConnected = false;
+bool bleClientConnected = false;
+bool oldBleClientConnected = false;
 
 String wifiSsid = "";
 String wifiPass = "";
@@ -78,10 +67,7 @@ enum NodeState {
 };
 
 NodeState currentState = STATE_INIT;
-String lastConnectionError = "";
-
 volatile unsigned long pulseCount = 0;
-float waterFlowRate = 0.0;
 unsigned long lastTelemetryTime = 0;
 const unsigned long TELEMETRY_INTERVAL_MS = 2500;
 
@@ -91,9 +77,6 @@ unsigned long pumpDurationMs = 0;
 
 unsigned long lastLedToggle = 0;
 bool ledState = LOW;
-unsigned long resetBtnPressTime = 0;
-bool resetBtnHeld = false;
-
 unsigned long wifiConnectStartTime = 0;
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 25000;
 
@@ -105,25 +88,26 @@ void connectToWiFi();
 void sendBleStatusNotification(const String& statusStr, const String& ipStr = "");
 
 // ─── BLE SERVER CALLBACKS ───
-class MyServerCallbacks: public BLEServerCallbacks {
+class BleServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
-      bleDeviceConnected = true;
-      Serial.println(F("📱 [BLE] Client Connected!"));
-    };
+      bleClientConnected = true;
+      Serial.println(F("\n📱 [BLE GATT] Web/App Client Connected!"));
+    }
 
     void onDisconnect(BLEServer* pServer) {
-      bleDeviceConnected = false;
-      Serial.println(F("📱 [BLE] Client Disconnected. Restarting advertising..."));
+      bleClientConnected = false;
+      Serial.println(F("\n📱 [BLE GATT] Client Disconnected. Restarting Advertising..."));
+      delay(200);
       pServer->getAdvertising()->start();
     }
 };
 
-// ─── BLE CHARACTERISTIC WRITE HANDLER (WI-FI CREDENTIALS) ───
-class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
+// ─── BLE CHARACTERISTIC WRITE HANDLER ───
+class BleCharacteristicCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
       if (rxValue.length() > 0) {
-        Serial.print(F("📥 [BLE RX WRITE]: "));
+        Serial.print(F("📥 [BLE RX]: "));
         Serial.println(rxValue.c_str());
 
         StaticJsonDocument<512> doc;
@@ -138,13 +122,13 @@ class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
           p = doc["password"] | doc["wifiPass"] | "";
           a = doc["authCode"] | "";
         } else {
-          // Fallback parsing for raw comma or urlencoded format (e.g. ssid:pass)
+          // Parse urlencoded or colon format (ssid:password)
           String rawStr = String(rxValue.c_str());
-          int sepIdx = rawStr.indexOf(',');
-          if (sepIdx == -1) sepIdx = rawStr.indexOf(':');
-          if (sepIdx != -1) {
-            s = rawStr.substring(0, sepIdx);
-            p = rawStr.substring(sepIdx + 1);
+          int sep = rawStr.indexOf(':');
+          if (sep == -1) sep = rawStr.indexOf(',');
+          if (sep != -1) {
+            s = rawStr.substring(0, sep);
+            p = rawStr.substring(sep + 1);
           }
         }
 
@@ -153,18 +137,16 @@ class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
           wifiPass = p;
           if (a.length() > 0) authCode = a;
 
-          // Save to NVS Flash
           preferences.putString("ssid", wifiSsid);
           preferences.putString("pass", wifiPass);
           if (a.length() > 0) preferences.putString("auth", authCode);
 
-          Serial.println(F("💾 [BLE] Wi-Fi credentials saved to NVS Flash!"));
-          Serial.print(F("💾 Stored SSID: ")); Serial.println(wifiSsid);
+          Serial.println(F("💾 [NVS] Wi-Fi credentials saved to NVS flash!"));
+          Serial.print(F("💾 SSID: ")); Serial.println(wifiSsid);
 
-          // Send BLE Notification back to App
-          sendBleStatusNotification("NVS_SAVED_CONNECTING", WiFi.softAPIP().toString());
+          sendBleStatusNotification("NVS_SAVED", WiFi.softAPIP().toString());
 
-          // Trigger Wi-Fi connection in AP_STA dual mode
+          delay(400);
           currentState = STATE_WIFI_CONNECTING;
           connectToWiFi();
         }
@@ -173,7 +155,7 @@ class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
 };
 
 void sendBleStatusNotification(const String& statusStr, const String& ipStr) {
-  if (pBleCharacteristic != NULL) {
+  if (pBleCharacteristic != NULL && bleClientConnected) {
     StaticJsonDocument<256> doc;
     doc["status"] = statusStr;
     doc["serial"] = deviceSerial;
@@ -188,12 +170,38 @@ void sendBleStatusNotification(const String& statusStr, const String& ipStr) {
   }
 }
 
+// ─── PROCESS SERIAL (USB) COMMANDS FOR INSTANT WEB SERIAL PROVISIONING ───
+void processSerialInput() {
+  if (Serial.available() > 0) {
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+
+    if (line == "PING" || line == "GET_STATUS") {
+      Serial.printf("PONG:{\"serial\":\"%s\",\"mac\":\"%s\",\"status\":\"%s\",\"authCode\":\"%s\"}\n",
+        deviceSerial.c_str(), macAddress.c_str(), (WiFi.status() == WL_CONNECTED ? "CONNECTED" : "AP_MODE"), authCode.c_str());
+    } else if (line.startsWith("SET_WIFI:")) {
+      String jsonPayload = line.substring(9);
+      StaticJsonDocument<256> doc;
+      DeserializationError err = deserializeJson(doc, jsonPayload);
+      if (!err) {
+        wifiSsid = (const char*)doc["ssid"];
+        wifiPass = (const char*)doc["password"];
+        preferences.putString("ssid", wifiSsid);
+        preferences.putString("pass", wifiPass);
+        Serial.println(F("OK:NVS_STORED_CONNECTING"));
+        currentState = STATE_WIFI_CONNECTING;
+        connectToWiFi();
+      }
+    }
+  }
+}
+
 // ─── SETUP FUNCTION ───
 void setup() {
   Serial.begin(115200);
   delay(300);
 
-  Serial.println(F("\n\n========================================================"));
+  Serial.println(F("\n========================================================"));
   Serial.println(F(" 🌾 AETHERCROP SPATIAL IOT PLATFORM — ESP32 NODE"));
   Serial.println(F("========================================================"));
 
@@ -225,12 +233,13 @@ void setup() {
   wifiPass = preferences.getString("pass", "");
   authCode = preferences.getString("auth", "ATH-8F92-4C10-99E4");
 
-  // Initialize BLE Stack
-  String bleDeviceName = "AGRI-SETUP-" + lastFour;
-  bleDeviceName.toUpperCase();
+  // 1. Initialize BLE Stack with High TX Power & Stable Advertising
+  String bleDeviceName = "AGRI-" + lastFour;
   BLEDevice::init(bleDeviceName.c_str());
+  BLEDevice::setPower(ESP_PWR_LVL_P9);
+
   pBleServer = BLEDevice::createServer();
-  pBleServer->setCallbacks(new MyServerCallbacks());
+  pBleServer->setCallbacks(new BleServerCallbacks());
 
   BLEService *pService = pBleServer->createService(SERVICE_UUID);
   pBleCharacteristic = pService->createCharacteristic(
@@ -241,8 +250,8 @@ void setup() {
       BLECharacteristic::PROPERTY_NOTIFY
   );
   pBleCharacteristic->addDescriptor(new BLE2902());
-  pBleCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
-  pBleCharacteristic->setValue("READY_FOR_PROVISION");
+  pBleCharacteristic->setCallbacks(new BleCharacteristicCallbacks());
+  pBleCharacteristic->setValue("AGRIFLOW_READY");
   pService->start();
 
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -251,11 +260,12 @@ void setup() {
   pAdvertising->setMinPreferred(0x06);
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
-  Serial.print(F("📱 [BLE] BLE Advertising Active as: ")); Serial.println(bleDeviceName);
+  Serial.print(F("📱 [BLE] BLE Advertising as: ")); Serial.println(bleDeviceName);
 
-  // SoftAP WebServer Setup
+  // 2. SoftAP WebServer Setup (192.168.4.1)
+  String apName = "AGRI-SETUP-" + lastFour;
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(bleDeviceName.c_str(), "agrifarm2026");
+  WiFi.softAP(apName.c_str(), "agrifarm2026");
 
   if (MDNS.begin("agriflow-smart-node") || MDNS.begin("aethercrop-node")) {
     MDNS.addService("http", "tcp", 80);
@@ -291,7 +301,7 @@ void setup() {
     doc["nvsStored"] = (wifiSsid.length() > 0);
     doc["ssid"] = wifiSsid;
     doc["boardFamily"] = "ESP32";
-    doc["firmwareVersion"] = "2.2.0-PROVISION";
+    doc["firmwareVersion"] = "2.3.0-PROVISION";
     doc["authCode"] = authCode;
 
     if (WiFi.status() == WL_CONNECTED) {
@@ -360,7 +370,7 @@ void setup() {
   });
 
   server.begin();
-  Serial.print(F("📶 [SoftAP] Running on Port 80: ")); Serial.println(bleDeviceName);
+  Serial.print(F("📶 [SoftAP] Running on Port 80: ")); Serial.println(apName);
 
   if (digitalRead(PIN_FACTORY_RESET) == LOW || wifiSsid.length() == 0) {
     currentState = STATE_PROVISIONING_AP;
@@ -408,7 +418,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void loop() {
+  processSerialInput();
   server.handleClient();
+
+  // Handle BLE Disconnect Re-advertising
+  if (!bleClientConnected && oldBleClientConnected) {
+    delay(300);
+    pBleServer->startAdvertising();
+    Serial.println(F("📱 [BLE] Restarted advertising."));
+    oldBleClientConnected = bleClientConnected;
+  }
+  if (bleClientConnected && !oldBleClientConnected) {
+    oldBleClientConnected = bleClientConnected;
+  }
 
   // Wi-Fi Connection State Handler
   if (currentState == STATE_WIFI_CONNECTING) {
@@ -417,14 +439,13 @@ void loop() {
       digitalWrite(STATUS_LED_PIN, HIGH);
       Serial.print(F("✅ [WiFi] Connected! IP: ")); Serial.println(WiFi.localIP());
 
-      // Send BLE Notification to Mobile App / Browser
       sendBleStatusNotification("CONNECTED", WiFi.localIP().toString());
 
       mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
       mqttClient.setCallback(mqttCallback);
     } else if (millis() - wifiConnectStartTime >= WIFI_CONNECT_TIMEOUT_MS) {
       currentState = STATE_PROVISIONING_AP;
-      Serial.println(F("❌ [WiFi] Connection timed out. Returned to AP setup mode."));
+      Serial.println(F("❌ [WiFi] Connection timed out."));
       sendBleStatusNotification("FAILED_TIMEOUT", WiFi.softAPIP().toString());
     }
   }
@@ -445,7 +466,7 @@ void loop() {
     if (pumpState && (millis() - pumpStartTime >= pumpDurationMs)) {
       pumpState = false;
       digitalWrite(RELAY_PUMP_PIN, LOW);
-      Serial.println(F("⏱️ [RELAY] Pump Timer Expired (Auto-Off)"));
+      Serial.println(F("⏱️ [RELAY] Pump Timer Expired"));
     }
 
     if (millis() - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
