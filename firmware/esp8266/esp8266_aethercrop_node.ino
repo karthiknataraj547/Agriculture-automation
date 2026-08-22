@@ -1,65 +1,52 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  AETHERCROP SPATIAL IOT PLATFORM — ESP8266 FIRMWARE NODE
- *  (WIFI PROVISIONING + EEPROM FLASH + SOFTAP + MDNS + TELEMETRY)
+ *  AETHERCROP SPATIAL IOT PLATFORM — ESP8266 FIRMWARE NODE v3.5
+ *  (WEBSOCKETS SERVER + CAPTIVE SOFTAP + EEPROM FLASH + MDNS + MQTT + HTTP)
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  Hardware Target : ESP8266 NodeMCU V2/V3 / WeMos D1 Mini / ESP-12E
- *  Features        : 
- *    - Persistent WiFi Credential Storage in EEPROM Flash
- *    - SoftAP Provisioning Mode (192.168.4.1) with Full CORS HTTP REST WebServer
- *    - mDNS Hostname Discovery (http://agriflow-smart-node.local)
- *    - 2.4GHz WiFi Scanning & Dynamic Credential Programming
- *    - Strict Hardware Status Confirmation (CONNECTING -> CONNECTED / FAILED)
- *    - Secure TLS / MQTTS Telemetry & Active Relay Pump Control
+ *  Hardware Target : ESP8266 NodeMCU V2/V3 / WeMos D1 Mini / ESP-12E / Generic ESP8266
  * ═══════════════════════════════════════════════════════════════════════════════════
  */
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
-#include <WiFiClientSecure.h>
+#include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <EEPROM.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
 #include <DHT.h>
+#include <WebSocketsServer.h>
 
-// ─── HARDWARE GPIO PIN MAPPING (ESP8266) ───
-#define PIN_LED_INDICATOR  2    // Onboard Status LED (D4 on NodeMCU, Active LOW)
-#define PIN_BUTTON_RESET   0    // Flash Button (GPIO 0 - Hold 5s to clear Wi-Fi EEPROM)
+// ─── HARDWARE GPIO PIN MAPPING (RAW GPIO INTEGERS - ZERO D2/D3 CONFLICTS) ───
+#define PIN_LED_INDICATOR  2    // Built-in Status LED (GPIO 2 - Active LOW on ESP8266)
+#define PIN_BUTTON_RESET   0    // Flash Button (GPIO 0 - Hold 3s for Factory Reset)
 #define PIN_SOIL_MOISTURE  A0   // Analog Soil Moisture Probe (0-1023)
-#define PIN_DHT_DATA       4    // Digital Air Temp & Humidity (D2 on NodeMCU)
-#define PIN_RELAY_PUMP     5    // Water Pump Relay (D1 on NodeMCU, Active HIGH)
-#define PIN_FLOW_RATE      14   // Pulse Water Flow Sensor (D5 on NodeMCU)
+#define PIN_DHT_DATA       4    // Digital Air Temp & Humidity (GPIO 4)
+#define PIN_RELAY_PUMP     5    // Water Pump Relay (GPIO 5 - Active HIGH)
+#define PIN_FLOW_RATE      14   // Pulse Water Flow Sensor (GPIO 14)
 #define DHTTYPE            DHT11
 
-// ─── STATE MACHINE DEFINITIONS ───
-enum DeviceState {
-  STATE_SETUP,
-  STATE_DISCOVERABLE,
-  STATE_PAIRING,
-  STATE_WIFI_PROVISIONING,
-  STATE_WIFI_CONNECTING,
-  STATE_WIFI_CONNECTED,
-  STATE_CLOUD_REGISTERING,
-  STATE_MQTT_CONNECTING,
-  STATE_ONLINE,
-  STATE_ERROR,
-  STATE_DISABLED
-};
-
-DeviceState currentState = STATE_SETUP;
-String lastErrorReason = "NONE";
+// ─── SERVER & GATEWAY CONFIGURATION ───
+const byte DNS_PORT = 53;
+const char* BACKEND_GATEWAY_HOST = "192.168.1.100";
+const int   BACKEND_GATEWAY_PORT = 3000;
+const int   MQTT_PORT            = 1883;
+const char* TOPIC_TELEMETRY      = "aether/farm-alpha/zone-1/telemetry";
+const char* TOPIC_COMMANDS       = "aether/farm-alpha/zone-1/commands";
 
 // ─── EEPROM MEMORY MAP ───
 #define EEPROM_SIZE 512
 #define EEPROM_SSID_ADDR 0
 #define EEPROM_PASS_ADDR 100
+#define EEPROM_AUTH_ADDR 200
 
 // ─── GLOBAL INSTANCES ───
 ESP8266WebServer server(80);
-WiFiClientSecure secureClient;
-PubSubClient mqttClient(secureClient);
+WebSocketsServer webSocket = WebSocketsServer(81); // Dedicated WebSocket Server on Port 81
+DNSServer dnsServer;
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 DHT dht(PIN_DHT_DATA, DHTTYPE);
 
 String wifiSsid = "";
@@ -70,117 +57,325 @@ String authCode = "ATH-8F92-4C10-99E4";
 String farmId = "farm-alpha";
 String zoneId = "zone-1";
 
+enum NodeState {
+  STATE_INIT,
+  STATE_PROVISIONING_AP,
+  STATE_WIFI_CONNECTING,
+  STATE_CONNECTED_ONLINE,
+  STATE_ERROR
+};
+
+NodeState currentState = STATE_INIT;
+volatile unsigned long pulseCount = 0;
+unsigned long lastTelemetryTime = 0;
+const unsigned long TELEMETRY_INTERVAL_MS = 2500;
+
+bool pumpState = false;
+unsigned long pumpStartTime = 0;
+unsigned long pumpDurationMs = 0;
+
 unsigned long lastLedToggle = 0;
-bool ledState = HIGH; // Built-in LED is active LOW on ESP8266
-unsigned long buttonPressStart = 0;
-bool buttonHeld = false;
-unsigned long lastTelemetryMs = 0;
+bool ledState = HIGH; // Active LOW LED
 unsigned long wifiConnectStartTime = 0;
-const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
+const unsigned long WIFI_CONNECT_TIMEOUT_MS = 25000;
 
-void setDeviceState(DeviceState newState, String errorMsg = "") {
-  currentState = newState;
-  if (errorMsg.length() > 0) {
-    lastErrorReason = errorMsg;
-  }
+unsigned long buttonPressStartTime = 0;
+bool isButtonPressed = false;
 
-  String stateStr = "SETUP";
-  switch(newState) {
-    case STATE_SETUP: stateStr = "SETUP"; break;
-    case STATE_DISCOVERABLE: stateStr = "DISCOVERABLE"; break;
-    case STATE_PAIRING: stateStr = "PAIRING"; break;
-    case STATE_WIFI_PROVISIONING: stateStr = "WIFI_PROVISIONING"; break;
-    case STATE_WIFI_CONNECTING: stateStr = "WIFI_CONNECTING"; break;
-    case STATE_WIFI_CONNECTED: stateStr = "WIFI_CONNECTED"; break;
-    case STATE_CLOUD_REGISTERING: stateStr = "CLOUD_REGISTERING"; break;
-    case STATE_MQTT_CONNECTING: stateStr = "MQTT_CONNECTING"; break;
-    case STATE_ONLINE: stateStr = "ONLINE"; break;
-    case STATE_ERROR: stateStr = "ERROR"; break;
-    case STATE_DISABLED: stateStr = "DISABLED"; break;
-  }
-
-  Serial.print(F("[FSM STATE] -> ")); Serial.println(stateStr);
+void ICACHE_RAM_ATTR flowPulseISR() {
+  pulseCount++;
 }
 
-// ─── STATUS LED MANAGER (ACTIVE LOW ON ESP8266) ───
-void updateLedPattern() {
-  unsigned long now = millis();
-  unsigned long interval = 1000;
+void connectToWiFi();
+void performCompleteFactoryReset();
+void sendDirectHttpHeartbeat();
+void broadcastWsStatus();
+void saveCredentialsToEeprom(String s, String p, String a);
+void loadCredentialsFromEeprom();
 
-  switch(currentState) {
-    case STATE_SETUP:
-    case STATE_DISCOVERABLE:
-      interval = 200; // Rapid blink in AP Mode
+// ─── EEPROM STORAGE HANDLERS ───
+void saveCredentialsToEeprom(String s, String p, String a) {
+  EEPROM.begin(EEPROM_SIZE);
+  // Clear areas
+  for (int i = 0; i < 300; ++i) EEPROM.write(i, 0);
+
+  // Write SSID
+  for (unsigned int i = 0; i < s.length(); ++i) EEPROM.write(EEPROM_SSID_ADDR + i, s[i]);
+  EEPROM.write(EEPROM_SSID_ADDR + s.length(), '\0');
+
+  // Write PASS
+  for (unsigned int i = 0; i < p.length(); ++i) EEPROM.write(EEPROM_PASS_ADDR + i, p[i]);
+  EEPROM.write(EEPROM_PASS_ADDR + p.length(), '\0');
+
+  // Write AUTH
+  for (unsigned int i = 0; i < a.length(); ++i) EEPROM.write(EEPROM_AUTH_ADDR + i, a[i]);
+  EEPROM.write(EEPROM_AUTH_ADDR + a.length(), '\0');
+
+  EEPROM.commit();
+  EEPROM.end();
+}
+
+void loadCredentialsFromEeprom() {
+  EEPROM.begin(EEPROM_SIZE);
+  char s[64] = {0};
+  char p[64] = {0};
+  char a[64] = {0};
+
+  for (int i = 0; i < 64; ++i) s[i] = EEPROM.read(EEPROM_SSID_ADDR + i);
+  for (int i = 0; i < 64; ++i) p[i] = EEPROM.read(EEPROM_PASS_ADDR + i);
+  for (int i = 0; i < 64; ++i) a[i] = EEPROM.read(EEPROM_AUTH_ADDR + i);
+
+  wifiSsid = String(s);
+  wifiPass = String(p);
+  String loadedAuth = String(a);
+  if (loadedAuth.length() > 0) authCode = loadedAuth;
+
+  EEPROM.end();
+}
+
+// ─── COMPLETE FACTORY RESET (CLEARS EEPROM FLASH & WI-FI) ───
+void performCompleteFactoryReset() {
+  Serial.println(F("\n⚠️ [FACTORY RESET] Erasing EEPROM Flash & Stored Wi-Fi Credentials..."));
+
+  for (int i = 0; i < 6; i++) {
+    digitalWrite(PIN_LED_INDICATOR, LOW);
+    delay(80);
+    digitalWrite(PIN_LED_INDICATOR, HIGH);
+    delay(80);
+  }
+
+  EEPROM.begin(EEPROM_SIZE);
+  for (int i = 0; i < EEPROM_SIZE; ++i) EEPROM.write(i, 0);
+  EEPROM.commit();
+  EEPROM.end();
+
+  WiFi.disconnect(true);
+
+  wifiSsid = "";
+  wifiPass = "";
+
+  Serial.println(F("✅ [FACTORY RESET] Complete! Restarting into discovery mode...\n"));
+  delay(400);
+  ESP.restart();
+}
+
+// ─── WEBSOCKET EVENT HANDLER (PORT 81) ───
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("🔌 [WS #%u] Client Disconnected\n", num);
       break;
 
-    case STATE_PAIRING:
-    case STATE_WIFI_PROVISIONING:
-      interval = 300;
+    case WStype_CONNECTED: {
+      IPAddress ip = webSocket.remoteIP(num);
+      Serial.printf("🔌 [WS #%u] Client Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2], ip[3]);
+      broadcastWsStatus();
       break;
+    }
 
-    case STATE_WIFI_CONNECTING:
-      interval = 500; // Medium blink while connecting
+    case WStype_TEXT: {
+      String text = String((char*)payload);
+      Serial.printf("📥 [WS #%u RX]: %s\n", num, text.c_str());
+
+      StaticJsonDocument<512> doc;
+      DeserializationError err = deserializeJson(doc, text);
+
+      if (!err) {
+        String msgType = doc["type"] | doc["action"] | "";
+
+        if (msgType == "SET_WIFI" || doc.containsKey("ssid")) {
+          String s = doc["ssid"] | doc["wifiSsid"] | "";
+          String p = doc["password"] | doc["wifiPass"] | "";
+          String a = doc["authCode"] | "";
+
+          if (s.length() > 0) {
+            wifiSsid = s;
+            wifiPass = p;
+            if (a.length() > 0) authCode = a;
+
+            saveCredentialsToEeprom(wifiSsid, wifiPass, authCode);
+            Serial.printf("💾 [WS] Stored Wi-Fi SSID: %s\n", wifiSsid.c_str());
+
+            // Acknowledge to WebSocket Client
+            StaticJsonDocument<256> ack;
+            ack["type"] = "WIFI_STATUS";
+            ack["status"] = "CONNECTING";
+            ack["ssid"] = wifiSsid;
+            String ackStr;
+            serializeJson(ack, ackStr);
+            webSocket.sendTXT(num, ackStr);
+
+            delay(300);
+            currentState = STATE_WIFI_CONNECTING;
+            connectToWiFi();
+          }
+        } else if (msgType == "PUMP" || msgType == "PUMP_COMMAND") {
+          String action = doc["action"] | doc["status"] | "TOGGLE";
+          int dur = doc["durationSec"] | 6;
+
+          if (action == "ON" || (!pumpState && action == "TOGGLE")) {
+            pumpState = true;
+            pumpStartTime = millis();
+            pumpDurationMs = dur * 1000UL;
+            digitalWrite(PIN_RELAY_PUMP, HIGH);
+          } else {
+            pumpState = false;
+            digitalWrite(PIN_RELAY_PUMP, LOW);
+          }
+
+          StaticJsonDocument<256> resp;
+          resp["type"] = "PUMP_STATUS";
+          resp["state"] = pumpState;
+          String respStr;
+          serializeJson(resp, respStr);
+          webSocket.broadcastTXT(respStr);
+        } else if (msgType == "FACTORY_RESET") {
+          performCompleteFactoryReset();
+        } else if (msgType == "GET_STATUS" || msgType == "PING") {
+          broadcastWsStatus();
+        }
+      }
       break;
-
-    case STATE_WIFI_CONNECTED:
-    case STATE_ONLINE:
-      digitalWrite(PIN_LED_INDICATOR, LOW); // Active LOW -> SOLID ON
-      return;
-
-    case STATE_ERROR:
-      interval = 80; // Fast panic flash
-      break;
-
-    case STATE_DISABLED:
-      digitalWrite(PIN_LED_INDICATOR, HIGH); // LED Off
-      return;
+    }
 
     default:
-      interval = 1000;
-  }
-
-  if (now - lastLedToggle >= interval) {
-    lastLedToggle = now;
-    ledState = !ledState;
-    digitalWrite(PIN_LED_INDICATOR, ledState);
+      break;
   }
 }
 
-// ─── EEPROM STORAGE HELPER METHODS ───
-void writeStringToEEPROM(int startAddr, const String& str) {
-  int len = str.length();
-  for (int i = 0; i < len; ++i) {
-    EEPROM.write(startAddr + i, str[i]);
+void broadcastWsStatus() {
+  StaticJsonDocument<512> doc;
+  doc["type"] = "DEVICE_STATUS";
+  doc["serial"] = deviceSerial;
+  doc["mac"] = macAddress;
+  doc["authCode"] = authCode;
+  doc["wifiSsid"] = wifiSsid;
+  doc["pumpRunning"] = pumpState;
+
+  int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+  float soilPercent = constrain(map(rawSoil, 1023, 300, 0, 100), 0.0, 100.0);
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  doc["soilMoisture"] = round(soilPercent * 10.0) / 10.0;
+  doc["temp"] = isnan(t) ? 28.0 : (round(t * 10.0) / 10.0);
+  doc["humidity"] = isnan(h) ? 60.0 : (round(h * 10.0) / 10.0);
+
+  if (WiFi.status() == WL_CONNECTED) {
+    doc["status"] = "CONNECTED";
+    doc["ip"] = WiFi.localIP().toString();
+    doc["rssi"] = WiFi.RSSI();
+  } else if (currentState == STATE_WIFI_CONNECTING) {
+    doc["status"] = "CONNECTING";
+    doc["ip"] = WiFi.softAPIP().toString();
+    doc["rssi"] = -45;
+  } else {
+    doc["status"] = "PROVISIONING_AP";
+    doc["ip"] = WiFi.softAPIP().toString();
+    doc["rssi"] = -35;
   }
-  EEPROM.write(startAddr + len, '\0');
-  EEPROM.commit();
+
+  String res;
+  serializeJson(doc, res);
+  webSocket.broadcastTXT(res);
 }
 
-String readStringFromEEPROM(int startAddr) {
-  char chars[100];
-  int i = 0;
-  char ch;
-  do {
-    ch = EEPROM.read(startAddr + i);
-    chars[i] = ch;
-    i++;
-  } while (ch != '\0' && i < 100);
-  return String(chars);
+// ─── DIRECT HTTP HEARTBEAT TO CLOUD / LOCAL GATEWAY ───
+void sendDirectHttpHeartbeat() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClient client;
+  HTTPClient http;
+  String url = "http://" + String(BACKEND_GATEWAY_HOST) + ":" + String(BACKEND_GATEWAY_PORT) + "/api/telemetry";
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(2500);
+
+  int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+  float soilPercent = constrain(map(rawSoil, 1023, 300, 0, 100), 0.0, 100.0);
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  StaticJsonDocument<384> doc;
+  doc["deviceId"] = deviceSerial;
+  doc["serialNumber"] = deviceSerial;
+  doc["authCode"] = authCode;
+  doc["status"] = "ONLINE";
+  doc["ipAddress"] = WiFi.localIP().toString();
+  doc["wifiSsid"] = wifiSsid;
+  doc["soilMoisture"] = round(soilPercent * 10.0) / 10.0;
+  doc["airTemperature"] = isnan(t) ? 28.0 : (round(t * 10.0) / 10.0);
+  doc["humidity"] = isnan(h) ? 60.0 : (round(h * 10.0) / 10.0);
+  doc["pumpRunning"] = pumpState;
+  doc["rssi"] = WiFi.RSSI();
+
+  String payload;
+  serializeJson(doc, payload);
+  int httpCode = http.POST(payload);
+  if (httpCode > 0) {
+    Serial.printf("📡 [HTTP POST Telemetry] Sent to gateway (Code: %d)\n", httpCode);
+  }
+  http.end();
 }
 
-// ─── SOFTAP WI-FI SERVER ENDPOINTS ───
-void setupSoftAP(const String& apName) {
+// ─── SETUP FUNCTION ───
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  Serial.println(F("\n========================================================"));
+  Serial.println(F(" 🌾 AETHERCROP SPATIAL IOT PLATFORM — ESP8266 NODE v3.5"));
+  Serial.println(F("========================================================"));
+
+  pinMode(PIN_LED_INDICATOR, OUTPUT);
+  pinMode(PIN_BUTTON_RESET, INPUT_PULLUP);
+  pinMode(PIN_RELAY_PUMP, OUTPUT);
+  pinMode(PIN_FLOW_RATE, INPUT_PULLUP);
+
+  digitalWrite(PIN_RELAY_PUMP, LOW);
+  digitalWrite(PIN_LED_INDICATOR, HIGH); // Off for active LOW LED
+
+  attachInterrupt(digitalPinToInterrupt(PIN_FLOW_RATE), flowPulseISR, RISING);
+  dht.begin();
+
+  macAddress = WiFi.macAddress();
+  String macClean = macAddress;
+  macClean.replace(":", "");
+  String lastFour = macClean.substring(macClean.length() - 4);
+  deviceSerial = "ESP8266-ATH-" + lastFour;
+  deviceSerial.toUpperCase();
+
+  Serial.print(F("📌 Node Serial: ")); Serial.println(deviceSerial);
+  Serial.print(F("📌 MAC Address: ")); Serial.println(macAddress);
+
+  if (digitalRead(PIN_BUTTON_RESET) == LOW) {
+    delay(500);
+    if (digitalRead(PIN_BUTTON_RESET) == LOW) {
+      performCompleteFactoryReset();
+    }
+  }
+
+  loadCredentialsFromEeprom();
+
+  // 1. SoftAP WebServer & WebSocket Server Setup
+  String apName = "AGRI-SETUP-" + lastFour;
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apName.c_str(), "agrifarm2026");
 
-  if (MDNS.begin("agriflow-smart-node")) {
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+
+  if (MDNS.begin("agriflow-smart-node") || MDNS.begin("aethercrop-node")) {
     MDNS.addService("http", "tcp", 80);
+    MDNS.addService("ws", "tcp", 81);
   }
 
-  server.enableCORS(true);
+  // Start WebSocket Server on Port 81
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+  Serial.println(F("🔌 [WebSocket] Server listening on Port 81: ws://192.168.4.1:81/"));
 
-  // Common CORS OPTIONS Handlers
-  auto sendCors = []() {
+  // WebServer HTTP Endpoints
+  auto handleCors = []() {
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS,PUT,DELETE");
     server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Cache-Control");
@@ -188,29 +383,31 @@ void setupSoftAP(const String& apName) {
     server.send(204);
   };
 
-  server.on("/ping", HTTP_OPTIONS, sendCors);
-  server.on("/status", HTTP_OPTIONS, sendCors);
-  server.on("/api/wifi/status", HTTP_OPTIONS, sendCors);
-  server.on("/device-info", HTTP_OPTIONS, sendCors);
-  server.on("/setup", HTTP_OPTIONS, sendCors);
-  server.on("/api/wifi/credentials", HTTP_OPTIONS, sendCors);
-  server.on("/wifi-scan", HTTP_OPTIONS, sendCors);
-  server.on("/api/wifi/scan", HTTP_OPTIONS, sendCors);
-  server.on("/claim", HTTP_OPTIONS, sendCors);
-  server.on("/reset", HTTP_OPTIONS, sendCors);
+  server.on("/ping", HTTP_OPTIONS, handleCors);
+  server.on("/status", HTTP_OPTIONS, handleCors);
+  server.on("/api/wifi/status", HTTP_OPTIONS, handleCors);
+  server.on("/api/wifi/credentials", HTTP_OPTIONS, handleCors);
+  server.on("/api/wifi/scan", HTTP_OPTIONS, handleCors);
+  server.on("/api/pump", HTTP_OPTIONS, handleCors);
+  server.on("/api/reset", HTTP_OPTIONS, handleCors);
+  server.on("/reset", HTTP_OPTIONS, handleCors);
 
-  // GET /ping & /api/wifi/status & /status
   auto handleStatus = []() {
     StaticJsonDocument<512> doc;
     doc["serial"] = deviceSerial;
     doc["serialNumber"] = deviceSerial;
     doc["mac"] = macAddress;
     doc["macAddress"] = macAddress;
-    doc["eepromStored"] = (wifiSsid.length() > 0);
+    doc["nvsStored"] = (wifiSsid.length() > 0);
     doc["ssid"] = wifiSsid;
     doc["boardFamily"] = "ESP8266";
-    doc["firmwareVersion"] = "3.2.0-PROVISION";
+    doc["firmwareVersion"] = "3.5.0-WEBSOCKET";
     doc["authCode"] = authCode;
+
+    int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+    float soilPercent = constrain(map(rawSoil, 1023, 300, 0, 100), 0.0, 100.0);
+    doc["soilMoisture"] = round(soilPercent * 10.0) / 10.0;
+    doc["pumpRunning"] = pumpState;
 
     if (WiFi.status() == WL_CONNECTED) {
       doc["status"] = "CONNECTED";
@@ -226,270 +423,248 @@ void setupSoftAP(const String& apName) {
       doc["status"] = "PROVISIONING_ACTIVE";
       doc["wifiStatus"] = "PROVISIONING_AP";
       doc["ipAddress"] = WiFi.softAPIP().toString();
-      doc["rssi"] = -38;
-      if (lastErrorReason != "NONE") {
-        doc["lastError"] = lastErrorReason;
-      }
+      doc["rssi"] = -35;
     }
 
-    String response;
-    serializeJson(doc, response);
+    String res;
+    serializeJson(doc, res);
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", response);
+    server.send(200, "application/json", res);
   };
 
   server.on("/ping", HTTP_GET, handleStatus);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/api/wifi/status", HTTP_GET, handleStatus);
 
-  // GET /device-info
-  server.on("/device-info", HTTP_GET, []() {
-    String info = "{\"deviceId\":\"" + deviceSerial + "\",\"serialNumber\":\"" + deviceSerial + "\",\"productId\":\"AGRIFLOW-IRRIGATION-V1\",\"productName\":\"AgriFlow Smart Irrigation Controller\",\"boardFamily\":\"ESP8266\",\"firmwareVersion\":\"3.2.0-PROVISION\",\"authCode\":\"" + authCode + "\"}";
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", info);
-  });
-
-  // GET /wifi-scan & /api/wifi/scan
-  auto handleScan = []() {
-    Serial.println(F("[WIFI SCAN] Scanning nearby networks..."));
+  server.on("/api/wifi/scan", HTTP_GET, []() {
     int n = WiFi.scanNetworks();
     StaticJsonDocument<1024> doc;
-    JsonArray networks = doc.to<JsonArray>();
-
+    JsonArray networks = doc.createNestedArray("networks");
     for (int i = 0; i < n; ++i) {
       JsonObject net = networks.createNestedObject();
       net["ssid"] = WiFi.SSID(i);
       net["rssi"] = WiFi.RSSI(i);
-      net["secure"] = (WiFi.encryptionType(i) != ENC_TYPE_NONE);
+      net["encryption"] = (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? "OPEN" : "WPA2";
     }
-
-    String response;
-    serializeJson(doc, response);
+    String res;
+    serializeJson(doc, res);
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", response);
-  };
+    server.send(200, "application/json", res);
+  });
 
-  server.on("/wifi-scan", HTTP_GET, handleScan);
-  server.on("/api/wifi/scan", HTTP_GET, handleScan);
+  server.on("/api/pump", HTTP_POST, []() {
+    StaticJsonDocument<256> doc;
+    if (server.hasArg("plain")) {
+      deserializeJson(doc, server.arg("plain"));
+    }
+    const char* action = doc["action"] | "TOGGLE";
+    int durSec = doc["durationSec"] | 6;
 
-  // POST /setup & /api/wifi/credentials (Write to EEPROM)
-  auto handleSetup = []() {
-    String ssid = "";
-    String pass = "";
-
-    if (server.hasArg("ssid") && server.hasArg("password")) {
-      ssid = server.arg("ssid");
-      pass = server.arg("password");
-    } else if (server.hasArg("plain")) {
-      StaticJsonDocument<256> doc;
-      DeserializationError err = deserializeJson(doc, server.arg("plain"));
-      if (!err) {
-        ssid = doc["ssid"] | doc["wifiSsid"] | "";
-        pass = doc["password"] | doc["wifiPass"] | "";
-      }
+    if (String(action) == "ON" || (!pumpState && String(action) == "TOGGLE")) {
+      pumpState = true;
+      pumpStartTime = millis();
+      pumpDurationMs = durSec * 1000UL;
+      digitalWrite(PIN_RELAY_PUMP, HIGH);
+    } else {
+      pumpState = false;
+      digitalWrite(PIN_RELAY_PUMP, LOW);
     }
 
-    if (ssid.length() > 0) {
-      wifiSsid = ssid;
-      wifiPass = pass;
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", pumpState ? "{\"pump\":\"ON\"}" : "{\"pump\":\"OFF\"}");
+    broadcastWsStatus();
+  });
 
-      writeStringToEEPROM(EEPROM_SSID_ADDR, wifiSsid);
-      writeStringToEEPROM(EEPROM_PASS_ADDR, wifiPass);
+  server.on("/api/wifi/credentials", HTTP_POST, []() {
+    String s = "";
+    String p = "";
+    String a = "";
 
-      Serial.println(F("\n💾 [EEPROM WRITE] Stored Wi-Fi credentials in EEPROM flash!"));
-      Serial.print(F("💾 SSID: ")); Serial.println(wifiSsid);
+    if (server.hasArg("plain")) {
+      StaticJsonDocument<384> doc;
+      deserializeJson(doc, server.arg("plain"));
+      s = doc["ssid"] | doc["wifiSsid"] | "";
+      p = doc["password"] | doc["wifiPass"] | "";
+      a = doc["authCode"] | "";
+    } else if (server.hasArg("ssid")) {
+      s = server.arg("ssid");
+      p = server.arg("password");
+      a = server.arg("authCode");
+    }
 
+    if (s.length() > 0) {
+      wifiSsid = s;
+      wifiPass = p;
+      if (a.length() > 0) authCode = a;
+
+      saveCredentialsToEeprom(wifiSsid, wifiPass, authCode);
       server.sendHeader("Access-Control-Allow-Origin", "*");
-      server.send(200, "application/json", "{\"success\":true,\"message\":\"Wi-Fi credentials written to EEPROM. Reconnecting...\",\"ssid\":\"" + wifiSsid + "\"}");
-      
-      delay(400);
-      setDeviceState(STATE_WIFI_CONNECTING);
-      wifiConnectStartTime = millis();
-      WiFi.mode(WIFI_AP_STA);
-      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"EEPROM Saved. Connecting to Wi-Fi...\"}");
+
+      delay(300);
+      currentState = STATE_WIFI_CONNECTING;
+      connectToWiFi();
       return;
     }
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID and Password are required.\"}");
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID required\"}");
+  });
+
+  auto handleReset = []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Factory reset initiated...\"}");
+    delay(500);
+    performCompleteFactoryReset();
   };
 
-  server.on("/setup", HTTP_POST, handleSetup);
-  server.on("/api/wifi/credentials", HTTP_POST, handleSetup);
-
-  // POST /claim
-  server.on("/claim", HTTP_POST, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"success\":true,\"message\":\"Claim registered.\"}");
-  });
-
-  // POST /reset
-  server.on("/reset", HTTP_POST, []() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", "{\"success\":true,\"message\":\"EEPROM Cleared! Device restarting...\"}");
-    delay(500);
-    for (int i = 0; i < EEPROM_SIZE; ++i) {
-      EEPROM.write(i, 0);
-    }
-    EEPROM.commit();
-    WiFi.disconnect(true);
-    ESP.restart();
-  });
-
-  // GET /ping-image.jpg
-  server.on("/ping-image.jpg", HTTP_GET, []() {
-    const uint8_t gifData[] = {
-      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 
-      0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 
-      0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 
-      0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b
-    };
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendContent_P((const char*)gifData, sizeof(gifData));
-  });
+  server.on("/api/reset", HTTP_POST, handleReset);
+  server.on("/reset", HTTP_POST, handleReset);
+  server.on("/reset", HTTP_GET, handleReset);
 
   server.begin();
-  Serial.print(F("[AP] SoftAP Web Server running on Port 80: ")); Serial.println(apName);
+  Serial.print(F("📶 [SoftAP] Running on Port 80: ")); Serial.println(apName);
+
+  if (wifiSsid.length() == 0) {
+    currentState = STATE_PROVISIONING_AP;
+  } else {
+    connectToWiFi();
+  }
 }
 
-// ─── MQTT PUMP CONTROL ACTUATION ───
+void connectToWiFi() {
+  currentState = STATE_WIFI_CONNECTING;
+  wifiConnectStartTime = millis();
+  Serial.print(F("📡 [WiFi] Connecting to: ")); Serial.println(wifiSsid);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+}
+
+void reconnectMQTT() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  static unsigned long lastMqtt = 0;
+  if (millis() - lastMqtt < 4000) return;
+  lastMqtt = millis();
+
+  String clientId = "ESP8266-" + deviceSerial;
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println(F("✅ [MQTT] Connected to Broker!"));
+    mqttClient.subscribe(TOPIC_COMMANDS);
+  }
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.print(F("📩 [MQTT TOPIC] ")); Serial.println(topic);
   StaticJsonDocument<256> doc;
-  DeserializationError err = deserializeJson(doc, payload, length);
-  if (!err && (doc.containsKey("status") || doc.containsKey("pumpState"))) {
-    String status = doc["status"] | doc["pumpState"] | "OFF";
-    if (status == "RUNNING" || status == "ON") {
-      digitalWrite(PIN_RELAY_PUMP, HIGH);
-      Serial.println(F("[RELAY] Water Pump Started (Active HIGH)"));
-    } else {
-      digitalWrite(PIN_RELAY_PUMP, LOW);
-      Serial.println(F("[RELAY] Water Pump Stopped"));
-    }
-  }
-}
-
-// ─── TIMED RESET DETECTOR (HOLD 5S) ───
-void checkResetButton() {
-  if (digitalRead(PIN_BUTTON_RESET) == LOW) {
-    if (!buttonHeld) {
-      buttonHeld = true;
-      buttonPressStart = millis();
-    } else if (millis() - buttonPressStart >= 5000) {
-      Serial.println(F("\n[FACTORY RESET] Reset button held 5 seconds. Clearing EEPROM..."));
-      for (int i = 0; i < EEPROM_SIZE; ++i) {
-        EEPROM.write(i, 0);
-      }
-      EEPROM.commit();
-      WiFi.disconnect(true);
-      digitalWrite(PIN_LED_INDICATOR, HIGH);
-      delay(500);
-      ESP.restart();
-    }
+  deserializeJson(doc, payload, length);
+  const char* action = doc["action"] | doc["status"] | "OFF";
+  if (String(action) == "ON" || String(action) == "RUNNING") {
+    pumpState = true;
+    pumpStartTime = millis();
+    pumpDurationMs = (doc["durationSec"] | 60) * 1000UL;
+    digitalWrite(PIN_RELAY_PUMP, HIGH);
+    Serial.println(F("⚡ [MQTT RELAY] Pump ON"));
   } else {
-    buttonHeld = false;
+    pumpState = false;
+    digitalWrite(PIN_RELAY_PUMP, LOW);
+    Serial.println(F("🛑 [MQTT RELAY] Pump OFF"));
   }
-}
-
-void setup() {
-  Serial.begin(115200);
-  EEPROM.begin(EEPROM_SIZE);
-  pinMode(PIN_LED_INDICATOR, OUTPUT);
-  pinMode(PIN_BUTTON_RESET, INPUT_PULLUP);
-  pinMode(PIN_RELAY_PUMP, OUTPUT);
-  digitalWrite(PIN_RELAY_PUMP, LOW);
-
-  dht.begin();
-  macAddress = WiFi.macAddress();
-  
-  String macClean = macAddress;
-  macClean.replace(":", "");
-  String lastFour = macClean.substring(macClean.length() - 4);
-  deviceSerial = "AGRI-ESP8266-" + lastFour;
-  deviceSerial.toUpperCase();
-
-  Serial.println(F("\n=========================================="));
-  Serial.println(F(" 🌾 AetherCrop Smart Node (ESP8266)"));
-  Serial.print(F(" Serial Number: ")); Serial.println(deviceSerial);
-  Serial.print(F(" MAC Address:   ")); Serial.println(macAddress);
-  Serial.println(F("=========================================="));
-
-  wifiSsid = readStringFromEEPROM(EEPROM_SSID_ADDR);
-  wifiPass = readStringFromEEPROM(EEPROM_PASS_ADDR);
-
-  String apName = "AGRI-SETUP-" + lastFour;
-  apName.toUpperCase();
-  setupSoftAP(apName);
-
-  if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
-    setDeviceState(STATE_DISCOVERABLE);
-  } else {
-    setDeviceState(STATE_WIFI_CONNECTING);
-    wifiConnectStartTime = millis();
-    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-  }
+  broadcastWsStatus();
 }
 
 void loop() {
-  updateLedPattern();
-  checkResetButton();
+  dnsServer.processNextRequest();
   server.handleClient();
+  webSocket.loop(); // Handle WebSocket client connections
 
-  switch(currentState) {
-    case STATE_SETUP:
-    case STATE_DISCOVERABLE:
-    case STATE_PAIRING:
-    case STATE_WIFI_PROVISIONING:
-      break;
-
-    case STATE_WIFI_CONNECTING: {
-      if (WiFi.status() == WL_CONNECTED) {
-        Serial.print(F("\n[WiFi OK] Local IP: ")); Serial.println(WiFi.localIP());
-        setDeviceState(STATE_ONLINE);
-      } else if (millis() - wifiConnectStartTime > WIFI_CONNECT_TIMEOUT_MS) {
-        Serial.println(F("\n[WiFi FAIL] Reconnect timeout. Re-entered SoftAP Provisioning mode."));
-        setDeviceState(STATE_DISCOVERABLE, "WIFI_AUTH_FAILED");
+  // Check physical Flash button for Factory Reset (Hold 3 seconds)
+  if (digitalRead(PIN_BUTTON_RESET) == LOW) {
+    if (!isButtonPressed) {
+      isButtonPressed = true;
+      buttonPressStartTime = millis();
+    } else {
+      if (millis() - buttonPressStartTime >= 3000) {
+        performCompleteFactoryReset();
       }
-      break;
+    }
+  } else {
+    isButtonPressed = false;
+  }
+
+  // State Handler & LED Blink (Active LOW on ESP8266)
+  if (currentState == STATE_PROVISIONING_AP) {
+    if (millis() - lastLedToggle >= 500) {
+      lastLedToggle = millis();
+      ledState = !ledState;
+      digitalWrite(PIN_LED_INDICATOR, ledState);
+    }
+  } else if (currentState == STATE_WIFI_CONNECTING) {
+    if (millis() - lastLedToggle >= 150) {
+      lastLedToggle = millis();
+      ledState = !ledState;
+      digitalWrite(PIN_LED_INDICATOR, ledState);
     }
 
-    case STATE_ONLINE: {
-      unsigned long now = millis();
-      if (WiFi.status() != WL_CONNECTED) {
-        setDeviceState(STATE_WIFI_CONNECTING);
-        wifiConnectStartTime = millis();
-        break;
-      }
+    if (WiFi.status() == WL_CONNECTED) {
+      currentState = STATE_CONNECTED_ONLINE;
+      digitalWrite(PIN_LED_INDICATOR, LOW); // Solid ON
+      Serial.print(F("✅ [WiFi] Connected! IP: ")); Serial.println(WiFi.localIP());
 
-      if (now - lastTelemetryMs >= 3000) {
-        lastTelemetryMs = now;
-        
-        float humidity = dht.readHumidity();
-        float temperature = dht.readTemperature();
-        int soilRaw = analogRead(PIN_SOIL_MOISTURE);
-        float soilMoisturePercent = map(soilRaw, 1023, 350, 0, 100);
-        soilMoisturePercent = constrain(soilMoisturePercent, 0, 100);
+      sendDirectHttpHeartbeat();
+      broadcastWsStatus();
 
-        if (isnan(humidity)) humidity = 60.0;
-        if (isnan(temperature)) temperature = 28.0;
+      mqttClient.setServer(BACKEND_GATEWAY_HOST, MQTT_PORT);
+      mqttClient.setCallback(mqttCallback);
+    } else if (millis() - wifiConnectStartTime >= WIFI_CONNECT_TIMEOUT_MS) {
+      currentState = STATE_PROVISIONING_AP;
+      Serial.println(F("❌ [WiFi] Connection timed out."));
+      broadcastWsStatus();
+    }
+  }
 
-        StaticJsonDocument<512> doc;
-        doc["deviceId"] = deviceSerial;
-        doc["authCode"] = authCode;
-        doc["zoneId"] = zoneId;
-        doc["soilMoisture"] = soilMoisturePercent;
-        doc["airTemperature"] = temperature;
-        doc["humidity"] = humidity;
-        doc["pumpRunning"] = (digitalRead(PIN_RELAY_PUMP) == HIGH);
-        doc["rssi"] = WiFi.RSSI();
+  // When Online: Handle MQTT, Telemetry & WebSockets
+  if (currentState == STATE_CONNECTED_ONLINE) {
+    digitalWrite(PIN_LED_INDICATOR, LOW); // Solid ON
 
-        String jsonPayload;
-        serializeJson(doc, jsonPayload);
-        Serial.print(F("🌾 [TELEMETRY] ")); Serial.println(jsonPayload);
-      }
-      break;
+    if (WiFi.status() != WL_CONNECTED) {
+      currentState = STATE_WIFI_CONNECTING;
+      wifiConnectStartTime = millis();
+      return;
     }
 
-    default:
-      break;
+    if (!mqttClient.connected()) {
+      reconnectMQTT();
+    }
+    mqttClient.loop();
+
+    if (pumpState && (millis() - pumpStartTime >= pumpDurationMs)) {
+      pumpState = false;
+      digitalWrite(PIN_RELAY_PUMP, LOW);
+      Serial.println(F("⏱️ [RELAY] Pump Timer Expired"));
+      broadcastWsStatus();
+    }
+
+    if (millis() - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
+      lastTelemetryTime = millis();
+      broadcastWsStatus();
+
+      int rawSoil = analogRead(PIN_SOIL_MOISTURE);
+      float soilPercent = constrain(map(rawSoil, 1023, 300, 0, 100), 0.0, 100.0);
+      float t = dht.readTemperature();
+      float h = dht.readHumidity();
+
+      StaticJsonDocument<384> doc;
+      doc["deviceId"] = deviceSerial;
+      doc["authCode"] = authCode;
+      doc["soilMoisture"] = round(soilPercent * 10.0) / 10.0;
+      doc["airTemperature"] = isnan(t) ? 28.0 : (round(t * 10.0) / 10.0);
+      doc["humidity"] = isnan(h) ? 60.0 : (round(h * 10.0) / 10.0);
+      doc["pumpRunning"] = pumpState;
+      doc["rssi"] = WiFi.RSSI();
+
+      char buf[384];
+      serializeJson(doc, buf);
+      if (mqttClient.connected()) {
+        mqttClient.publish(TOPIC_TELEMETRY, buf);
+      }
+    }
   }
 }
