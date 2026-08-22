@@ -1,7 +1,7 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════════════
- *  AETHERCROP SPATIAL IOT PLATFORM — ESP32 FIRMWARE NODE
- *  (COMPLETE FACTORY RESET + STABLE BLE GATT + NVS WIFI PROVISIONING + SOFTAP + MQTT)
+ *  AETHERCROP SPATIAL IOT PLATFORM — ESP32 FIRMWARE NODE v3.0
+ *  (CAPTIVE SOFTAP + BLE GATT + NVS PROVISIONING + WIFI SCAN + MQTT + DIRECT HTTP)
  * ═══════════════════════════════════════════════════════════════════════════════════
  *  Hardware Target : ESP32 DevKit V1 / WROOM-32 / NodeMCU-32S / ESP32-WROVER
  * ═══════════════════════════════════════════════════════════════════════════════════
@@ -9,10 +9,12 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include <DHT.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -20,7 +22,7 @@
 #include <BLE2902.h>
 #include <nvs_flash.h>
 
-// ─── BLE UUID DEFINITIONS ───
+// ─── BLE UUID DEFINITIONS (Standard 16-bit & 128-bit compatible) ───
 #define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
 #define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
 
@@ -33,15 +35,18 @@
 #define STATUS_LED_PIN     2     // Built-in LED (GPIO 2)
 #define PIN_FACTORY_RESET  0     // Boot/Flash Button (Hold 3s to Factory Reset)
 
-// ─── MQTT CONFIGURATION ───
-const char* MQTT_SERVER     = "192.168.1.100";
-const int   MQTT_PORT       = 1883;
-const char* TOPIC_TELEMETRY = "aether/farm-alpha/zone-1/telemetry";
-const char* TOPIC_COMMANDS  = "aether/farm-alpha/zone-1/commands";
+// ─── SERVER & GATEWAY CONFIGURATION ───
+const byte DNS_PORT = 53;
+const char* BACKEND_GATEWAY_HOST = "192.168.1.100"; // Local gateway or cloud IP
+const int   BACKEND_GATEWAY_PORT = 3000;
+const int   MQTT_PORT            = 1883;
+const char* TOPIC_TELEMETRY      = "aether/farm-alpha/zone-1/telemetry";
+const char* TOPIC_COMMANDS       = "aether/farm-alpha/zone-1/commands";
 
 // ─── GLOBAL INSTANCES ───
 Preferences preferences;
 WebServer server(80);
+DNSServer dnsServer;
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -91,6 +96,7 @@ void IRAM_ATTR flowPulseISR() {
 void connectToWiFi();
 void sendBleStatusNotification(const String& statusStr, const String& ipStr = "");
 void performCompleteFactoryReset();
+void sendDirectHttpHeartbeat();
 
 // ─── COMPLETE FACTORY RESET (CLEARS NVS FLASH + WIFI CREDENTIALS) ───
 void performCompleteFactoryReset() {
@@ -149,7 +155,6 @@ class BleCharacteristicCallbacks: public BLECharacteristicCallbacks {
         Serial.print(F("📥 [BLE RX]: "));
         Serial.println(rxValue.c_str());
 
-        // Check for Factory Reset command
         if (rxValue == "FACTORY_RESET" || rxValue == "RESET") {
           performCompleteFactoryReset();
           return;
@@ -220,13 +225,50 @@ void sendBleStatusNotification(const String& statusStr, const String& ipStr) {
   }
 }
 
+// ─── DIRECT HTTP HEARTBEAT TO CLOUD / LOCAL GATEWAY ───
+void sendDirectHttpHeartbeat() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String url = "http://" + String(BACKEND_GATEWAY_HOST) + ":" + String(BACKEND_GATEWAY_PORT) + "/api/telemetry";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(2500);
+
+  int rawSoil = analogRead(SOIL_MOISTURE_PIN);
+  float soilPercent = constrain(map(rawSoil, 3200, 1200, 0, 100), 0.0, 100.0);
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  StaticJsonDocument<384> doc;
+  doc["deviceId"] = deviceSerial;
+  doc["serialNumber"] = deviceSerial;
+  doc["authCode"] = authCode;
+  doc["status"] = "ONLINE";
+  doc["ipAddress"] = WiFi.localIP().toString();
+  doc["wifiSsid"] = wifiSsid;
+  doc["soilMoisture"] = round(soilPercent * 10.0) / 10.0;
+  doc["airTemperature"] = isnan(t) ? 28.0 : (round(t * 10.0) / 10.0);
+  doc["humidity"] = isnan(h) ? 60.0 : (round(h * 10.0) / 10.0);
+  doc["pumpRunning"] = pumpState;
+  doc["rssi"] = WiFi.RSSI();
+
+  String payload;
+  serializeJson(doc, payload);
+  int httpCode = http.POST(payload);
+  if (httpCode > 0) {
+    Serial.printf("📡 [HTTP POST Telemetry] Sent to gateway (Code: %d)\n", httpCode);
+  }
+  http.end();
+}
+
 // ─── SETUP FUNCTION ───
 void setup() {
   Serial.begin(115200);
   delay(300);
 
   Serial.println(F("\n========================================================"));
-  Serial.println(F(" 🌾 AETHERCROP SPATIAL IOT PLATFORM — ESP32 NODE"));
+  Serial.println(F(" 🌾 AETHERCROP SPATIAL IOT PLATFORM — ESP32 NODE v3.0"));
   Serial.println(F("========================================================"));
 
   pinMode(SOIL_MOISTURE_PIN, INPUT);
@@ -295,10 +337,12 @@ void setup() {
   BLEDevice::startAdvertising();
   Serial.print(F("📱 [BLE] BLE Advertising as: ")); Serial.println(bleDeviceName);
 
-  // 2. SoftAP WebServer Setup (192.168.4.1)
+  // 2. SoftAP WebServer Setup (192.168.4.1) with Captive Portal DNS
   String apName = "AGRI-SETUP-" + lastFour;
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apName.c_str(), "agrifarm2026");
+
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
   if (MDNS.begin("agriflow-smart-node") || MDNS.begin("aethercrop-node")) {
     MDNS.addService("http", "tcp", 80);
@@ -318,6 +362,8 @@ void setup() {
   server.on("/status", HTTP_OPTIONS, handleCors);
   server.on("/api/wifi/status", HTTP_OPTIONS, handleCors);
   server.on("/api/wifi/credentials", HTTP_OPTIONS, handleCors);
+  server.on("/api/wifi/scan", HTTP_OPTIONS, handleCors);
+  server.on("/api/pump", HTTP_OPTIONS, handleCors);
   server.on("/api/reset", HTTP_OPTIONS, handleCors);
   server.on("/reset", HTTP_OPTIONS, handleCors);
 
@@ -330,8 +376,13 @@ void setup() {
     doc["nvsStored"] = (wifiSsid.length() > 0);
     doc["ssid"] = wifiSsid;
     doc["boardFamily"] = "ESP32";
-    doc["firmwareVersion"] = "2.4.0-PROVISION";
+    doc["firmwareVersion"] = "3.0.0-PROVISION";
     doc["authCode"] = authCode;
+
+    int rawSoil = analogRead(SOIL_MOISTURE_PIN);
+    float soilPercent = constrain(map(rawSoil, 3200, 1200, 0, 100), 0.0, 100.0);
+    doc["soilMoisture"] = round(soilPercent * 10.0) / 10.0;
+    doc["pumpRunning"] = pumpState;
 
     if (WiFi.status() == WL_CONNECTED) {
       doc["status"] = "CONNECTED";
@@ -359,6 +410,46 @@ void setup() {
   server.on("/ping", HTTP_GET, handleStatus);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/api/wifi/status", HTTP_GET, handleStatus);
+
+  // Return available Wi-Fi networks in the air
+  server.on("/api/wifi/scan", HTTP_GET, []() {
+    int n = WiFi.scanNetworks();
+    StaticJsonDocument<1024> doc;
+    JsonArray networks = doc.createNestedArray("networks");
+    for (int i = 0; i < n; ++i) {
+      JsonObject net = networks.createNestedObject();
+      net["ssid"] = WiFi.SSID(i);
+      net["rssi"] = WiFi.RSSI(i);
+      net["encryption"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "OPEN" : "WPA2";
+    }
+    String res;
+    serializeJson(doc, res);
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", res);
+  });
+
+  // Direct Pump Test Endpoint
+  server.on("/api/pump", HTTP_POST, []() {
+    StaticJsonDocument<256> doc;
+    if (server.hasArg("plain")) {
+      deserializeJson(doc, server.arg("plain"));
+    }
+    const char* action = doc["action"] | "TOGGLE";
+    int durSec = doc["durationSec"] | 5;
+
+    if (String(action) == "ON" || (!pumpState && String(action) == "TOGGLE")) {
+      pumpState = true;
+      pumpStartTime = millis();
+      pumpDurationMs = durSec * 1000UL;
+      digitalWrite(RELAY_PUMP_PIN, HIGH);
+    } else {
+      pumpState = false;
+      digitalWrite(RELAY_PUMP_PIN, LOW);
+    }
+
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", pumpState ? "{\"pump\":\"ON\"}" : "{\"pump\":\"OFF\"}");
+  });
 
   server.on("/api/wifi/credentials", HTTP_POST, []() {
     String s = "";
@@ -461,6 +552,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void loop() {
+  dnsServer.processNextRequest();
   server.handleClient();
 
   // Check physical BOOT button for Factory Reset (Hold 3 seconds)
@@ -508,8 +600,9 @@ void loop() {
       Serial.print(F("✅ [WiFi] Connected! IP: ")); Serial.println(WiFi.localIP());
 
       sendBleStatusNotification("CONNECTED", WiFi.localIP().toString());
+      sendDirectHttpHeartbeat();
 
-      mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+      mqttClient.setServer(BACKEND_GATEWAY_HOST, MQTT_PORT);
       mqttClient.setCallback(mqttCallback);
     } else if (millis() - wifiConnectStartTime >= WIFI_CONNECT_TIMEOUT_MS) {
       currentState = STATE_PROVISIONING_AP;
