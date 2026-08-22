@@ -1,7 +1,7 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════════════
  *  AETHERCROP SPATIAL IOT PLATFORM — ESP32 FIRMWARE NODE
- *  (STABLE BLE GATT + WEB SERIAL + NVS WIFI PROVISIONING + SOFTAP + MQTT)
+ *  (COMPLETE FACTORY RESET + STABLE BLE GATT + NVS WIFI PROVISIONING + SOFTAP + MQTT)
  * ═══════════════════════════════════════════════════════════════════════════════════
  *  Hardware Target : ESP32 DevKit V1 / WROOM-32 / NodeMCU-32S / ESP32-WROVER
  * ═══════════════════════════════════════════════════════════════════════════════════
@@ -18,19 +18,20 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <nvs_flash.h>
 
-// ─── BLE UUID DEFINITIONS (Standard 16-bit & 128-bit compatible) ───
+// ─── BLE UUID DEFINITIONS ───
 #define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
 #define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 // ─── PIN DEFINITIONS (ESP32) ───
 #define SOIL_MOISTURE_PIN  34    // ADC1 Channel 6 (Analog 0-4095)
 #define DHT_PIN            4     // GPIO 4 for DHT11 / DHT22 Data
-#define DHT_TYPE           DHT11 // Change to DHT22 if using DHT22
+#define DHT_TYPE           DHT11 // DHT11 or DHT22
 #define FLOW_SENSOR_PIN    18    // Interrupt Pin for Pulse Counting
 #define RELAY_PUMP_PIN     26    // GPIO 26 for Pump Relay (Active HIGH)
 #define STATUS_LED_PIN     2     // Built-in LED (GPIO 2)
-#define PIN_FACTORY_RESET  0     // Boot/Flash Button (Hold 5s to clear NVS)
+#define PIN_FACTORY_RESET  0     // Boot/Flash Button (Hold 3s to Factory Reset)
 
 // ─── MQTT CONFIGURATION ───
 const char* MQTT_SERVER     = "192.168.1.100";
@@ -80,23 +81,61 @@ bool ledState = LOW;
 unsigned long wifiConnectStartTime = 0;
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 25000;
 
+unsigned long buttonPressStartTime = 0;
+bool isButtonPressed = false;
+
 void IRAM_ATTR flowPulseISR() {
   pulseCount++;
 }
 
 void connectToWiFi();
 void sendBleStatusNotification(const String& statusStr, const String& ipStr = "");
+void performCompleteFactoryReset();
+
+// ─── COMPLETE FACTORY RESET (CLEARS NVS FLASH + WIFI CREDENTIALS) ───
+void performCompleteFactoryReset() {
+  Serial.println(F("\n⚠️ [FACTORY RESET] Erasing all NVS Flash & Stored Wi-Fi Credentials..."));
+
+  // 1. Rapid LED blink notification (5 blinks)
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    delay(100);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    delay(100);
+  }
+
+  // 2. Clear Preferences NVS Namespace
+  preferences.begin("aether-wifi", false);
+  preferences.clear();
+  preferences.end();
+
+  // 3. Clear ESP32 Wi-Fi hardware credentials
+  WiFi.disconnect(true, true);
+
+  // 4. Erase and reinitialize NVS flash partition
+  nvs_flash_erase();
+  nvs_flash_init();
+
+  wifiSsid = "";
+  wifiPass = "";
+
+  Serial.println(F("✅ [FACTORY RESET] All credentials erased completely!"));
+  Serial.println(F("🔄 [REBOOTING] Restarting ESP32 in clean SoftAP + BLE mode...\n"));
+
+  delay(400);
+  ESP.restart();
+}
 
 // ─── BLE SERVER CALLBACKS ───
 class BleServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       bleClientConnected = true;
-      Serial.println(F("\n📱 [BLE GATT] Web/App Client Connected!"));
+      Serial.println(F("\n📱 [BLE GATT] Wireless Client Connected!"));
     }
 
     void onDisconnect(BLEServer* pServer) {
       bleClientConnected = false;
-      Serial.println(F("\n📱 [BLE GATT] Client Disconnected. Restarting Advertising..."));
+      Serial.println(F("\n📱 [BLE GATT] Client Disconnected. Resuming BLE Advertising..."));
       delay(200);
       pServer->getAdvertising()->start();
     }
@@ -110,6 +149,12 @@ class BleCharacteristicCallbacks: public BLECharacteristicCallbacks {
         Serial.print(F("📥 [BLE RX]: "));
         Serial.println(rxValue.c_str());
 
+        // Check for Factory Reset command
+        if (rxValue == "FACTORY_RESET" || rxValue == "RESET") {
+          performCompleteFactoryReset();
+          return;
+        }
+
         StaticJsonDocument<512> doc;
         DeserializationError err = deserializeJson(doc, rxValue.c_str());
 
@@ -118,11 +163,14 @@ class BleCharacteristicCallbacks: public BLECharacteristicCallbacks {
         String a = "";
 
         if (!err) {
+          if (doc.containsKey("cmd") && doc["cmd"] == "FACTORY_RESET") {
+            performCompleteFactoryReset();
+            return;
+          }
           s = doc["ssid"] | doc["wifiSsid"] | "";
           p = doc["password"] | doc["wifiPass"] | "";
           a = doc["authCode"] | "";
         } else {
-          // Parse urlencoded or colon format (ssid:password)
           String rawStr = String(rxValue.c_str());
           int sep = rawStr.indexOf(':');
           if (sep == -1) sep = rawStr.indexOf(',');
@@ -137,16 +185,18 @@ class BleCharacteristicCallbacks: public BLECharacteristicCallbacks {
           wifiPass = p;
           if (a.length() > 0) authCode = a;
 
+          preferences.begin("aether-wifi", false);
           preferences.putString("ssid", wifiSsid);
           preferences.putString("pass", wifiPass);
           if (a.length() > 0) preferences.putString("auth", authCode);
+          preferences.end();
 
           Serial.println(F("💾 [NVS] Wi-Fi credentials saved to NVS flash!"));
           Serial.print(F("💾 SSID: ")); Serial.println(wifiSsid);
 
           sendBleStatusNotification("NVS_SAVED", WiFi.softAPIP().toString());
 
-          delay(400);
+          delay(300);
           currentState = STATE_WIFI_CONNECTING;
           connectToWiFi();
         }
@@ -167,32 +217,6 @@ void sendBleStatusNotification(const String& statusStr, const String& ipStr) {
     pBleCharacteristic->setValue(jsonRes.c_str());
     pBleCharacteristic->notify();
     Serial.print(F("📤 [BLE NOTIFY]: ")); Serial.println(jsonRes);
-  }
-}
-
-// ─── PROCESS SERIAL (USB) COMMANDS FOR INSTANT WEB SERIAL PROVISIONING ───
-void processSerialInput() {
-  if (Serial.available() > 0) {
-    String line = Serial.readStringUntil('\n');
-    line.trim();
-
-    if (line == "PING" || line == "GET_STATUS") {
-      Serial.printf("PONG:{\"serial\":\"%s\",\"mac\":\"%s\",\"status\":\"%s\",\"authCode\":\"%s\"}\n",
-        deviceSerial.c_str(), macAddress.c_str(), (WiFi.status() == WL_CONNECTED ? "CONNECTED" : "AP_MODE"), authCode.c_str());
-    } else if (line.startsWith("SET_WIFI:")) {
-      String jsonPayload = line.substring(9);
-      StaticJsonDocument<256> doc;
-      DeserializationError err = deserializeJson(doc, jsonPayload);
-      if (!err) {
-        wifiSsid = (const char*)doc["ssid"];
-        wifiPass = (const char*)doc["password"];
-        preferences.putString("ssid", wifiSsid);
-        preferences.putString("pass", wifiPass);
-        Serial.println(F("OK:NVS_STORED_CONNECTING"));
-        currentState = STATE_WIFI_CONNECTING;
-        connectToWiFi();
-      }
-    }
   }
 }
 
@@ -227,14 +251,23 @@ void setup() {
   Serial.print(F("📌 Node Serial: ")); Serial.println(deviceSerial);
   Serial.print(F("📌 MAC Address: ")); Serial.println(macAddress);
 
+  // Check if Factory Reset button held at boot
+  if (digitalRead(PIN_FACTORY_RESET) == LOW) {
+    delay(500);
+    if (digitalRead(PIN_FACTORY_RESET) == LOW) {
+      performCompleteFactoryReset();
+    }
+  }
+
   // Read stored Wi-Fi credentials from NVS Flash
   preferences.begin("aether-wifi", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPass = preferences.getString("pass", "");
   authCode = preferences.getString("auth", "ATH-8F92-4C10-99E4");
+  preferences.end();
 
   // 1. Initialize BLE Stack with High TX Power & Stable Advertising
-  String bleDeviceName = "AGRI-" + lastFour;
+  String bleDeviceName = "AGRI-ESP32-" + lastFour;
   BLEDevice::init(bleDeviceName.c_str());
   BLEDevice::setPower(ESP_PWR_LVL_P9);
 
@@ -284,12 +317,8 @@ void setup() {
   server.on("/ping", HTTP_OPTIONS, handleCors);
   server.on("/status", HTTP_OPTIONS, handleCors);
   server.on("/api/wifi/status", HTTP_OPTIONS, handleCors);
-  server.on("/device-info", HTTP_OPTIONS, handleCors);
-  server.on("/setup", HTTP_OPTIONS, handleCors);
   server.on("/api/wifi/credentials", HTTP_OPTIONS, handleCors);
-  server.on("/wifi-scan", HTTP_OPTIONS, handleCors);
-  server.on("/api/wifi/scan", HTTP_OPTIONS, handleCors);
-  server.on("/claim", HTTP_OPTIONS, handleCors);
+  server.on("/api/reset", HTTP_OPTIONS, handleCors);
   server.on("/reset", HTTP_OPTIONS, handleCors);
 
   auto handleStatus = []() {
@@ -301,7 +330,7 @@ void setup() {
     doc["nvsStored"] = (wifiSsid.length() > 0);
     doc["ssid"] = wifiSsid;
     doc["boardFamily"] = "ESP32";
-    doc["firmwareVersion"] = "2.3.0-PROVISION";
+    doc["firmwareVersion"] = "2.4.0-PROVISION";
     doc["authCode"] = authCode;
 
     if (WiFi.status() == WL_CONNECTED) {
@@ -353,9 +382,11 @@ void setup() {
       wifiPass = p;
       if (a.length() > 0) authCode = a;
 
+      preferences.begin("aether-wifi", false);
       preferences.putString("ssid", wifiSsid);
       preferences.putString("pass", wifiPass);
       if (a.length() > 0) preferences.putString("auth", authCode);
+      preferences.end();
 
       server.sendHeader("Access-Control-Allow-Origin", "*");
       server.send(200, "application/json", "{\"success\":true,\"message\":\"NVS Saved. Connecting to Wi-Fi...\"}");
@@ -369,10 +400,22 @@ void setup() {
     server.send(400, "application/json", "{\"success\":false,\"message\":\"SSID required\"}");
   });
 
+  // REST API Endpoint to trigger Complete Factory Reset
+  auto handleReset = []() {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", "{\"success\":true,\"message\":\"Factory reset initiated. Erasing NVS and rebooting...\"}");
+    delay(500);
+    performCompleteFactoryReset();
+  };
+
+  server.on("/api/reset", HTTP_POST, handleReset);
+  server.on("/reset", HTTP_POST, handleReset);
+  server.on("/reset", HTTP_GET, handleReset);
+
   server.begin();
   Serial.print(F("📶 [SoftAP] Running on Port 80: ")); Serial.println(apName);
 
-  if (digitalRead(PIN_FACTORY_RESET) == LOW || wifiSsid.length() == 0) {
+  if (wifiSsid.length() == 0) {
     currentState = STATE_PROVISIONING_AP;
   } else {
     connectToWiFi();
@@ -418,8 +461,21 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void loop() {
-  processSerialInput();
   server.handleClient();
+
+  // Check physical BOOT button for Factory Reset (Hold 3 seconds)
+  if (digitalRead(PIN_FACTORY_RESET) == LOW) {
+    if (!isButtonPressed) {
+      isButtonPressed = true;
+      buttonPressStartTime = millis();
+    } else {
+      if (millis() - buttonPressStartTime >= 3000) {
+        performCompleteFactoryReset();
+      }
+    }
+  } else {
+    isButtonPressed = false;
+  }
 
   // Handle BLE Disconnect Re-advertising
   if (!bleClientConnected && oldBleClientConnected) {
@@ -432,8 +488,20 @@ void loop() {
     oldBleClientConnected = bleClientConnected;
   }
 
-  // Wi-Fi Connection State Handler
-  if (currentState == STATE_WIFI_CONNECTING) {
+  // LED blink indicator based on state
+  if (currentState == STATE_PROVISIONING_AP) {
+    if (millis() - lastLedToggle >= 500) {
+      lastLedToggle = millis();
+      ledState = !ledState;
+      digitalWrite(STATUS_LED_PIN, ledState);
+    }
+  } else if (currentState == STATE_WIFI_CONNECTING) {
+    if (millis() - lastLedToggle >= 150) {
+      lastLedToggle = millis();
+      ledState = !ledState;
+      digitalWrite(STATUS_LED_PIN, ledState);
+    }
+
     if (WiFi.status() == WL_CONNECTED) {
       currentState = STATE_CONNECTED_ONLINE;
       digitalWrite(STATUS_LED_PIN, HIGH);
@@ -452,6 +520,8 @@ void loop() {
 
   // When Online: Handle MQTT & Telemetry
   if (currentState == STATE_CONNECTED_ONLINE) {
+    digitalWrite(STATUS_LED_PIN, HIGH);
+
     if (WiFi.status() != WL_CONNECTED) {
       currentState = STATE_WIFI_CONNECTING;
       wifiConnectStartTime = millis();

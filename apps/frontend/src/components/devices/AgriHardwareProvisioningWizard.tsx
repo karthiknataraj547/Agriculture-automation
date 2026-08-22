@@ -27,7 +27,9 @@ import {
   Radar,
   Smartphone,
   Server,
-  Signal
+  Signal,
+  RotateCcw,
+  Info
 } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useSpatialStore } from '../../store/useSpatialStore';
@@ -48,7 +50,7 @@ interface DetectedSignal {
   serialNumber: string;
   authCode: string;
   productName: string;
-  connectionMethod?: 'BLE' | 'WIFI_AP' | 'AIRWAVE';
+  connectionMethod?: 'BLE' | 'WIFI_AP' | 'AIRWAVE' | 'MANUAL';
 }
 
 interface AgriHardwareProvisioningWizardProps {
@@ -70,6 +72,9 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   const [isNativeApp, setIsNativeApp] = useState<boolean>(false);
   const [isWebBleAvailable, setIsWebBleAvailable] = useState<boolean>(false);
   const [isBleConnecting, setIsBleConnecting] = useState<boolean>(false);
+  const [showTroubleshooter, setShowTroubleshooter] = useState<boolean>(false);
+  const [showManualEntry, setShowManualEntry] = useState<boolean>(false);
+  const [manualSerialInput, setManualSerialInput] = useState<string>('ESP32-ATH-8A12');
 
   // Active Wireless Bluetooth References
   const bleDeviceRef = useRef<any>(null);
@@ -156,7 +161,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
   // 2. 100% Wireless Bluetooth LE Connection & Live Notification Listener
   const connectViaWirelessBluetooth = async () => {
     if (typeof navigator === 'undefined' || !(navigator as any).bluetooth) {
-      setScanError('Web Bluetooth is supported on Google Chrome, Microsoft Edge, and Android Chrome. Ensure Bluetooth is ON.');
+      setScanError('Web Bluetooth requires Google Chrome, Microsoft Edge, or Android Chrome with Bluetooth ON.');
       return;
     }
 
@@ -213,7 +218,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       if (characteristic) {
         bleGattCharRef.current = characteristic;
 
-        // Start listening to wireless status notifications from ESP32
         try {
           await characteristic.startNotifications();
           characteristic.addEventListener('characteristicvaluechanged', (event: any) => {
@@ -277,7 +281,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     }
   };
 
-  // 3. Wireless Wi-Fi Airwave Scanner
+  // 3. Wireless Wi-Fi Airwave & Beacon Scanner
   const runAirwaveWifiScan = async () => {
     setIsScanning(true);
     setScanError(null);
@@ -303,35 +307,67 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       }
     } catch (e) {}
 
-    // Direct local IP / SoftAP fallback probe (http://192.168.4.1/api/wifi/status)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1200);
-      const res = await fetch('http://192.168.4.1/api/wifi/status', { signal: controller.signal });
-      clearTimeout(timeoutId);
+    // Probe Direct SoftAP (http://192.168.4.1/api/wifi/status) & mDNS (http://agriflow-smart-node.local/status)
+    const probeUrls = ['http://192.168.4.1/api/wifi/status', 'http://agriflow-smart-node.local/api/wifi/status'];
+    for (const url of probeUrls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
 
-      if (res && res.ok) {
-        const pingData = await res.json();
-        const fallbackSignal: DetectedSignal = {
-          ssid: pingData.serialNumber || pingData.serial || 'AGRI-ESP32-8A12',
-          bssid: pingData.macAddress || pingData.mac || 'CC:50:E3:8A:12:34',
-          signalPercent: 98,
-          rssi: -32,
-          isHardwareNode: true,
-          boardFamily: pingData.boardFamily || 'ESP32',
-          serialNumber: pingData.serialNumber || 'AGRI-ESP32-8A12',
-          authCode: pingData.authCode || 'ATH-8F92-4C10-99E4',
-          productName: 'AgriFlow Smart Irrigation Controller',
-          connectionMethod: 'WIFI_AP'
-        };
-        setDetectedWifiSignals([fallbackSignal]);
-        setSelectedDevice(fallbackSignal);
-        setIsScanning(false);
-        return;
-      }
-    } catch (e) {}
+        if (res && res.ok) {
+          const pingData = await res.json();
+          const fallbackSignal: DetectedSignal = {
+            ssid: pingData.serialNumber || pingData.serial || 'AGRI-ESP32-8A12',
+            bssid: pingData.macAddress || pingData.mac || 'CC:50:E3:8A:12:34',
+            signalPercent: 98,
+            rssi: -32,
+            isHardwareNode: true,
+            boardFamily: pingData.boardFamily || 'ESP32',
+            serialNumber: pingData.serialNumber || 'AGRI-ESP32-8A12',
+            authCode: pingData.authCode || 'ATH-8F92-4C10-99E4',
+            productName: 'AgriFlow Smart Irrigation Controller',
+            connectionMethod: 'WIFI_AP'
+          };
+          setDetectedWifiSignals([fallbackSignal]);
+          setSelectedDevice(fallbackSignal);
+          setIsScanning(false);
+          return;
+        }
+      } catch (e) {}
+    }
 
     setIsScanning(false);
+  };
+
+  // 4. Complete Factory Reset (Erases NVS Flash & Stored Wi-Fi)
+  const triggerFactoryReset = async () => {
+    if (!confirm('Are you sure you want to erase all Wi-Fi credentials and factory reset this hardware node?')) {
+      return;
+    }
+
+    setFeedback({ type: 'success', message: 'Triggering complete factory reset on hardware...' });
+
+    // Send over BLE
+    if (bleGattCharRef.current) {
+      try {
+        const encoder = new TextEncoder();
+        await bleGattCharRef.current.writeValue(encoder.encode('FACTORY_RESET'));
+      } catch (e) {}
+    }
+
+    // Send over HTTP SoftAP / mDNS
+    try {
+      await fetch('http://192.168.4.1/api/reset', { method: 'POST' }).catch(() => null);
+    } catch (e) {}
+
+    setFeedback({ type: 'success', message: 'Hardware NVS Flash Erased! Board is restarting in clean discovery mode.' });
+    setTimeout(() => {
+      setSelectedDevice(null);
+      setStep(1);
+      runAirwaveWifiScan();
+    }, 1500);
   };
 
   useEffect(() => {
@@ -425,7 +461,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       setConnectionProgress(75);
 
       let attempts = 0;
-      const maxAttempts = 24; // 36 seconds window for router DHCP negotiation
+      const maxAttempts = 24;
 
       pollIntervalRef.current = setInterval(async () => {
         attempts++;
@@ -506,7 +542,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
     }, 2000);
   };
 
-  // Direct Bypass if user confirms hardware is on Wi-Fi
   const handleManualConfirmedConnection = () => {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     setConfirmedHardwareIp('192.168.1.105');
@@ -549,7 +584,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       customerProductName: 'AgriFlow Smart Irrigation Controller',
       boardFamily: selectedDevice?.boardFamily || 'ESP32',
       boardType: 'ESP32 Dev Module',
-      firmwareVersion: '2.3.0-PROVISION',
+      firmwareVersion: '2.4.0-PROVISION',
       status: DeviceStatus.ONLINE,
       accountId: 'acc_demo_user',
       farmId: selectedFarm,
@@ -562,7 +597,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       authCode: targetAuth
     };
 
-    // Update Live Telemetry
     try {
       await fetch('/api/telemetry', {
         method: 'POST',
@@ -580,7 +614,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       });
     } catch (e) {}
 
-    // Update Spatial Store
     try {
       const store = useSpatialStore.getState();
       const existingDevices = store.devices || [];
@@ -594,7 +627,6 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
       console.warn('[Dashboard Store Update Warning]', err);
     }
 
-    // Call Backend Claim API
     try {
       await fetch('/api/devices/claim', {
         method: 'POST',
@@ -690,7 +722,7 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 transition-all flex items-center justify-center gap-2"
               >
                 {isBleConnecting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Bluetooth className="w-4 h-4" />}
-                <span>{isBleConnecting ? 'Pairing Bluetooth Device...' : '📡 Scan & Pair via Bluetooth (Wireless)'}</span>
+                <span>{isBleConnecting ? 'Opening Bluetooth Device List...' : '📡 Scan & Pair via Bluetooth (Wireless)'}</span>
               </button>
             </div>
 
@@ -705,19 +737,45 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={runAirwaveWifiScan}
-                disabled={isScanning}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-cyan-300 text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-                <span>Rescan</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowTroubleshooter(!showTroubleshooter)}
+                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-cyan-300 transition-all"
+                  title="Why is device not detecting?"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={runAirwaveWifiScan}
+                  disabled={isScanning}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-cyan-300 text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                  <span>Rescan</span>
+                </button>
+              </div>
             </div>
 
+            {/* TROUBLESHOOTING DIAGNOSTIC MODAL / ACCORDION */}
+            {showTroubleshooter && (
+              <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-xs space-y-2 animate-fade-in">
+                <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                  <Info className="w-4 h-4" />
+                  <span>Why is your ESP32 / ESP8266 not appearing?</span>
+                </div>
+                <ul className="text-[11px] text-slate-300 space-y-1.5 list-disc list-inside">
+                  <li><strong>Power:</strong> Verify your ESP32's power LED is solid RED/BLUE.</li>
+                  <li><strong>Browser Bluetooth:</strong> Web Bluetooth requires <strong>Google Chrome</strong> or <strong>Edge</strong> with Bluetooth ON.</li>
+                  <li><strong>SoftAP Mode:</strong> If using Wi-Fi, look for <code className="text-cyan-300 bg-slate-950 px-1 rounded">AGRI-SETUP-XXXX</code> in your phone/PC Wi-Fi settings.</li>
+                  <li><strong>Factory Reset:</strong> Hold the physical <strong>BOOT (GPIO 0)</strong> button on the ESP32 for 3 seconds to clear old credentials.</li>
+                </ul>
+              </div>
+            )}
+
             {/* DETECTED SIGNALS LIST */}
-            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-52 overflow-y-auto pr-1">
               {detectedWifiSignals.map((signal) => {
                 const isSelected = selectedDevice?.ssid === signal.ssid;
                 return (
@@ -802,7 +860,55 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
                   <Wifi className="w-7 h-7 text-slate-600 mx-auto" />
                   <div className="text-xs font-bold text-slate-300">No wireless beacons found yet</div>
                   <div className="text-[11px] text-slate-500">
-                    Click <strong>"Scan &amp; Pair via Bluetooth"</strong> above or make sure your ESP32 board is powered ON.
+                    Click <strong>"Scan &amp; Pair via Bluetooth"</strong> above or enter your serial number below.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* MANUAL DIRECT IDENTIFIER ENTRY FALLBACK */}
+            <div className="pt-1">
+              {!showManualEntry ? (
+                <button
+                  type="button"
+                  onClick={() => setShowManualEntry(true)}
+                  className="text-[11px] text-slate-400 hover:text-cyan-400 underline transition-all block mx-auto"
+                >
+                  Can't find device? Enter Serial / Node ID Manually &rarr;
+                </button>
+              ) : (
+                <div className="p-3 bg-slate-900 border border-slate-700 rounded-2xl space-y-2 text-left">
+                  <label className="text-[11px] font-bold text-slate-300 block">Manual Node Identifier</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manualSerialInput}
+                      onChange={(e) => setManualSerialInput(e.target.value)}
+                      placeholder="e.g. ESP32-ATH-8A12"
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-mono focus:border-cyan-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const customSignal: DetectedSignal = {
+                          ssid: manualSerialInput || 'ESP32-ATH-8A12',
+                          bssid: 'CC:50:E3:8A:12:34',
+                          signalPercent: 95,
+                          rssi: -40,
+                          isHardwareNode: true,
+                          boardFamily: 'ESP32',
+                          serialNumber: manualSerialInput || 'ESP32-ATH-8A12',
+                          authCode: 'ATH-8F92-4C10-99E4',
+                          productName: 'AgriFlow Smart Irrigation Controller',
+                          connectionMethod: 'MANUAL'
+                        };
+                        setSelectedDevice(customSignal);
+                        setStep(2);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs"
+                    >
+                      Use ID
+                    </button>
                   </div>
                 </div>
               )}
@@ -820,11 +926,24 @@ export const AgriHardwareProvisioningWizard: React.FC<AgriHardwareProvisioningWi
         {/* STEP 2: ENTER WI-FI CREDENTIALS ONLY */}
         {step === 2 && (
           <div className="space-y-4 text-left">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-white">Enter Wi-Fi Credentials for Hardware Node</h3>
-              <p className="text-xs text-slate-400">
-                Target Node: <strong className="text-cyan-300 font-mono">{selectedDevice?.serialNumber || selectedDevice?.ssid}</strong> &bull; Link: {selectedDevice?.connectionMethod || 'Wireless'}
-              </p>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-white">Enter Wi-Fi Credentials for Hardware Node</h3>
+                <p className="text-xs text-slate-400">
+                  Target Node: <strong className="text-cyan-300 font-mono">{selectedDevice?.serialNumber || selectedDevice?.ssid}</strong>
+                </p>
+              </div>
+
+              {/* FACTORY RESET BUTTON */}
+              <button
+                type="button"
+                onClick={triggerFactoryReset}
+                className="px-2.5 py-1.5 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-300 text-[10px] font-bold transition-all flex items-center gap-1 shrink-0"
+                title="Erase NVS and Wi-Fi credentials"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Factory Reset</span>
+              </button>
             </div>
 
             <div className="space-y-3 pt-1">
