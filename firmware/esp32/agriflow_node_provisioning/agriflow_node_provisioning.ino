@@ -26,45 +26,13 @@
 #include <ArduinoJson.h>
 #include <DHT.h>
 
-// ─── CROSS-PLATFORM SAFE GPIO PIN DEFINITIONS ───
-#ifndef D0
-  #define D0 16
-#endif
-#ifndef D1
-  #define D1 5
-#endif
-#ifndef D2
-  #define D2 4
-#endif
-#ifndef D3
-  #define D3 0
-#endif
-#ifndef D4
-  #define D4 2
-#endif
-#ifndef D5
-  #define D5 14
-#endif
-#ifndef D6
-  #define D6 12
-#endif
-#ifndef D7
-  #define D7 13
-#endif
-#ifndef D8
-  #define D8 15
-#endif
-#ifndef A0
-  #define A0 0
-#endif
-
-// Direct Hardware GPIO Pin Assignment (Standard Integers)
-#define PIN_LED_INDICATOR  2    // Built-in Status LED (GPIO 2 / D4)
-#define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0 / D3)
-#define PIN_SOIL_MOISTURE  A0   // Analog Soil Moisture Probe (A0)
-#define PIN_DHT_DATA       4    // Digital Air Temp & Humidity (GPIO 4 / D2)
-#define PIN_RELAY_PUMP     5    // Water Pump Relay (GPIO 5 / D1 - Active HIGH)
-#define PIN_FLOW_RATE      14   // Pulse Water Flow Sensor (GPIO 14 / D5)
+// ─── HARDWARE GPIO PIN MAPPING (RAW GPIO INTEGERS - ZERO DEPENDENCIES ON D2/D3) ───
+#define PIN_LED_INDICATOR  2    // Built-in Status LED (GPIO 2)
+#define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0)
+#define PIN_SOIL_MOISTURE  0    // Analog Soil Moisture Probe (A0)
+#define PIN_DHT_DATA       4    // Digital Air Temp & Humidity (GPIO 4)
+#define PIN_RELAY_PUMP     5    // Water Pump Relay (GPIO 5 - Active HIGH)
+#define PIN_FLOW_RATE      14   // Pulse Water Flow Sensor (GPIO 14)
 #define DHTTYPE            DHT11
 
 // ─── GLOBAL OBJECTS & STATE ───
@@ -150,7 +118,7 @@ void setupProvisioningMode() {
     delay(5);
   }
 
-  Serial.println(F("[SETUP] Wi-Fi Config Saved! Restarting..."));
+  Serial.println(F("[SETUP] Wi-Fi Config Saved! Restarting in 1s..."));
   digitalWrite(PIN_LED_INDICATOR, HIGH);
   delay(1000);
   ESP.restart();
