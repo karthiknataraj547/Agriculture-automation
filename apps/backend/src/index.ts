@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import { WebSocketServer, WebSocket as WsClient } from 'ws';
 import cors from 'cors';
 import { TelemetryService } from './services/telemetry.service';
 import { RulesEngine } from './services/rules.engine';
@@ -20,6 +21,83 @@ const io = new SocketIOServer(server, {
     origin: '*',
     methods: ['GET', 'POST']
   }
+});
+
+// Dedicated Native WebSocket Server for Hardware & Web Browser Direct Links
+const rawWss = new WebSocketServer({ server, path: '/ws/iot' });
+const connectedHardwareWs = new Map<string, WsClient>();
+
+rawWss.on('connection', (ws: WsClient, req) => {
+  console.log(`[Raw WebSocket] IoT Client Connected from ${req.socket.remoteAddress}`);
+
+  ws.send(JSON.stringify({
+    type: 'CONNECTION_ACK',
+    gateway: 'AetherCrop IoT WebSocket Gateway',
+    timestamp: new Date().toISOString()
+  }));
+
+  ws.on('message', (message: string) => {
+    try {
+      const data = JSON.parse(message.toString());
+      console.log(`[Raw WebSocket RX]:`, data);
+
+      if (data.type === 'REGISTER' || data.type === 'IDENTIFY') {
+        const id = data.deviceId || data.serialNumber || 'ESP32-NODE';
+        connectedHardwareWs.set(id, ws);
+        ws.send(JSON.stringify({ type: 'REGISTER_OK', deviceId: id }));
+      } else if (data.type === 'TELEMETRY' || data.soilMoisture !== undefined) {
+        const reading: TelemetryReading = {
+          deviceId: data.deviceId || 'node-01',
+          farmId: data.farmId || 'farm-alpha',
+          zoneId: data.zoneId || 'zone-1',
+          timestamp: new Date().toISOString(),
+          soilMoisture: data.soilMoisture !== undefined ? data.soilMoisture : 50,
+          soilTemperature: 24.5,
+          airTemperature: data.airTemperature !== undefined ? data.airTemperature : 28,
+          humidity: data.humidity !== undefined ? data.humidity : 60,
+          ec: 1.2,
+          ph: 6.8,
+          waterFlowRate: data.waterFlowRate !== undefined ? data.waterFlowRate : 0,
+          waterPressure: 45,
+          tankLevelPercent: 88,
+          nitrogen: 45,
+          phosphorus: 22,
+          potassium: 180,
+          rainRate: 0,
+          windSpeed: 8.5,
+          windDirection: 180,
+          solarIrradiance: 750,
+          uvIndex: 5,
+          leafWetness: 12,
+          solarVoltage: 5.2,
+          batteryLevelPercent: data.batteryLevel !== undefined ? data.batteryLevel : 98,
+          signalRssi: data.rssi !== undefined ? data.rssi : -45
+        };
+        TelemetryService.getInstance().recordReading(reading);
+        io.emit('telemetry:stream', reading);
+      } else if (data.type === 'PUMP_COMMAND') {
+        // Relay to all connected hardware or specific device
+        rawWss.clients.forEach((client) => {
+          if (client !== ws && client.readyState === WsClient.OPEN) {
+            client.send(JSON.stringify(data));
+          }
+        });
+      } else if (data.type === 'SET_WIFI') {
+        // Broadcast to target device
+        rawWss.clients.forEach((client) => {
+          if (client !== ws && client.readyState === WsClient.OPEN) {
+            client.send(JSON.stringify(data));
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('[Raw WebSocket Error Parsing Message]', e);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log(`[Raw WebSocket] IoT Client Disconnected`);
+  });
 });
 
 app.use(cors());
