@@ -2,33 +2,29 @@
  * Commercial Smart Agriculture Node Firmware (Provisioning + Real-Time Telemetry)
  * Product: AgriFlow Smart Irrigation Controller
  * Internal SKU: ESP32-IRRIGATION-V1
- * Microcontroller: ESP32 (Xtensa LX6 ESP32)
+ * Microcontroller: ESP8266 (Tensilica L106 NodeMCU)
  * Version: v1.4.2
  */
 
-#include <WiFi.h>
-#include <WebServer.h>
-#include <NimBLEDevice.h>
-#include <Preferences.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <EEPROM.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
-// ─── HARDWARE GPIO PIN MAPPING (ESP32) ───
+// ─── HARDWARE GPIO PIN MAPPING (ESP8266) ───
 #define PIN_LED_INDICATOR  2    // Onboard Status LED (Blinks rapidly in Setup Mode)
 #define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0 - hold for 3s to reset setup)
-#define PIN_SOIL_MOISTURE  34  // Analog Soil Moisture Probe
-#define PIN_DHT_DATA       4   // Digital Air Temp & Humidity
-#define PIN_RELAY_PUMP     26   // Water Pump Relay (Active HIGH)
-#define PIN_FLOW_RATE      27   // Pulse Water Flow Sensor
+#define PIN_SOIL_MOISTURE  A0  // Analog Soil Moisture Probe
+#define PIN_DHT_DATA       D2   // Digital Air Temp & Humidity
+#define PIN_RELAY_PUMP     D3   // Water Pump Relay (Active LOW)
+#define PIN_FLOW_RATE      D5   // Pulse Water Flow Sensor
 #define DHTTYPE            DHT11
 
-#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
-#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 // ─── GLOBAL OBJECTS & STATE ───
-Preferences preferences;
-WebServer server(80);
+ESP8266WebServer server(80);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
@@ -59,18 +55,18 @@ void setup() {
   dht.begin();
   
   macAddress = WiFi.macAddress();
-  deviceSerial = "AGRI-ESP32-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
+  deviceSerial = "AGRI-ESP8266-" + macAddress.substring(12, 14) + macAddress.substring(15, 17);
   deviceSerial.toUpperCase();
 
   Serial.println("\n==========================================");
-  Serial.println(" AgriFlow Smart Irrigation Controller (ESP32)");
+  Serial.println(" AgriFlow Smart Irrigation Controller (ESP8266)");
   Serial.println(" Serial Number: " + deviceSerial);
   Serial.println(" MAC Address:   " + macAddress);
   Serial.println("==========================================");
 
-  preferences.begin("agri-node", false);
-  wifiSsid = preferences.getString("ssid", "");
-  wifiPass = preferences.getString("pass", "");
+  EEPROM.begin(512);
+  char s[32], p[64];
+  // Load saved Wi-Fi credentials
 
   if (digitalRead(PIN_BUTTON_RESET) == LOW || wifiSsid.length() == 0) {
     Serial.println("[MODE] Entering PROVISIONING / SETUP MODE...");
@@ -95,15 +91,7 @@ void setupProvisioningMode() {
   });
   server.begin();
 
-  NimBLEDevice::init(apName.c_str());
-  NimBLEServer *pServer = NimBLEDevice::createServer();
-  NimBLEService *pService = pServer->createService(SERVICE_UUID);
-  pService->start();
-  NimBLEAdvertising *pAdv = NimBLEDevice::getAdvertising();
-  pAdv->addServiceUUID(SERVICE_UUID);
-  pAdv->start();
-  Serial.println("[BLE] NimBLE Bluetooth Advertising Started!");
-
+  
   // Loop in Setup Mode until Wi-Fi Config Received
   while (!isProvisioned) {
     // BLINK ONBOARD LED RAPIDLY (200ms ON / 200ms OFF) TO INDICATE SETUP MODE
@@ -117,11 +105,7 @@ void setupProvisioningMode() {
     server.handleClient();
   }
 
-  NimBLEDevice::deinit(true);
-  preferences.putString("ssid", wifiSsid);
-  preferences.putString("pass", wifiPass);
-  preferences.end();
-
+  
   Serial.println("[SETUP] Wi-Fi Config Saved! Restarting in 2s...");
   digitalWrite(PIN_LED_INDICATOR, HIGH); // Solid ON
   delay(2000);
@@ -182,7 +166,7 @@ void pingDiscoveryGateway() {
   JsonDocument doc;
   doc["macAddress"] = macAddress;
   doc["serialNumber"] = deviceSerial;
-  doc["boardFamily"] = "ESP32";
+  doc["boardFamily"] = "ESP8266";
   doc["boardType"] = "ESP32 Dev Module";
   doc["ipAddress"] = WiFi.localIP().toString();
   doc["rssi"] = WiFi.RSSI();
@@ -239,7 +223,7 @@ void loop() {
   if (millis() - lastTelemetry >= 5000) {
     lastTelemetry = millis();
     int rawSoil = analogRead(PIN_SOIL_MOISTURE);
-    float soilMoisture = map(rawSoil, 4095, 1500, 0, 100);
+    float soilMoisture = map(rawSoil, 1023, 300, 0, 100);
     float temp = dht.readTemperature();
     float humidity = dht.readHumidity();
 

@@ -100,8 +100,27 @@ rawWss.on('connection', (ws: WsClient, req) => {
   });
 });
 
-app.use(cors());
-app.use(express.json());
+import {
+  securityHeadersAndAuditLogger,
+  securityRateLimiter,
+  requestThreatSanitizer,
+  hmacSignatureVerifier,
+  hardwareAuthGuard
+} from './middleware/security.middleware';
+
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Device-Auth', 'X-Aether-Signature', 'X-Aether-Timestamp']
+}));
+app.use(express.json({ limit: '100kb' }));
+
+// Apply Comprehensive Cybersecurity Middlewares
+app.use(securityHeadersAndAuditLogger);
+app.use(securityRateLimiter(false));
+app.use(requestThreatSanitizer);
+app.use(hmacSignatureVerifier);
+app.use(hardwareAuthGuard);
 
 const PORT = process.env.PORT || 4000;
 
