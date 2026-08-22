@@ -11,7 +11,8 @@ import { AdminDevicesView } from '@/components/admin/AdminDevicesView';
 import { AdminAuditLogsView } from '@/components/admin/AdminAuditLogsView';
 import { AdminEmergencyControls } from '@/components/admin/AdminEmergencyControls';
 import { AdminHardwareProductsView } from '@/components/admin/AdminHardwareProductsView';
-import { Activity, Settings, Bot, Zap, Radio, RefreshCw, AlertTriangle } from 'lucide-react';
+import { AdminSourceCodeView } from '@/components/admin/AdminSourceCodeView';
+import { Activity, Settings, Bot, Zap, Radio, RefreshCw, AlertTriangle, Code2 } from 'lucide-react';
 
 export default function AdminPage() {
   const router = useRouter();
@@ -91,7 +92,8 @@ export default function AdminPage() {
           </div>
         </div>
       )}
-      {activeView === 'FIRMWARE' && <AdminHardwareProductsView />}
+      {activeView === 'SOURCE_CODE' && <AdminSourceCodeView />}
+      {activeView === 'FIRMWARE' && <AdminSourceCodeView />}
       {activeView === 'AUDIT' && <AdminAuditLogsView />}
       {activeView === 'EMERGENCY' && <AdminEmergencyControls />}
       {activeView === 'SETTINGS' && (

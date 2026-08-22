@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Account, AuditLogEntry, DeviceTransferRecord, IoTDevice, UserRole, HardwareProduct } from '@aether/shared';
 
-export type AdminViewType = 'OVERVIEW' | 'USERS' | 'PRODUCTS' | 'DEVICES' | 'TELEMETRY' | 'COMMANDS' | 'ALERTS' | 'AUTOMATION' | 'MQTT' | 'FIRMWARE' | 'HEALTH' | 'AUDIT' | 'EMERGENCY' | 'SETTINGS';
+export type AdminViewType = 'OVERVIEW' | 'USERS' | 'PRODUCTS' | 'DEVICES' | 'TELEMETRY' | 'COMMANDS' | 'ALERTS' | 'AUTOMATION' | 'MQTT' | 'FIRMWARE' | 'SOURCE_CODE' | 'HEALTH' | 'AUDIT' | 'EMERGENCY' | 'SETTINGS';
 
 export type User360Tab =
   | 'OVERVIEW'
