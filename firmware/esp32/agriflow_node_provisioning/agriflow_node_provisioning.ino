@@ -13,13 +13,33 @@
 #include <ArduinoJson.h>
 #include <DHT.h>
 
-// ─── HARDWARE GPIO PIN MAPPING (ESP8266) ───
+// ─── PIN DEFINITIONS (CROSS-PLATFORM SAFE GPIOs) ───
+#ifndef D2
+  #define D2 4   // GPIO 4 (D2 on NodeMCU)
+#endif
+#ifndef D3
+  #define D3 0   // GPIO 0 (D3 on NodeMCU)
+#endif
+#ifndef D5
+  #define D5 14  // GPIO 14 (D5 on NodeMCU)
+#endif
+#ifndef D1
+  #define D1 5   // GPIO 5 (D1 on NodeMCU)
+#endif
+#ifndef D4
+  #define D4 2   // GPIO 2 (D4 on NodeMCU)
+#endif
+#ifndef D6
+  #define D6 12  // GPIO 12 (D6 on NodeMCU)
+#endif
+
+// Hardware GPIO Mapping
 #define PIN_LED_INDICATOR  2    // Onboard Status LED (Blinks rapidly in Setup Mode)
 #define PIN_BUTTON_RESET   0    // Flash/Boot Button (GPIO 0 - hold for 3s to reset setup)
-#define PIN_SOIL_MOISTURE  A0  // Analog Soil Moisture Probe
-#define PIN_DHT_DATA       D2   // Digital Air Temp & Humidity
-#define PIN_RELAY_PUMP     D3   // Water Pump Relay (Active LOW)
-#define PIN_FLOW_RATE      D5   // Pulse Water Flow Sensor
+#define PIN_SOIL_MOISTURE  A0   // Analog Soil Moisture Probe
+#define PIN_DHT_DATA       4    // Digital Air Temp & Humidity (GPIO 4 / D2)
+#define PIN_RELAY_PUMP     5    // Water Pump Relay (GPIO 5 / D1 - Active HIGH / safe boot pin)
+#define PIN_FLOW_RATE      14   // Pulse Water Flow Sensor (GPIO 14 / D5)
 #define DHTTYPE            DHT11
 
 
